@@ -50,7 +50,8 @@ It works with any language, any framework and any agent herdr supports.
 herdr plugin install swmcc/herdr-sightline
 ```
 
-Requires herdr 0.9.1 or later and `python3` on your `PATH`. macOS and Linux.
+Requires herdr 0.9.1 or later on macOS or Linux. Sightline is a single Go binary and
+the install downloads the right one for your machine, so there's nothing else to set up.
 
 ## Quick start
 
@@ -155,6 +156,10 @@ regex = "^FATAL: .+"
 regex = "DeprecationWarning"
 ```
 
+Patterns use Go's [RE2 syntax](https://github.com/google/re2/wiki/Syntax). There's no
+lookbehind or backreferences, but matching always runs in linear time, which matters
+when the text being matched is untrusted.
+
 Press `n` on any entry to add an ignore rule for it without editing the file.
 
 ## Safety
@@ -234,6 +239,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
 - [ ] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
 - [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
+- [ ] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
 - [ ] Release v0.1 ([#18](https://github.com/swmcc/herdr-sightline/issues/18))
 
 ### [v0.2 · Queue mode](https://github.com/swmcc/herdr-sightline/milestone/2)
@@ -267,6 +273,9 @@ Sightline everywhere herdr runs.
 
 Ideas and issues are welcome, especially error formats Sightline should recognise.
 Include a sample of the output.
+
+Sightline is written in Go. To run your own copy, `make build` and then
+`herdr plugin link .` from the repo.
 
 If you'd like to help, issues labelled
 [🌱 good first issue](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aopen+label%3A%22%F0%9F%8C%B1+good+first+issue%22)

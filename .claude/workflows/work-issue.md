@@ -17,3 +17,6 @@ Take one issue from open to a pull request.
 9. **Commit** with an emoji message. No AI attribution.
 10. **Rebase on `main`, push and open the PR.** Title in plain English, body says what
     changed and why, ending with `Closes #<n>`.
+11. **Label the PR.** Give it the same labels and milestone as the issue, plus any
+    others that fit what actually changed. `gh pr edit <pr> --add-label "<label>" --milestone "<milestone>"`.
+12. **Wait for CI.** The `test` check has to pass before the PR can merge.

@@ -16,6 +16,9 @@ if [ ! -f go.mod ]; then
   exit 0
 fi
 
+# Tools installed with `go install` land here, which isn't always on PATH.
+PATH="$PATH:$(go env GOPATH)/bin"
+
 step "gofmt"
 unformatted=$(gofmt -l $(git ls-files '*.go'))
 if [ -n "$unformatted" ]; then

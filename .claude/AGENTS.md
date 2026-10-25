@@ -89,7 +89,9 @@ flags dashes and likely Oxford commas in Markdown.
 - One branch per issue, named like `12-fix-check`.
 - Rebase on `main` before opening a PR.
 - `main` is protected. Everything goes through a pull request and the `test` check must pass.
-- PRs say `Closes #N` so the issue and milestone update themselves.
+- Every PR links to an issue. Use `Closes #N` when it finishes the issue and `Refs #N`
+  when it's part of one. If there's no issue yet, create one first. The `issue-link`
+  check fails without it.
 - Every PR gets labels and a milestone, matching its issue plus anything else that fits.
 - Commit messages start with an emoji that fits the change, for example ✨ feature,
   🐛 fix, 🧪 tests, 📝 docs, 🧹 chore, 🔒 security, 🚀 release.

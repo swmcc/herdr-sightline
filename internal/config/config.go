@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -86,6 +87,22 @@ func Path(dir string) string {
 	return filepath.Join(dir, FileName)
 }
 
+// Limits on the numbers. Anything past these is a mistake, and letting it through
+// would overflow a time.Duration or size a buffer to take the feed down later.
+const (
+	MaxSettleSeconds = 3600
+	MaxContextLines  = 1000
+)
+
+// MaxFileSize is the most Sightline will read. A real config is a few hundred bytes.
+const MaxFileSize = 1 << 20
+
+// arrayTables are the keys that must be arrays of tables, written [[name]].
+var arrayTables = []string{"pattern", "ignore", "watch"}
+
+// utf8BOM is stripped before decoding. Some editors on Windows add it.
+var utf8BOM = []byte("\xEF\xBB\xBF")
+
 // Error is one problem with the file. Line and Column start at 1 and are 0 when
 // the position isn't known.
 type Error struct {
@@ -95,6 +112,8 @@ type Error struct {
 	Msg    string
 }
 
+// Error keeps each problem on one line. A regex from a multi-line string can put
+// newlines in the message, and the feed shows one error per line.
 func (e *Error) Error() string {
 	var b strings.Builder
 	b.WriteString(e.File)
@@ -104,46 +123,107 @@ func (e *Error) Error() string {
 			b.WriteString(":" + strconv.Itoa(e.Column))
 		}
 	}
-	b.WriteString(": " + e.Msg)
+	b.WriteString(": " + oneLine.Replace(e.Msg))
 	return b.String()
 }
 
+var oneLine = strings.NewReplacer("\r", `\r`, "\n", `\n`)
+
 // Load reads the config file from dir. A missing file isn't an error, it means the
 // defaults. Problems with the file come back as one or more *Error values joined
-// together, so every mistake is reported at once rather than one per reload.
+// together, ordered by line.
 func Load(dir string) (Config, error) {
 	path := Path(dir)
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return Default(), nil
-	}
+	data, exists, err := readFile(path)
 	if err != nil {
-		return Config{}, fmt.Errorf("reading config: %w", err)
+		return Config{}, err
+	}
+	if !exists {
+		return Default(), nil
 	}
 	return Parse(path, data)
 }
 
+// readFile reads the config file, refusing anything over MaxFileSize.
+func readFile(path string) (data []byte, exists bool, err error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("reading config: %w", err)
+	}
+	defer f.Close()
+	data, err = io.ReadAll(io.LimitReader(f, MaxFileSize+1))
+	if err != nil {
+		return nil, true, fmt.Errorf("reading config: %w", err)
+	}
+	if len(data) > MaxFileSize {
+		return nil, true, &Error{File: path, Msg: "file is bigger than 1 MiB, which is far too big for a config file"}
+	}
+	return data, true, nil
+}
+
 // Parse turns the contents of a config file into a Config. name is only used in
 // error messages.
+//
+// Most problems are collected and reported together. Unknown keys don't stop the
+// rest of the file being checked, because the decoder has filled in everything it
+// did recognise. A syntax error or a value of the wrong type does stop it, because
+// then the decoded values can't be trusted, so that's the only error you'll see.
 func Parse(name string, data []byte) (Config, error) {
-	var raw fileConfig
-	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
-	if err := dec.Decode(&raw); err != nil {
-		return Config{}, decodeErrors(name, err)
+	data = bytes.TrimPrefix(data, utf8BOM)
+
+	// The walk stops quietly at a syntax error, which the decoder reports properly
+	// below. Whatever positions it found up to there are still useful.
+	w := walkDocument(data)
+	v := validator{name: name, positions: w.positions}
+	for _, s := range w.shapeErrors {
+		v.fail(s.key, "%s", s.msg)
 	}
 
-	positions, err := keyPositions(data)
-	if err != nil {
-		// The decoder has already accepted the document, so this shouldn't happen.
-		// Carry on without positions rather than refuse a good file.
-		positions = map[string]unstable.Position{}
+	var raw fileConfig
+	dec := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
+	var errs []error
+	if err := dec.Decode(&raw); err != nil {
+		var strict *toml.StrictMissingError
+		if !errors.As(err, &strict) {
+			// A table written the wrong way, like ignore = { ... }, also makes the
+			// decoder give up. The layout error says what to do about it.
+			if len(v.errs) > 0 {
+				return Config{}, errors.Join(v.errs...)
+			}
+			return Config{}, decodeError(name, err)
+		}
+		errs = append(errs, unknownKeyErrors(name, strict)...)
 	}
-	v := validator{name: name, positions: positions}
 	cfg := v.build(raw)
-	if len(v.errs) > 0 {
-		return Config{}, errors.Join(v.errs...)
+	errs = append(errs, v.errs...)
+	if len(errs) > 0 {
+		sortErrors(errs)
+		return Config{}, errors.Join(errs...)
 	}
 	return cfg, nil
+}
+
+// sortErrors orders errors by where they are in the file. Ones without a position
+// go last.
+func sortErrors(errs []error) {
+	pos := func(err error) (int, int) {
+		var e *Error
+		if errors.As(err, &e) && e.Line > 0 {
+			return e.Line, e.Column
+		}
+		return int(^uint(0) >> 1), 0
+	}
+	slices.SortStableFunc(errs, func(a, b error) int {
+		al, ac := pos(a)
+		bl, bc := pos(b)
+		if al != bl {
+			return al - bl
+		}
+		return ac - bc
+	})
 }
 
 // fileConfig mirrors the file. Pointers tell "not set" apart from "set to zero".
@@ -170,20 +250,21 @@ type fileWatch struct {
 	Agent     string `toml:"agent"`
 }
 
-var wrongType = regexp.MustCompile(`^cannot decode TOML (\w+) into`)
-
-// decodeErrors turns the TOML library's errors into ours, keeping the positions.
-func decodeErrors(name string, err error) error {
-	var strict *toml.StrictMissingError
-	if errors.As(err, &strict) {
-		errs := make([]error, 0, len(strict.Errors))
-		for _, de := range strict.Errors {
-			line, col := de.Position()
-			errs = append(errs, &Error{File: name, Line: line, Column: col,
-				Msg: fmt.Sprintf("unknown key %q", strings.Join(de.Key(), "."))})
-		}
-		return errors.Join(errs...)
+func unknownKeyErrors(name string, strict *toml.StrictMissingError) []error {
+	errs := make([]error, 0, len(strict.Errors))
+	for _, de := range strict.Errors {
+		line, col := de.Position()
+		errs = append(errs, &Error{File: name, Line: line, Column: col,
+			Msg: fmt.Sprintf("unknown key %q", strings.Join(de.Key(), "."))})
 	}
+	return errs
+}
+
+var wrongType = regexp.MustCompile(`^cannot decode TOML ([a-z ]+?) into`)
+
+// decodeError turns one of the TOML library's fatal errors into ours, keeping the
+// position.
+func decodeError(name string, err error) error {
 	var de *toml.DecodeError
 	if errors.As(err, &de) {
 		line, col := de.Position()
@@ -206,29 +287,39 @@ type validator struct {
 	errs      []error
 }
 
+// fail records a problem at key. If key has no known position it uses the
+// nearest parent that does, so no error loses its line.
 func (v *validator) fail(key, format string, args ...any) {
-	pos := v.positions[key]
+	pos, ok := v.positions[key]
+	for !ok && key != "" {
+		i := strings.LastIndexByte(key, '.')
+		if i < 0 {
+			break
+		}
+		key = key[:i]
+		pos, ok = v.positions[key]
+	}
 	v.errs = append(v.errs, &Error{File: v.name, Line: pos.Line, Column: pos.Column,
 		Msg: fmt.Sprintf(format, args...)})
+}
+
+// number checks an optional whole number is within lo to hi.
+func (v *validator) number(key string, value *int64, lo, hi int64, into *int) {
+	if value == nil {
+		return
+	}
+	if *value < lo || *value > hi {
+		v.fail(key, "%s must be between %d and %d, got %d", key, lo, hi, *value)
+		return
+	}
+	*into = int(*value)
 }
 
 func (v *validator) build(raw fileConfig) Config {
 	cfg := Default()
 
-	if raw.SettleSeconds != nil {
-		if *raw.SettleSeconds < 1 {
-			v.fail("settle_seconds", "settle_seconds must be at least 1, got %d", *raw.SettleSeconds)
-		} else {
-			cfg.SettleSeconds = int(*raw.SettleSeconds)
-		}
-	}
-	if raw.ContextLines != nil {
-		if *raw.ContextLines < 0 {
-			v.fail("context_lines", "context_lines can't be negative, got %d", *raw.ContextLines)
-		} else {
-			cfg.ContextLines = int(*raw.ContextLines)
-		}
-	}
+	v.number("settle_seconds", raw.SettleSeconds, 1, MaxSettleSeconds, &cfg.SettleSeconds)
+	v.number("context_lines", raw.ContextLines, 0, MaxContextLines, &cfg.ContextLines)
 
 	if raw.Presets != nil {
 		// An empty list is allowed. It switches every preset off.
@@ -246,20 +337,20 @@ func (v *validator) build(raw fileConfig) Config {
 		}
 	}
 
-	seen := map[string]bool{}
+	names := map[string]bool{}
 	for i, p := range raw.Pattern {
 		key := "pattern." + strconv.Itoa(i)
 		name := strings.TrimSpace(p.Name)
 		if name == "" {
 			v.fail(key, "[[pattern]] needs a name")
-		} else if seen[name] {
+		} else if names[name] {
 			v.fail(key+".name", "pattern %q is defined twice", name)
 		}
-		seen[name] = true
 		re, ok := v.compile(key, p.Regex, "[[pattern]]")
-		if ok && name != "" {
+		if ok && name != "" && !names[name] {
 			cfg.Patterns = append(cfg.Patterns, Pattern{Name: name, Regex: re})
 		}
+		names[name] = true
 	}
 
 	for i, ig := range raw.Ignore {
@@ -268,18 +359,23 @@ func (v *validator) build(raw fileConfig) Config {
 		}
 	}
 
+	titles := map[string]bool{}
 	for i, w := range raw.Watch {
 		key := "watch." + strconv.Itoa(i)
 		title, agent := strings.TrimSpace(w.PaneTitle), strings.TrimSpace(w.Agent)
 		if title == "" {
 			v.fail(key, "[[watch]] needs a pane_title")
+		} else if titles[title] {
+			// Two pins for one pane can't both win, so make the choice explicit.
+			v.fail(key+".pane_title", "pane %q is pinned twice", title)
 		}
 		if agent == "" {
 			v.fail(key, "[[watch]] needs an agent")
 		}
-		if title != "" && agent != "" {
+		if title != "" && agent != "" && !titles[title] {
 			cfg.Pins = append(cfg.Pins, Pin{PaneTitle: title, Agent: agent})
 		}
+		titles[title] = true
 	}
 
 	return cfg
@@ -300,12 +396,26 @@ func (v *validator) compile(key, expr, table string) (*regexp.Regexp, bool) {
 	return re, true
 }
 
-// keyPositions maps each key in the document to where it is, so validation errors
-// can point at the line. Keys look like "settle_seconds", "presets.2", "pattern.0"
-// for an array table header and "pattern.0.regex" for a value inside it. Values are
-// preferred over keys because that's usually where the mistake is.
-func keyPositions(data []byte) (map[string]unstable.Position, error) {
-	positions := map[string]unstable.Position{}
+// shapeError is a problem with how the file is laid out rather than its values.
+type shapeError struct {
+	key string
+	msg string
+}
+
+// documentWalk is what walkDocument finds.
+type documentWalk struct {
+	// positions maps each key to where it is, so validation errors can point at
+	// the line. Keys look like "settle_seconds", "presets.2", "pattern.0" for an
+	// array table header and "pattern.0.regex" for a value inside it. Values are
+	// preferred over keys because that's usually where the mistake is.
+	positions map[string]unstable.Position
+	// shapeErrors are tables written the wrong way, such as [pattern] for
+	// [[pattern]]. The decoder quietly accepts those as a single entry.
+	shapeErrors []shapeError
+}
+
+func walkDocument(data []byte) documentWalk {
+	w := documentWalk{positions: map[string]unstable.Position{}}
 	counts := map[string]int{}
 	prefix := ""
 
@@ -322,7 +432,11 @@ func keyPositions(data []byte) (map[string]unstable.Position, error) {
 				counts[name]++
 			}
 			if first != nil {
-				positions[prefix] = p.Shape(first.Raw).Start
+				w.positions[prefix] = p.Shape(first.Raw).Start
+				if e.Kind == unstable.Table && slices.Contains(arrayTables, string(first.Data)) {
+					w.shapeErrors = append(w.shapeErrors, shapeError{prefix,
+						fmt.Sprintf("use [[%s]] (an array of tables), not [%s]", first.Data, name)})
+				}
 			}
 		case unstable.KeyValue:
 			name, first := joinKey(e)
@@ -331,28 +445,51 @@ func keyPositions(data []byte) (map[string]unstable.Position, error) {
 				key = prefix + "." + name
 			}
 			if first != nil {
-				positions[key] = p.Shape(first.Raw).Start
+				w.positions[key] = p.Shape(first.Raw).Start
 			}
 			value := e.Value()
-			if value.Raw.Length > 0 {
-				positions[key] = p.Shape(value.Raw).Start
+			if prefix == "" && first != nil && slices.Contains(arrayTables, string(first.Data)) &&
+				(name != string(first.Data) || value.Kind != unstable.Array) {
+				w.shapeErrors = append(w.shapeErrors, shapeError{key,
+					fmt.Sprintf("%s must be a list of tables, use [[%s]]", first.Data, first.Data)})
 			}
-			if value.Kind == unstable.Array {
-				i := 0
-				for it := value.Children(); it.Next(); {
-					n := it.Node()
-					if n.Kind == unstable.Comment {
-						continue
-					}
-					if n.Raw.Length > 0 {
-						positions[key+"."+strconv.Itoa(i)] = p.Shape(n.Raw).Start
-					}
-					i++
-				}
-			}
+			w.value(&p, key, value)
 		}
 	}
-	return positions, p.Error()
+	return w
+}
+
+// value records where a value is, and the values inside it for arrays and inline
+// tables.
+func (w *documentWalk) value(p *unstable.Parser, key string, n *unstable.Node) {
+	if n.Raw.Length > 0 {
+		w.positions[key] = p.Shape(n.Raw).Start
+	}
+	switch n.Kind {
+	case unstable.Array:
+		i := 0
+		for it := n.Children(); it.Next(); {
+			child := it.Node()
+			if child.Kind == unstable.Comment {
+				continue
+			}
+			w.value(p, key+"."+strconv.Itoa(i), child)
+			i++
+		}
+	case unstable.InlineTable:
+		for it := n.Children(); it.Next(); {
+			child := it.Node()
+			if child.Kind != unstable.KeyValue {
+				continue
+			}
+			name, first := joinKey(child)
+			childKey := key + "." + name
+			if first != nil {
+				w.positions[childKey] = p.Shape(first.Raw).Start
+			}
+			w.value(p, childKey, child.Value())
+		}
+	}
 }
 
 // joinKey returns a node's dotted key and the node for its first part.

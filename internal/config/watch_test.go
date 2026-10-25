@@ -16,8 +16,9 @@ func TestWatchFollowsTheFile(t *testing.T) {
 
 	updates := Watch(ctx, dir, pollInterval)
 
-	// Each step changes the file's size as well as its contents, so the change is
-	// seen even where mod times are coarse.
+	// Watch hashes the contents, so a change is seen even when the size and mod
+	// time stay the same. "settle_seconds = 7" to "settle_seconds = 8" checks that.
+	// On an error the update carries the last good config.
 	steps := []struct {
 		name    string
 		change  func()
@@ -27,8 +28,9 @@ func TestWatchFollowsTheFile(t *testing.T) {
 		{"no file gives the defaults", func() {}, false, DefaultSettleSeconds},
 		{"a new file is read", func() { writeConfig(t, dir, "settle_seconds = 5\n") }, false, 5},
 		{"an edit is picked up", func() { writeConfig(t, dir, "settle_seconds = 120\n") }, false, 120},
-		{"a broken file is an error, not a crash", func() { writeConfig(t, dir, "settle_seconds = = 1\n") }, true, 0},
+		{"a broken file is an error, not a crash", func() { writeConfig(t, dir, "settle_seconds = = 10\n") }, true, 120},
 		{"fixing it recovers", func() { writeConfig(t, dir, "settle_seconds = 7\n") }, false, 7},
+		{"a same size edit is picked up", func() { writeConfig(t, dir, "settle_seconds = 8\n") }, false, 8},
 		{"deleting it goes back to the defaults", func() {
 			if err := os.Remove(Path(dir)); err != nil {
 				t.Fatalf("removing config: %v", err)
@@ -42,14 +44,27 @@ func TestWatchFollowsTheFile(t *testing.T) {
 			if u.Err == nil {
 				t.Fatalf("%s: got no error", step.name)
 			}
-			continue
-		}
-		if u.Err != nil {
+		} else if u.Err != nil {
 			t.Fatalf("%s: %v", step.name, u.Err)
 		}
 		if u.Config.SettleSeconds != step.settle {
 			t.Fatalf("%s: SettleSeconds = %d, want %d", step.name, u.Config.SettleSeconds, step.settle)
 		}
+	}
+}
+
+func TestWatchBrokenFirstLoadGivesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "settle_seconds = = 1\n")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	u := next(t, Watch(ctx, dir, pollInterval), "initial load")
+	if u.Err == nil {
+		t.Fatal("got no error for a broken file")
+	}
+	if u.Config.SettleSeconds != DefaultSettleSeconds || len(u.Config.Presets) == 0 {
+		t.Fatalf("Config = %+v, want the defaults", u.Config)
 	}
 }
 

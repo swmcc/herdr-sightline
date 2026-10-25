@@ -2,29 +2,28 @@ package config
 
 import (
 	"context"
-	"errors"
-	"fmt"
-	"os"
+	"crypto/sha256"
 	"time"
 )
 
-// Update is one result from Watch. Exactly one of Config and Err is meaningful.
-// When Err is set the file is broken, and the caller should keep using the last
-// good Config and show the error.
+// DefaultPollInterval is how often Watch checks the file when not told otherwise.
+const DefaultPollInterval = time.Second
+
+// Update is one result from Watch. When Err is set the file is broken and Config
+// is the last good config, or the defaults if there's never been one, so the
+// caller can keep going and show the error.
 type Update struct {
 	Config Config
 	Err    error
 }
 
-// DefaultPollInterval is how often Watch checks the file when not told otherwise.
-const DefaultPollInterval = time.Second
-
-// stamp is what Watch compares to decide whether the file has changed. Polling a
-// stat is cheap at this size and saves pulling in a file notification library.
+// stamp is what Watch compares to decide whether the file has changed. It hashes
+// the contents rather than trusting the mod time, so an edit that keeps the same
+// size within one mod time tick is still seen. The file is small and capped at
+// MaxFileSize, so reading it every poll is cheap.
 type stamp struct {
-	exists  bool
-	size    int64
-	modTime time.Time
+	exists bool
+	sum    [sha256.Size]byte
 	// errMsg rather than an error, so two stamps with the same failure compare equal.
 	errMsg string
 }
@@ -34,9 +33,9 @@ type stamp struct {
 // is cancelled the goroutine stops and the channel is closed. An interval of zero
 // or less means DefaultPollInterval.
 //
-// Changes are spotted by size and mod time. A change is only read once the file
-// has looked the same for two checks in a row, so a save that's still being
-// written isn't caught half way. That costs one interval of delay.
+// A change is only used once the file has read the same for two checks in a row,
+// so a save that's still being written isn't caught half way. That costs one
+// interval of delay.
 //
 // A broken file comes back as an Update with Err set. Watch never stops because
 // of a bad file, so fixing it and saving again is enough.
@@ -51,22 +50,35 @@ func Watch(ctx context.Context, dir string, interval time.Duration) <-chan Updat
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
+		path := Path(dir)
+		good := Default()
 		var last, pending stamp
 		first := true
 		for {
-			current, statErr := statFile(Path(dir))
-			// Wait for the file to settle before reading it, except on the first
+			data, exists, readErr := readFile(path)
+			current := stamp{exists: exists, sum: sha256.Sum256(data)}
+			if readErr != nil {
+				current = stamp{errMsg: readErr.Error()}
+			}
+			// Wait for the file to settle before using it, except on the first
 			// check, which should answer straight away.
 			changed := current != last && current == pending
 			pending = current
 			if first || changed {
 				first = false
 				last = current
-				var u Update
-				if statErr != nil {
-					u.Err = statErr
+				u := Update{Err: readErr}
+				switch {
+				case readErr != nil:
+				case !exists:
+					u.Config = Default()
+				default:
+					u.Config, u.Err = Parse(path, data)
+				}
+				if u.Err != nil {
+					u.Config = good
 				} else {
-					u.Config, u.Err = Load(dir)
+					good = u.Config
 				}
 				if ctx.Err() != nil {
 					return
@@ -86,17 +98,4 @@ func Watch(ctx context.Context, dir string, interval time.Duration) <-chan Updat
 		}
 	}()
 	return updates
-}
-
-// statFile records a stat error in the stamp as well as returning it, so the same
-// failure is reported once rather than on every tick.
-func statFile(path string) (stamp, error) {
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return stamp{}, nil
-	}
-	if err != nil {
-		return stamp{errMsg: err.Error()}, fmt.Errorf("checking config: %w", err)
-	}
-	return stamp{exists: true, size: info.Size(), modTime: info.ModTime()}, nil
 }

@@ -1,0 +1,4 @@
+pattern = [
+  { name = "ok", regex = "^FATAL" },
+  { name = "broken", regex = "[" },
+]

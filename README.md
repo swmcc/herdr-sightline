@@ -223,7 +223,7 @@ The smallest Sightline worth using: watch a pane, catch errors, see them in the 
 send one to an agent with a keypress and find out if the fix worked.
 
 - [ ] Prove an output subscription works from a plugin pane ([#1](https://github.com/swmcc/herdr-sightline/issues/1))
-- [ ] Plugin manifest and project skeleton ([#2](https://github.com/swmcc/herdr-sightline/issues/2))
+- [x] Plugin manifest and project skeleton ([#2](https://github.com/swmcc/herdr-sightline/issues/2))
 - [ ] Keep the engine free of herdr ([#3](https://github.com/swmcc/herdr-sightline/issues/3))
 - [ ] herdr socket client ([#4](https://github.com/swmcc/herdr-sightline/issues/4))
 - [ ] Watch and unwatch a pane ([#5](https://github.com/swmcc/herdr-sightline/issues/5))
@@ -274,8 +274,10 @@ Sightline everywhere herdr runs.
 Ideas and issues are welcome, especially error formats Sightline should recognise.
 Include a sample of the output.
 
-Sightline is written in Go. To run your own copy, `make build` and then
-`herdr plugin link .` from the repo.
+Sightline is written in Go. To run your own copy, `make link` from the repo. It builds
+`bin/sightline` and links the plugin into your herdr. Linking doesn't run build steps,
+so run `make link` again after changes. `make check` runs everything that has to pass
+before a push, and `make hooks` makes git run it for you.
 
 If you'd like to help, issues labelled
 [🌱 good first issue](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aopen+label%3A%22%F0%9F%8C%B1+good+first+issue%22)

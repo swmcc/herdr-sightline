@@ -1,0 +1,15 @@
+# Every setting from the README.
+settle_seconds = 45
+context_lines = 10
+presets = ["node", "go"]
+
+[[pattern]]
+name = "my-framework"
+regex = "^FATAL: .+"
+
+[[ignore]]
+regex = "DeprecationWarning"
+
+[[watch]]
+pane_title = "web"
+agent = "claude"

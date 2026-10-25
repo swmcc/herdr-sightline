@@ -1,0 +1,7 @@
+[[pattern]]
+regex = "^FATAL"
+
+[[ignore]]
+
+[[watch]]
+pane_title = "web"

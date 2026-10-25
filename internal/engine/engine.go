@@ -45,6 +45,9 @@ type source struct {
 	info    Source
 	window  window
 	pending []*capture
+	// captured counts captures started, to keep ones that match at the same time
+	// in order.
+	captured int
 }
 
 // record is an entry plus the bookkeeping behind it that callers never see.
@@ -85,35 +88,36 @@ func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {
 	if !ok {
 		return
 	}
-	// Anything already due was finished before these lines arrived.
-	e.finishCaptures(s, now)
+	// Anything already due, including a settle period that has ended, was
+	// finished before these lines arrived.
+	e.Tick(now)
 	for _, line := range splitLines(lines) {
 		e.observe(s, line, now)
 	}
-	e.finishCaptures(s, now)
+	e.finishCaptures(now)
 }
 
 // Gap tells the engine output from id may have been missed, for example after a
 // reconnect or a cleared screen. Errors still being captured are flagged, because
-// their context may have a hole in it.
+// their context may have a hole in it. The window is emptied so lines from before
+// the gap aren't passed off as context for errors after it.
 func (e *Engine) Gap(id SourceID, now time.Time) {
 	s, ok := e.sources[id]
 	if !ok {
 		return
 	}
 	// Captures already due were complete before the gap.
-	e.finishCaptures(s, now)
+	e.Tick(now)
 	for _, c := range s.pending {
 		c.maybeGap = true
 	}
+	s.window.reset()
 }
 
 // Tick moves waits and timers on to now. The adapter calls it regularly, whether
 // or not there's new output.
 func (e *Engine) Tick(now time.Time) {
-	for _, s := range e.sources {
-		e.finishCaptures(s, now)
-	}
+	e.finishCaptures(now)
 	e.checkFixes(now)
 }
 

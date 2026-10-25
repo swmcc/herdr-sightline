@@ -11,8 +11,9 @@ import (
 	"github.com/swmcc/herdr-sightline/internal/engine"
 )
 
-// Start is the fake clock's default starting time. Any fixed time would do.
-var Start = time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+// Start is the fake clock's starting time. Any fixed time would do. It's a
+// function so no test can change it under another.
+func Start() time.Time { return time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC) }
 
 // Step is one scripted event. The clock moves on by Wait first, then the step
 // happens and the engine is ticked.
@@ -31,7 +32,7 @@ type Adapter struct {
 
 // New makes a fake adapter around a new engine built from opts.
 func New(opts engine.Options) *Adapter {
-	return &Adapter{Engine: engine.New(opts), now: Start}
+	return &Adapter{Engine: engine.New(opts), now: Start()}
 }
 
 // Now is the fake clock's current time.

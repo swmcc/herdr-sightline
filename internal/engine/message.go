@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // Stand-in until #11, which owns the final wording and the hardening. Even so it
@@ -41,24 +42,34 @@ func buildMessage(en Entry, closing string) string {
 }
 
 // describe names the source the way the README does: "web", running `next dev`.
-// Both come from the pane, and a program can set its own pane title, so they're
-// cleaned and the characters that would end the quotes are swapped out.
+// Both come from the pane, and a program can set its own pane title with an
+// escape sequence, so they sit outside the fence only after label has made sure
+// they can't end their quotes.
 func describe(src Source) string {
-	title := label(src.Title, `"`)
+	title := label(src.Title)
 	if title == "" {
-		title = label(string(src.ID), `"`)
+		title = label(string(src.ID))
 	}
 	out := `"` + title + `"`
-	if cmd := label(src.Command, "`"); cmd != "" {
+	if cmd := label(src.Command); cmd != "" {
 		out += ", running `" + cmd + "`"
 	}
 	return out
 }
 
-// label cleans s for use outside the fence: one line, no control characters,
-// none of quote and capped in length.
-func label(s, quote string) string {
-	s = strings.ReplaceAll(cleanLine(s), quote, "'")
+// label makes s safe to show outside the fence. It keeps letters, digits, spaces
+// and a little punctuation that names and commands need, and turns everything
+// else into '?'. An allowlist rather than a blocklist, because there are too many
+// quote marks in Unicode to list (#11 may tighten it further). It's capped in
+// length too.
+func label(s string) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == ' ', strings.ContainsRune("-_./:@+=,#~", r):
+			return r
+		}
+		return '?'
+	}, cleanLine(s))
 	s = strings.TrimSpace(s)
 	if r := []rune(s); len(r) > maxLabelRunes {
 		s = string(r[:maxLabelRunes]) + "..."

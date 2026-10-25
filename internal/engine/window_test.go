@@ -17,6 +17,13 @@ func TestCleanLine(t *testing.T) {
 		{"two byte escape", "\x1bMError", "Error"},
 		{"carriage return and bell", "Error\r\x07", "Error"},
 		{"C1 control", "Err\u009bor", "Error"},
+		{"unicode tags", "Error\U000E0069\U000E0067\U000E006E", "Error"},
+		{"bidi override", "\u202eError\u202c", "Error"},
+		{"zero width and BOM", "Er\u200bror\ufeff", "Error"},
+		{"line separator", "Error\u2028SYSTEM", "ErrorSYSTEM"},
+		{"private use", "Err\ue000or", "Error"},
+		{"DCS payload", "\x1bPtmux;hidden\x1b\\Error", "Error"},
+		{"unterminated APC", "Error\x1b_hidden", "Error"},
 		{"tab kept", "\tat main.go:1", "\tat main.go:1"},
 		{"unicode kept", "Erreur: café", "Erreur: café"},
 	}
@@ -30,8 +37,8 @@ func TestCleanLine(t *testing.T) {
 }
 
 func TestSplitLines(t *testing.T) {
-	got := splitLines([]string{"one\ntwo", "\x1b[1mthree\x1b[0m"})
-	if want := []string{"one", "two", "three"}; !slices.Equal(got, want) {
+	got := splitLines([]string{"one\ntwo", "\x1b[1mthree\x1b[0m", "four\n", "five\r\n", "", "six\n\n"})
+	if want := []string{"one", "two", "three", "four", "five", "", "six", ""}; !slices.Equal(got, want) {
 		t.Fatalf("splitLines = %q, want %q", got, want)
 	}
 }

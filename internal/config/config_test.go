@@ -48,6 +48,11 @@ func TestParseValid(t *testing.T) {
 				t.Errorf("Presets = %#v, want an empty list", cfg.Presets)
 			}
 		}},
+		{"bom.toml", func(t *testing.T, cfg Config) {
+			if cfg.SettleSeconds != 12 {
+				t.Errorf("SettleSeconds = %d, want 12", cfg.SettleSeconds)
+			}
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {
@@ -69,14 +74,33 @@ func TestParseErrorsPointAtTheLine(t *testing.T) {
 		{"syntax.toml", []string{"syntax.toml:2:17: "}},
 		{"unknown-key.toml", []string{
 			`unknown-key.toml:2:1: unknown key "setle_seconds"`,
+			// The rest of the file is still checked after an unknown key.
+			"unknown-key.toml:4:3: [[pattern]] needs a regex",
 			`unknown-key.toml:6:1: unknown key "pattern.regx"`,
+		}},
+		{"mixed.toml", []string{
+			"mixed.toml:1:18: settle_seconds must be between 1 and 3600, got 0",
+			`mixed.toml:2:1: unknown key "setle_seconds"`,
 		}},
 		{"bad-regex.toml", []string{"bad-regex.toml:3:9: bad regex (patterns use Go's RE2 syntax): "}},
 		{"bad-ignore.toml", []string{"bad-ignore.toml:5:9: bad regex"}},
-		{"negative.toml", []string{
-			"negative.toml:1:18: settle_seconds must be at least 1, got 0",
-			"negative.toml:2:17: context_lines can't be negative, got -1",
+		{"multiline-regex.toml", []string{"multiline-regex.toml:2:9: bad regex (patterns use Go's RE2 syntax): error parsing regexp: missing closing ]: `[unclosed\\n`"}},
+		{"inline-pattern.toml", []string{"inline-pattern.toml:3:30: bad regex"}},
+		{"inline-ignore.toml", []string{"inline-ignore.toml:1:21: bad regex"}},
+		{"plain-table.toml", []string{
+			"plain-table.toml:1:2: use [[pattern]] (an array of tables), not [pattern]",
+			"plain-table.toml:5:2: use [[watch]] (an array of tables), not [watch]",
 		}},
+		{"inline-table.toml", []string{"inline-table.toml:1:10: ignore must be a list of tables, use [[ignore]]"}},
+		{"negative.toml", []string{
+			"negative.toml:1:18: settle_seconds must be between 1 and 3600, got 0",
+			"negative.toml:2:17: context_lines must be between 0 and 1000, got -1",
+		}},
+		{"too-big.toml", []string{
+			"too-big.toml:1:18: settle_seconds must be between 1 and 3600, got 9223372036854775807",
+			"too-big.toml:2:17: context_lines must be between 0 and 1000, got 1001",
+		}},
+		{"duplicate-watch.toml", []string{`duplicate-watch.toml:6:14: pane "web" is pinned twice`}},
 		{"unknown-preset.toml", []string{`unknown-preset.toml:1:20: unknown preset "cobol"`}},
 		{"wrong-type.toml", []string{"wrong-type.toml:1:18: settle_seconds has the wrong type (got a TOML string)"}},
 		{"missing-fields.toml", []string{
@@ -111,6 +135,15 @@ func TestLoadReportsTheFilePath(t *testing.T) {
 	_, err := Load(dir)
 	if err == nil || !strings.HasPrefix(err.Error(), Path(dir)+":1:") {
 		t.Fatalf("Load error = %v, want it to start with the path and line", err)
+	}
+}
+
+func TestLoadRefusesAHugeFile(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, "# "+strings.Repeat("x", MaxFileSize)+"\n")
+	_, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "bigger than 1 MiB") {
+		t.Fatalf("Load error = %v, want it to say the file is too big", err)
 	}
 }
 

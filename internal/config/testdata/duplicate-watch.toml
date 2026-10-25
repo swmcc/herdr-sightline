@@ -1,0 +1,7 @@
+[[watch]]
+pane_title = "web"
+agent = "claude"
+
+[[watch]]
+pane_title = "web"
+agent = "codex"

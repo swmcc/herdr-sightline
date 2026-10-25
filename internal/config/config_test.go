@@ -96,6 +96,20 @@ func TestParseErrorsPointAtTheLine(t *testing.T) {
 			"wrong-type-and-layout.toml:1:18: settle_seconds has the wrong type (got a TOML string)",
 			"wrong-type-and-layout.toml:3:2: use [[pattern]] (an array of tables), not [pattern]",
 		}},
+		// TOML keys are case sensitive. The decoder isn't, so these are caught in
+		// the walk instead.
+		{"upper-key.toml", []string{`upper-key.toml:1:1: unknown key "SETTLE_SECONDS" (keys are case sensitive, did you mean settle_seconds?)`}},
+		{"upper-table.toml", []string{
+			"upper-table.toml:1:2: use [[pattern]] (an array of tables), not [PATTERN]",
+			`upper-table.toml:1:2: unknown key "PATTERN" (keys are case sensitive, did you mean pattern?)`,
+		}},
+		{"mixed-case-field.toml", []string{
+			`mixed-case-field.toml:1:3: unknown key "Pattern" (keys are case sensitive, did you mean pattern?)`,
+			`mixed-case-field.toml:2:1: unknown key "Name" (keys are case sensitive, did you mean name?)`,
+			`mixed-case-field.toml:6:1: unknown key "Pane_Title" (keys are case sensitive, did you mean pane_title?)`,
+		}},
+		{"inline-mixed-case.toml", []string{`inline-mixed-case.toml:1:13: unknown key "Regex" (keys are case sensitive, did you mean regex?)`}},
+		{"case-wrong-type.toml", []string{`case-wrong-type.toml:1:1: unknown key "Settle_Seconds" (keys are case sensitive, did you mean settle_seconds?)`}},
 		{"inline-table.toml", []string{"inline-table.toml:1:10: ignore must be a list of tables, use [[ignore]]"}},
 		{"negative.toml", []string{
 			"negative.toml:1:18: settle_seconds must be between 1 and 3600, got 0",

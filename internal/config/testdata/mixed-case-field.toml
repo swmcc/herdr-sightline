@@ -1,0 +1,7 @@
+[[Pattern]]
+Name = "x"
+regex = "y"
+
+[[watch]]
+Pane_Title = "web"
+agent = "claude"

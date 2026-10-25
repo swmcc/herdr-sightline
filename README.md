@@ -201,7 +201,9 @@ themselves.
 Only when you send an error, and then only the error and its context.
 
 **Does it slow herdr down?**
-It subscribes to herdr's own output-matching events instead of polling panes.
+No. A couple of times a second it reads the panes you watch, then does the matching
+itself. Panes you don't watch are never touched. herdr's own output events fire once per
+match window rather than once per error, so they would miss errors that arrive in a burst.
 
 ## Built to be outgrown
 
@@ -227,7 +229,7 @@ work happens, and the milestones show where each step is up to.
 The smallest Sightline worth using: watch a pane, catch errors, see them in the feed,
 send one to an agent with a keypress and find out if the fix worked.
 
-- [ ] Prove an output subscription works from a plugin pane ([#1](https://github.com/swmcc/herdr-sightline/issues/1))
+- [x] Prove an output subscription works from a plugin pane ([#1](https://github.com/swmcc/herdr-sightline/issues/1))
 - [x] Plugin manifest and project skeleton ([#2](https://github.com/swmcc/herdr-sightline/issues/2))
 - [ ] Keep the engine free of herdr ([#3](https://github.com/swmcc/herdr-sightline/issues/3))
 - [ ] herdr socket client ([#4](https://github.com/swmcc/herdr-sightline/issues/4))

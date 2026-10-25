@@ -23,11 +23,22 @@ const maxPending = 32
 type capturer struct {
 	window  window
 	pending []*capture
-	seq     int // captures started, to keep ones that match at the same time in order
 }
 
 func newCapturer(contextLines int) capturer {
 	return capturer{window: window{size: contextLines}}
+}
+
+// arrivals numbers matches across every source in the order the engine saw them,
+// so captures that matched at the same time are filed in that order.
+type arrivals struct {
+	next int
+}
+
+func (a *arrivals) take() int {
+	n := a.next
+	a.next++
+	return n
 }
 
 // gap flags captures in progress and empties the window, so lines from before a
@@ -66,8 +77,8 @@ func (w *window) reset() {
 // capture is an error that has matched but is still collecting the lines after it.
 type capture struct {
 	found
-	due time.Time
-	seq int
+	due     time.Time
+	arrival int // from arrivals, to break ties between equal times
 }
 
 // observe takes one clean line from s.
@@ -89,18 +100,17 @@ func (e *Engine) observe(s *source, line string, now time.Time) {
 					before:    c.window.snapshot(),
 					matchedAt: now,
 				},
-				due: now.Add(e.opts.CaptureWait),
-				seq: c.seq,
+				due:     now.Add(e.opts.CaptureWait),
+				arrival: e.arrivals.take(),
 			})
-			c.seq++
 		}
 	}
 	c.window.push(line)
 }
 
 // finishCaptures files every capture whose wait is over. They're filed in the
-// order they matched, across all sources, so the feed's order never depends on
-// map iteration.
+// order they matched, across all sources, with ties broken by the order the
+// engine saw them, so the feed's order never depends on map iteration.
 func (e *Engine) finishCaptures(now time.Time) {
 	type finished struct {
 		src Source
@@ -124,10 +134,7 @@ func (e *Engine) finishCaptures(now time.Time) {
 		if !a.c.matchedAt.Equal(b.c.matchedAt) {
 			return a.c.matchedAt.Before(b.c.matchedAt)
 		}
-		if a.src.ID != b.src.ID {
-			return a.src.ID < b.src.ID
-		}
-		return a.c.seq < b.c.seq
+		return a.c.arrival < b.c.arrival
 	})
 	for _, f := range due {
 		e.group(f.src, f.c.found)

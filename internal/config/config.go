@@ -200,6 +200,7 @@ func Parse(name string, data []byte) (Config, error) {
 			// do about it far better than the decoder can. Otherwise the decoder's
 			// error is the real one, and any layout errors go alongside it.
 			if w.causedFailure(err) {
+				sortErrors(v.errs)
 				return Config{}, errors.Join(v.errs...)
 			}
 			errs := append(v.errs, decodeError(name, err))

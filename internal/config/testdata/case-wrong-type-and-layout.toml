@@ -1,0 +1,5 @@
+Settle_Seconds = "thirty"
+
+[pattern]
+name = "a"
+regex = "a"

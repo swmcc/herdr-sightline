@@ -110,6 +110,10 @@ func TestParseErrorsPointAtTheLine(t *testing.T) {
 		}},
 		{"inline-mixed-case.toml", []string{`inline-mixed-case.toml:1:13: unknown key "Regex" (keys are case sensitive, did you mean regex?)`}},
 		{"case-wrong-type.toml", []string{`case-wrong-type.toml:1:1: unknown key "Settle_Seconds" (keys are case sensitive, did you mean settle_seconds?)`}},
+		{"case-wrong-type-and-layout.toml", []string{
+			`case-wrong-type-and-layout.toml:1:1: unknown key "Settle_Seconds" (keys are case sensitive, did you mean settle_seconds?)`,
+			`case-wrong-type-and-layout.toml:3:2: use [[pattern]] (an array of tables), not [pattern]`,
+		}},
 		{"inline-table.toml", []string{"inline-table.toml:1:10: ignore must be a list of tables, use [[ignore]]"}},
 		{"negative.toml", []string{
 			"negative.toml:1:18: settle_seconds must be between 1 and 3600, got 0",

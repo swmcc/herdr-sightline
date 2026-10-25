@@ -1,0 +1,7 @@
+[[pattern]]
+name = "same"
+regex = "a"
+
+[[pattern]]
+name = "same"
+regex = "b"

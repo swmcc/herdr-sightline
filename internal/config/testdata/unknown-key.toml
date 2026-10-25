@@ -1,0 +1,6 @@
+settle_seconds = 30
+setle_seconds = 10
+
+[[pattern]]
+name = "x"
+regx = "y"

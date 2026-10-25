@@ -241,7 +241,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [ ] Choose which agent gets the error ([#10](https://github.com/swmcc/herdr-sightline/issues/10))
 - [ ] Send the error safely ([#11](https://github.com/swmcc/herdr-sightline/issues/11))
 - [ ] Check whether the fix worked ([#12](https://github.com/swmcc/herdr-sightline/issues/12))
-- [ ] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
+- [x] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
 - [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
 - [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
 - [ ] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))

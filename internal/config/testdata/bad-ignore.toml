@@ -1,0 +1,5 @@
+[[ignore]]
+regex = "DeprecationWarning"
+
+[[ignore]]
+regex = "[unclosed"

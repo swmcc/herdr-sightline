@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/hero.jpg" alt="Sightline: your agents can see the panes next to them" width="100%">
+</p>
+
 # Sightline
 
 **Your agents can see the panes next to them.**

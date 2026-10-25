@@ -10,8 +10,10 @@ A [herdr](https://herdr.dev) plugin. When your dev server, test watcher or build
 breaks in one pane, Sightline catches the error and hands it to the coding agent
 working in another, then checks whether the fix actually worked.
 
-> **Status: README-first.** This document describes the plugin before it exists.
-> Nothing below is implemented yet. Issues and opinions on the design are welcome.
+> **Status: building v0.1.** This README was written before the code. The plan to make
+> it true now lives in the [roadmap](#roadmap), [milestones](https://github.com/swmcc/herdr-sightline/milestones)
+> and [issues](https://github.com/swmcc/herdr-sightline/issues). Nothing below works yet.
+> Opinions on the design are very welcome.
 
 <!-- demo.gif: agent edits code → dev server pane throws → Sightline catches it →
      agent fixes it → pane goes clean → "fixed". No hands on the keyboard. -->
@@ -24,7 +26,7 @@ In herdr, an agent works in one pane while your dev server, test watcher, compil
 or log tail runs in another. When the agent's change breaks something, the error
 appears in a pane the agent can't see.
 
-So you notice, copy the stack trace, paste it back into the agent, and wait. Several
+So you notice, copy the stack trace, paste it back into the agent and wait. Several
 times a session. You are the clipboard between two panes.
 
 ## What Sightline does
@@ -94,7 +96,7 @@ agent = "claude"
 
 ## What the agent receives
 
-The error, the lines around it, and where it came from, clearly marked as output
+The error, the lines around it and where it came from, clearly marked as output
 from another pane rather than instructions:
 
 ````
@@ -207,15 +209,69 @@ If you're reading this and Sightline is no longer needed: good. That was the ide
 
 ## Roadmap
 
-- [ ] v0.1: watch, built-in patterns, feed, send on keypress, fix check
-- [ ] Queue mode: send automatically when the agent next goes idle
-- [ ] Per-project presets checked into the repo
-- [ ] Windows support
+Four small steps, each one usable on its own. Every item links to the issue where the
+work happens, and the milestones show where each step is up to.
+
+### [v0.1 · First light](https://github.com/swmcc/herdr-sightline/milestone/1)
+
+The smallest Sightline worth using: watch a pane, catch errors, see them in the feed,
+send one to an agent with a keypress and find out if the fix worked.
+
+- [ ] Prove an output subscription works from a plugin pane ([#1](https://github.com/swmcc/herdr-sightline/issues/1))
+- [ ] Plugin manifest and project skeleton ([#2](https://github.com/swmcc/herdr-sightline/issues/2))
+- [ ] Keep the engine free of herdr ([#3](https://github.com/swmcc/herdr-sightline/issues/3))
+- [ ] herdr socket client ([#4](https://github.com/swmcc/herdr-sightline/issues/4))
+- [ ] Watch and unwatch a pane ([#5](https://github.com/swmcc/herdr-sightline/issues/5))
+- [ ] Built-in error patterns with real fixtures ([#6](https://github.com/swmcc/herdr-sightline/issues/6))
+- [ ] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))
+- [ ] Capture the lines around an error ([#8](https://github.com/swmcc/herdr-sightline/issues/8))
+- [ ] The feed pane ([#9](https://github.com/swmcc/herdr-sightline/issues/9))
+- [ ] Choose which agent gets the error ([#10](https://github.com/swmcc/herdr-sightline/issues/10))
+- [ ] Send the error safely ([#11](https://github.com/swmcc/herdr-sightline/issues/11))
+- [ ] Check whether the fix worked ([#12](https://github.com/swmcc/herdr-sightline/issues/12))
+- [ ] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
+- [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
+- [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
+- [ ] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
+- [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
+- [ ] Release v0.1 ([#18](https://github.com/swmcc/herdr-sightline/issues/18))
+
+### [v0.2 · Queue mode](https://github.com/swmcc/herdr-sightline/milestone/2)
+
+Stop having to time it. Errors wait for the agent to finish and then go across on
+their own.
+
+- [ ] Send when the agent goes idle ([#19](https://github.com/swmcc/herdr-sightline/issues/19))
+- [ ] Show and manage the queue in the feed ([#20](https://github.com/swmcc/herdr-sightline/issues/20))
+- [ ] Queue mode safety review ([#21](https://github.com/swmcc/herdr-sightline/issues/21))
+
+### [v0.3 · Project presets](https://github.com/swmcc/herdr-sightline/milestone/3)
+
+Error patterns that live with the code, so everyone on a project gets the same
+behaviour.
+
+- [ ] Project presets checked into the repo ([#22](https://github.com/swmcc/herdr-sightline/issues/22))
+- [ ] Trust prompt for project presets ([#23](https://github.com/swmcc/herdr-sightline/issues/23))
+- [ ] Share error patterns ([#24](https://github.com/swmcc/herdr-sightline/issues/24))
+- [ ] More built-in presets ([#25](https://github.com/swmcc/herdr-sightline/issues/25))
+
+### [v0.4 · Windows](https://github.com/swmcc/herdr-sightline/milestone/4)
+
+Sightline everywhere herdr runs.
+
+- [ ] Windows transport for the herdr adapter ([#26](https://github.com/swmcc/herdr-sightline/issues/26))
+- [ ] Windows paths, shells and output ([#27](https://github.com/swmcc/herdr-sightline/issues/27))
+- [ ] Windows CI and release ([#28](https://github.com/swmcc/herdr-sightline/issues/28))
 
 ## Contributing
 
 Ideas and issues are welcome, especially error formats Sightline should recognise.
 Include a sample of the output.
+
+If you'd like to help, issues labelled
+[🌱 good first issue](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aopen+label%3A%22%F0%9F%8C%B1+good+first+issue%22)
+or [🙋 help wanted](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aopen+label%3A%22%F0%9F%99%8B+help+wanted%22)
+are the best place to start.
 
 ## Licence
 

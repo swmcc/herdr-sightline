@@ -1,0 +1,29 @@
+id = "swmcc.sightline"
+name = "Sightline"
+version = "0.0.0"
+min_herdr_version = "0.9.1"
+description = "Your agents can see the panes next to them"
+platforms = ["macos", "linux"]
+
+# Installs bin/sightline. Builds from source for now. Prebuilt binaries come in #29.
+[[build]]
+command = ["sh", "scripts/install.sh"]
+
+[[actions]]
+id = "watch"
+title = "Sightline: watch this pane"
+contexts = ["pane"]
+command = ["bin/sightline", "watch"]
+
+[[actions]]
+id = "unwatch"
+title = "Sightline: stop watching this pane"
+contexts = ["pane"]
+command = ["bin/sightline", "unwatch"]
+
+# The feed is also the watcher, because herdr plugins can't run background daemons.
+[[panes]]
+id = "feed"
+title = "Sightline"
+placement = "split"
+command = ["bin/sightline", "feed"]

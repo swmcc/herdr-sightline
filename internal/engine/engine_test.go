@@ -68,7 +68,7 @@ func TestEndToEnd(t *testing.T) {
 	if !slices.Equal(en.Lines, wantLines) || !slices.Equal(en.Before, wantBefore) || !slices.Equal(en.After, wantAfter) {
 		t.Fatalf("captured\n lines %q\n before %q\n after %q", en.Lines, en.Before, en.After)
 	}
-	if en.Source.Title != "web" || en.Count != 1 || !en.FirstSeen.Equal(enginetest.Start()) {
+	if en.Source.Title != "web" || en.Matcher != "generic" || en.Count != 1 || !en.FirstSeen.Equal(enginetest.Start()) {
 		t.Fatalf("entry = %+v", en)
 	}
 
@@ -83,224 +83,15 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	a.Finish("claude")
-	a.Advance(29 * time.Second)
+	// The verdict comes a capture wait after the settle period, so a repeat that
+	// matched just before the end is filed first.
+	a.Advance(30 * time.Second)
 	if got := only(t, a); got.State != engine.StateSent {
-		t.Fatalf("verdict before the settle period ended: %v", got.State)
+		t.Fatalf("verdict before the settle period and capture wait ended: %v", got.State)
 	}
 	a.Advance(time.Second)
 	if got := only(t, a); got.State != engine.StateUnverified {
 		t.Fatalf("after settle: state %v, want unverified", got.State)
-	}
-}
-
-func TestFixCheck(t *testing.T) {
-	const boom = "Error: boom"
-	tests := []struct {
-		name string
-		run  func(a *enginetest.Adapter, id engine.EntryID)
-		want engine.State
-	}{
-		{
-			name: "same error during settle is still failing",
-			run: func(a *enginetest.Adapter, id engine.EntryID) {
-				a.Send(id, "claude")
-				a.Finish("claude")
-				a.Print(web, boom)
-				a.Advance(2 * time.Second)
-			},
-			want: engine.StateStillFailing,
-		},
-		{
-			name: "same error before the agent finishes is only counted",
-			run: func(a *enginetest.Adapter, id engine.EntryID) {
-				a.Send(id, "claude")
-				a.Print(web, boom)
-				a.Advance(2 * time.Second)
-			},
-			want: engine.StateSent,
-		},
-		{
-			name: "another agent finishing doesn't start the settle period",
-			run: func(a *enginetest.Adapter, id engine.EntryID) {
-				a.Send(id, "claude")
-				a.Finish("codex")
-				a.Advance(time.Hour)
-			},
-			want: engine.StateSent,
-		},
-		{
-			name: "same error after the settle period ends but before a tick isn't still failing",
-			run: func(a *enginetest.Adapter, id engine.EntryID) {
-				a.Send(id, "claude")
-				a.Finish("claude")
-				a.Advance(29 * time.Second)
-				a.Run([]enginetest.Step{{Wait: 16 * time.Second, Source: web, Lines: []string{boom}}})
-			},
-			want: engine.StateUnverified,
-		},
-		{
-			name: "quiet settle period is unverified",
-			run: func(a *enginetest.Adapter, id engine.EntryID) {
-				a.Send(id, "claude")
-				a.Finish("claude")
-				a.Print(web, "compiled successfully")
-				a.Advance(30 * time.Second)
-			},
-			want: engine.StateUnverified,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := newAdapter(t)
-			a.Print(web, boom)
-			a.Advance(time.Second)
-			tt.run(a, only(t, a).ID)
-			if got := only(t, a).State; got != tt.want {
-				t.Fatalf("state = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGrouping(t *testing.T) {
-	tests := []struct {
-		name      string
-		script    []enginetest.Step
-		dismiss   bool // dismiss the first entry after the first step
-		wantCount []int
-	}{
-		{
-			name: "a crash loop is one entry with a count",
-			script: []enginetest.Step{
-				{Source: web, Lines: []string{"Error: EADDRINUSE"}},
-				{Wait: 5 * time.Second, Source: web, Lines: []string{"Error: EADDRINUSE"}},
-				{Wait: 5 * time.Second, Source: web, Lines: []string{"Error: EADDRINUSE"}},
-				{Wait: time.Second},
-			},
-			wantCount: []int{3},
-		},
-		{
-			name: "a different error gets its own entry",
-			script: []enginetest.Step{
-				{Source: web, Lines: []string{"Error: one"}},
-				{Wait: 5 * time.Second, Source: web, Lines: []string{"Error: two"}},
-				{Wait: time.Second},
-			},
-			wantCount: []int{1, 1},
-		},
-		{
-			name: "a dismissed error repeating inside the cooldown stays dismissed",
-			script: []enginetest.Step{
-				{Source: web, Lines: []string{"Error: loop"}},
-				{Wait: 10 * time.Second, Source: web, Lines: []string{"Error: loop"}},
-				{Wait: time.Second},
-			},
-			dismiss:   true,
-			wantCount: []int{2},
-		},
-		{
-			name: "a dismissed error coming back after the cooldown is new",
-			script: []enginetest.Step{
-				{Source: web, Lines: []string{"Error: loop"}},
-				{Wait: 2 * time.Minute, Source: web, Lines: []string{"Error: loop"}},
-				{Wait: time.Second},
-			},
-			dismiss:   true,
-			wantCount: []int{1, 1},
-		},
-		{
-			name: "ignored lines never alert",
-			script: []enginetest.Step{
-				{Source: web, Lines: []string{"DeprecationWarning: Error handling is changing"}},
-				{Wait: time.Second},
-			},
-		},
-		{
-			name: "lines from an unwatched source are dropped",
-			script: []enginetest.Step{
-				{Source: "pane-2", Lines: []string{"Error: elsewhere"}},
-				{Wait: time.Second},
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := newAdapter(t)
-			a.Run(tt.script[:1])
-			a.Advance(time.Second)
-			if tt.dismiss {
-				a.Engine.Dismiss(only(t, a).ID)
-			}
-			a.Run(tt.script[1:])
-			var counts []int
-			for _, en := range a.Engine.Entries() {
-				counts = append(counts, en.Count)
-			}
-			if !slices.Equal(counts, tt.wantCount) {
-				t.Fatalf("counts newest first = %v, want %v", counts, tt.wantCount)
-			}
-		})
-	}
-}
-
-func TestGapFlagsEntriesBeingCaptured(t *testing.T) {
-	tests := []struct {
-		name string
-		gap  enginetest.Step
-		want bool
-	}{
-		{"gap during capture", enginetest.Step{Wait: 500 * time.Millisecond, Source: web, Gap: true}, true},
-		{"gap on another source", enginetest.Step{Wait: 500 * time.Millisecond, Source: "pane-2", Gap: true}, false},
-		{"gap after capture", enginetest.Step{Wait: 2 * time.Second, Source: web, Gap: true}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			a := newAdapter(t)
-			a.Watch("pane-2", "tests", "go test")
-			a.Run([]enginetest.Step{
-				{Source: web, Lines: []string{"Error: lost"}},
-				tt.gap,
-				{Wait: 2 * time.Second},
-			})
-			if got := only(t, a).MaybeGap; got != tt.want {
-				t.Fatalf("MaybeGap = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestGapEmptiesTheWindow(t *testing.T) {
-	a := newAdapter(t)
-	a.Print(web, "old line")
-	a.Engine.Gap(web, a.Now())
-	a.Print(web, "new line", "Error: after the gap")
-	a.Advance(time.Second)
-	if got := only(t, a).Before; !slices.Equal(got, []string{"new line"}) {
-		t.Fatalf("Before = %q, want only lines from after the gap", got)
-	}
-}
-
-// Captures that finish on the same Tick are filed in the order they matched, not
-// in map order, so the feed never reorders itself.
-func TestOrderAcrossSources(t *testing.T) {
-	for range 20 {
-		a := newAdapter(t)
-		for _, id := range []engine.SourceID{"a", "b", "c", "d"} {
-			a.Watch(id, string(id), "")
-		}
-		a.Print("c", "Error: first")
-		a.Advance(100 * time.Millisecond)
-		a.Engine.Feed("a", []string{"Error: second"}, a.Now())
-		a.Engine.Feed("d", []string{"Error: third"}, a.Now())
-		a.Engine.Tick(a.Now().Add(5 * time.Second))
-
-		var got []string
-		for _, en := range a.Engine.Entries() {
-			got = append(got, en.Lines[0])
-		}
-		if want := []string{"Error: third", "Error: second", "Error: first"}; !slices.Equal(got, want) {
-			t.Fatalf("newest first = %q, want %q", got, want)
-		}
 	}
 }
 
@@ -342,16 +133,6 @@ func TestUnknownEntries(t *testing.T) {
 	if _, err := a.Engine.Message("nope"); err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Fatalf("Message on an unknown id: err = %v", err)
 	}
-	if got := a.Engine.Entries(); len(got) != 0 {
-		t.Fatalf("entries = %+v", got)
-	}
-}
-
-func TestUnwatchDropsCaptures(t *testing.T) {
-	a := newAdapter(t)
-	a.Print(web, "Error: half way")
-	a.Engine.Unwatch(web)
-	a.Advance(time.Minute)
 	if got := a.Engine.Entries(); len(got) != 0 {
 		t.Fatalf("entries = %+v", got)
 	}

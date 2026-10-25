@@ -20,6 +20,8 @@ func TestBoundary(t *testing.T) {
 		t.Skip("the go tool isn't on PATH, so the boundary can't be checked")
 	}
 	// The test runs in the package directory, so ./... is the engine and its subpackages.
+	// go list only sees files for the host's build tags, so a file behind another
+	// GOOS or tag isn't checked.
 	// Only stdout is parsed, so toolchain or download chatter on stderr can't
 	// pass for a dependency.
 	out, err := exec.Command(goTool, "list", "-deps", "-test",

@@ -12,6 +12,33 @@ import (
 // error and up to ContextLines either side. #8 decides how much of a stack trace
 // counts as the error itself.
 
+// maxPending caps the captures in progress on one source. A flood of matching
+// lines would otherwise make every new line do work for every capture. Matches
+// past the cap are dropped and the newest capture is flagged MaybeGap, because
+// an error was missed while it was being captured.
+const maxPending = 32
+
+// capturer is everything the engine keeps for one source between lines: the
+// window and the captures still collecting lines.
+type capturer struct {
+	window  window
+	pending []*capture
+	seq     int // captures started, to keep ones that match at the same time in order
+}
+
+func newCapturer(contextLines int) capturer {
+	return capturer{window: window{size: contextLines}}
+}
+
+// gap flags captures in progress and empties the window, so lines from before a
+// gap aren't passed off as context for an error after it.
+func (c *capturer) gap() {
+	for _, p := range c.pending {
+		p.maybeGap = true
+	}
+	c.window.reset()
+}
+
 // window keeps the last few lines from a source, for the context before a match.
 type window struct {
 	size  int
@@ -38,38 +65,42 @@ func (w *window) reset() {
 
 // capture is an error that has matched but is still collecting the lines after it.
 type capture struct {
-	lines     []string
-	before    []string
-	after     []string
-	matchedAt time.Time
-	due       time.Time
-	maybeGap  bool
-	seq       int // order within a source, for captures that matched at the same time
+	found
+	due time.Time
+	seq int
 }
 
 // observe takes one clean line from s.
 func (e *Engine) observe(s *source, line string, now time.Time) {
-	for _, c := range s.pending {
-		if len(c.after) < e.opts.ContextLines {
-			c.after = append(c.after, line)
+	c := &s.capture
+	for _, p := range c.pending {
+		if len(p.after) < e.opts.ContextLines {
+			p.after = append(p.after, line)
 		}
 	}
-	if e.startsError(line) {
-		s.pending = append(s.pending, &capture{
-			lines:     []string{line},
-			before:    s.window.snapshot(),
-			matchedAt: now,
-			due:       now.Add(e.opts.CaptureWait),
-			seq:       s.captured,
-		})
-		s.captured++
+	if name, ok := e.startsError(line); ok {
+		if len(c.pending) >= maxPending {
+			c.pending[len(c.pending)-1].maybeGap = true
+		} else {
+			c.pending = append(c.pending, &capture{
+				found: found{
+					matcher:   name,
+					lines:     []string{line},
+					before:    c.window.snapshot(),
+					matchedAt: now,
+				},
+				due: now.Add(e.opts.CaptureWait),
+				seq: c.seq,
+			})
+			c.seq++
+		}
 	}
-	s.window.push(line)
+	c.window.push(line)
 }
 
-// finishCaptures turns every capture whose wait is over into an entry. They're
-// filed in the order they matched, across all sources, so the feed's order never
-// depends on map iteration.
+// finishCaptures files every capture whose wait is over. They're filed in the
+// order they matched, across all sources, so the feed's order never depends on
+// map iteration.
 func (e *Engine) finishCaptures(now time.Time) {
 	type finished struct {
 		src Source
@@ -77,16 +108,16 @@ func (e *Engine) finishCaptures(now time.Time) {
 	}
 	var due []finished
 	for _, s := range e.sources {
-		kept := s.pending[:0]
-		for _, c := range s.pending {
+		kept := s.capture.pending[:0]
+		for _, c := range s.capture.pending {
 			if now.Before(c.due) {
 				kept = append(kept, c)
 				continue
 			}
 			due = append(due, finished{s.info, c})
 		}
-		clear(s.pending[len(kept):])
-		s.pending = kept
+		clear(s.capture.pending[len(kept):])
+		s.capture.pending = kept
 	}
 	sort.Slice(due, func(i, j int) bool {
 		a, b := due[i], due[j]
@@ -99,8 +130,17 @@ func (e *Engine) finishCaptures(now time.Time) {
 		return a.c.seq < b.c.seq
 	})
 	for _, f := range due {
-		e.group(f.src, f.c)
+		e.group(f.src, f.c.found)
 	}
+}
+
+// fileAll files every capture on s now, however much context it has. Used when
+// a source stops being watched.
+func (e *Engine) fileAll(s *source) {
+	for _, c := range s.capture.pending {
+		e.group(s.info, c.found)
+	}
+	s.capture.pending = nil
 }
 
 // splitLines breaks any embedded newlines out and cleans every line, so the rest
@@ -122,19 +162,25 @@ func splitLines(lines []string) []string {
 // we) and the two byte escapes.
 var ansi = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*(?:\x1b\\|$)|\x1b[@-Z\\-_]`)
 
-// cleanLine strips ANSI escapes, every other control character except tab, the
-// invisible format characters (bidi overrides, zero width and tag characters),
-// private use characters and the Unicode line and paragraph separators. Pane
-// output is untrusted. These can
-// hide text or start a new line where the message doesn't expect one, so none of
-// them should reach the feed or an agent.
+// invisible is every character that shows nothing, or something other than
+// itself, but that a model still reads. Pane output is untrusted, and these can
+// smuggle text past a person or start a new line where the message doesn't
+// expect one.
+var invisible = []*unicode.RangeTable{
+	unicode.Cc,                 // control characters
+	unicode.Cf,                 // format: bidi, zero width, tags
+	unicode.Co,                 // private use
+	unicode.Zl,                 // line separator
+	unicode.Zp,                 // paragraph separator
+	unicode.Variation_Selector, // can encode a hidden payload
+	unicode.Other_Default_Ignorable_Code_Point, // Hangul fillers and the like
+}
+
+// cleanLine strips ANSI escapes and every invisible character except tab.
 func cleanLine(line string) string {
 	line = ansi.ReplaceAllString(line, "")
 	return strings.Map(func(r rune) rune {
-		if r == '\t' {
-			return r
-		}
-		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Co, unicode.Zl, unicode.Zp) {
+		if r != '\t' && unicode.In(r, invisible...) {
 			return -1
 		}
 		return r

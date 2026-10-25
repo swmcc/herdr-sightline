@@ -3,21 +3,30 @@ package engine
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 // Stand-in until #11, which owns the final wording and the hardening. Even so it
-// keeps pane output inside a fence nothing in the output can close, strips control
-// characters and caps line length.
+// keeps pane output inside a fence nothing in the output can close, strips
+// invisible characters and caps line length.
 
 const (
 	defaultClosingLine = "Please investigate and fix the cause."
 	maxLineRunes       = 500 // longest line of pane output sent as is
-	maxLabelRunes      = 80  // longest title or command shown
+	maxTitleRunes      = 32  // longest pane title shown
+	maxCommandRunes    = 48  // longest command shown
+)
+
+// The only characters a pane title or command may keep. They sit outside the
+// fence, before the line saying the rest is data, so anything that could end
+// their quotes or read as a sentence's punctuation is turned into '?'.
+const (
+	titleChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ._/-"
+	commandChars = titleChars + "=+"
 )
 
 // buildMessage renders what the agent receives for en.
-func buildMessage(en Entry, closing string) string {
+func buildMessage(en Entry, opts Options) string {
+	closing := opts.ClosingLine
 	if closing == "" {
 		closing = defaultClosingLine
 	}
@@ -43,36 +52,33 @@ func buildMessage(en Entry, closing string) string {
 
 // describe names the source the way the README does: "web", running `next dev`.
 // Both come from the pane, and a program can set its own pane title with an
-// escape sequence, so they sit outside the fence only after label has made sure
-// they can't end their quotes.
+// escape sequence, so both go through label first.
 func describe(src Source) string {
-	title := label(src.Title)
+	title := label(src.Title, titleChars, maxTitleRunes)
 	if title == "" {
-		title = label(string(src.ID))
+		title = label(string(src.ID), titleChars, maxTitleRunes)
 	}
 	out := `"` + title + `"`
-	if cmd := label(src.Command); cmd != "" {
+	if cmd := label(src.Command, commandChars, maxCommandRunes); cmd != "" {
 		out += ", running `" + cmd + "`"
 	}
 	return out
 }
 
-// label makes s safe to show outside the fence. It keeps letters, digits, spaces
-// and a little punctuation that names and commands need, and turns everything
-// else into '?'. An allowlist rather than a blocklist, because there are too many
-// quote marks in Unicode to list (#11 may tighten it further). It's capped in
-// length too.
-func label(s string) string {
+// label makes s safe to show outside the fence. Invisible characters go, any
+// character not in allowed becomes '?' and the result is capped at limit runes.
+// An ASCII allowlist rather than a blocklist, because Unicode has too many
+// characters that look like quotes to list.
+func label(s, allowed string, limit int) string {
 	s = strings.Map(func(r rune) rune {
-		switch {
-		case unicode.IsLetter(r), unicode.IsDigit(r), r == ' ', strings.ContainsRune("-_./:@+=,#~", r):
+		if strings.ContainsRune(allowed, r) {
 			return r
 		}
 		return '?'
 	}, cleanLine(s))
 	s = strings.TrimSpace(s)
-	if r := []rune(s); len(r) > maxLabelRunes {
-		s = string(r[:maxLabelRunes]) + "..."
+	if r := []rune(s); len(r) > limit {
+		s = string(r[:limit]) + "..."
 	}
 	return s
 }

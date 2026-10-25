@@ -25,21 +25,21 @@ func (m Substring) Match(line string) bool {
 	return m.Text != "" && strings.Contains(line, m.Text)
 }
 
-// startsError reports whether line should start a capture. Ignores win over
-// matchers.
-func (e *Engine) startsError(line string) bool {
+// startsError reports whether line should start a capture, and the name of the
+// matcher that caught it. Ignores win over matchers.
+func (e *Engine) startsError(line string) (name string, ok bool) {
 	if strings.TrimSpace(line) == "" {
-		return false
+		return "", false
 	}
 	for _, m := range e.opts.Ignores {
 		if m.Match(line) {
-			return false
+			return "", false
 		}
 	}
 	for _, m := range e.opts.Matchers {
 		if m.Match(line) {
-			return true
+			return m.Name(), true
 		}
 	}
-	return false
+	return "", false
 }

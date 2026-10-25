@@ -14,7 +14,8 @@
 //
 //   - [Engine.Watch] and [Engine.Unwatch] say which sources to listen to.
 //   - [Engine.Feed] hands over new lines from a source. [Engine.Gap] says some
-//     output may have been missed.
+//     output may have been missed. After a reconnect, call Gap rather than
+//     Unwatch and Watch.
 //   - [Engine.Tick] moves the capture wait and the settle period on, so call it
 //     regularly even when nothing is printed.
 //   - [Engine.Entries] is what the feed shows, newest first.

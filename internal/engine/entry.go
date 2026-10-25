@@ -9,6 +9,7 @@ type EntryID string
 type Entry struct {
 	ID          EntryID
 	Source      Source
+	Matcher     string   // name of the matcher that caught it, shown in the feed
 	Fingerprint string   // same failure, same fingerprint (#7)
 	Lines       []string // the error itself
 	Before      []string // context (#8)
@@ -19,6 +20,17 @@ type Entry struct {
 	State       State
 	Agent       string // set by MarkSent
 	MaybeGap    bool   // Gap was called while this entry was being captured
+}
+
+// found is one caught error with its context, handed from the window (#8) to
+// grouping (#7). It's its own type so neither has to know the other's insides.
+type found struct {
+	matcher   string
+	lines     []string
+	before    []string
+	after     []string
+	matchedAt time.Time
+	maybeGap  bool
 }
 
 // State is where an entry is in its life, from caught to a verdict.

@@ -60,6 +60,8 @@ Push your branch to your fork and open the pull request against `main` on
   output it must not. See [the pattern guide](.claude/workflows/add-pattern.md).
 - **Pane output is untrusted.** Anything that changes what reaches an agent gets the
   [injection review](.claude/reviews/injection.md).
+- **Keep `scripts/install.sh` plain POSIX sh.** herdr runs it on machines with nothing
+  extra installed, so no bash-isms and no Python. `make check` lints and tests it.
 - **Update the README** if behaviour changes, and tick the issue's roadmap item.
 
 ### Writing style

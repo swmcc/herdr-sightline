@@ -11,6 +11,14 @@ missing() { printf '  %s is not installed: %s\n' "$1" "$2"; exit 1; }
 step "prose"
 .claude/scripts/check-prose.sh
 
+step "install script"
+if command -v shellcheck >/dev/null; then
+  shellcheck -s sh scripts/*.sh
+else
+  printf '  shellcheck is not installed, so only CI lints the scripts (brew install shellcheck)\n'
+fi
+sh scripts/install_test.sh
+
 if [ ! -f go.mod ]; then
   printf '\nNo go.mod yet, so the Go checks are skipped.\n'
   exit 0

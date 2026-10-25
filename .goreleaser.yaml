@@ -1,0 +1,39 @@
+# Builds the release binaries and checksums when a vX.Y.Z tag is pushed.
+# scripts/install.sh downloads these, so keep the archive and checksum names in step with it.
+version: 2
+
+project_name: sightline
+
+builds:
+  - id: sightline
+    main: ./cmd/sightline
+    binary: sightline
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: sightline
+    formats: [tar.gz]
+    # sightline_0.1.0_darwin_arm64.tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# Release notes are written by hand. See .claude/workflows/release.md.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: swmcc
+    name: herdr-sightline

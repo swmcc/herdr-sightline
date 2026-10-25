@@ -40,11 +40,22 @@ tmp=$(mktemp -d 2>/dev/null || mktemp -d -t sightline)
 trap 'rm -rf "$tmp"' EXIT
 trap 'exit 1' INT TERM
 
+# Downloads from GitHub only ever go over HTTPS, redirects included. The tests point
+# SIGHTLINE_RELEASE_URL at file:// URLs, so the override isn't restricted.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --retry 2 -o "$2" "$1"
+    if [ -z "${SIGHTLINE_RELEASE_URL:-}" ]; then
+      curl -fsSL --retry 2 --proto '=https' --proto-redir '=https' -o "$2" "$1"
+    else
+      curl -fsSL --retry 2 -o "$2" "$1"
+    fi
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "$2" "$1"
+    # BusyBox wget has no --https-only, so only use it where it's supported.
+    if [ -z "${SIGHTLINE_RELEASE_URL:-}" ] && wget --help 2>&1 | grep -q -- '--https-only'; then
+      wget -q -t 3 --https-only -O "$2" "$1"
+    else
+      wget -q -t 3 -O "$2" "$1"
+    fi
   else
     warn "Neither curl nor wget is installed, so the binary can't be downloaded."
     return 1
@@ -80,7 +91,13 @@ download() {
   fi
   got=$(sha256 "$tmp/$archive") || return 1
   if [ "$got" != "$want" ]; then
-    warn "Checksum mismatch for $archive: expected $want, got $got. Not installing it."
+    warn ""
+    warn "CHECKSUM MISMATCH for $archive: possible tampering or a corrupt download."
+    warn "  expected $want"
+    warn "  got      $got"
+    warn "Not installing it."
+    warn ""
+    mismatch=yes
     return 1
   fi
 
@@ -89,9 +106,9 @@ download() {
 
   # Move into place in one step so a half written binary never ends up in bin/.
   mkdir -p bin || return 1
-  mv -f "$tmp/unpacked/sightline" bin/sightline.new || return 1
-  chmod 755 bin/sightline.new || return 1
-  mv -f bin/sightline.new bin/sightline || return 1
+  mv -f "$tmp/unpacked/sightline" bin/sightline.new || { rm -f bin/sightline.new; return 1; }
+  chmod 755 bin/sightline.new || { rm -f bin/sightline.new; return 1; }
+  mv -f bin/sightline.new bin/sightline || { rm -f bin/sightline.new; return 1; }
   say "Installed bin/sightline $version (sha256 $got)"
 }
 
@@ -110,11 +127,12 @@ build() {
   say "Built bin/sightline"
 }
 
-# Only plain X.Y.Z versions have releases. Anything else, including 0.0.0 and an
-# unreadable manifest, builds from source.
+# Only plain X.Y.Z versions have releases. Anything else, including 0.0.0, 1.2.3.4
+# and an unreadable manifest, builds from source.
 released=no
+mismatch=no
 case "$version" in
-  0.0.0 | "" | *[!0-9.]* | .* | *. | *..*) ;;
+  0.0.0 | "" | *[!0-9.]* | .* | *. | *..* | *.*.*.*) ;;
   *.*.*) released=yes ;;
 esac
 if [ "${SIGHTLINE_BUILD_FROM_SOURCE:-}" = "1" ]; then
@@ -125,7 +143,11 @@ if [ "$released" = yes ] && [ -n "$os" ] && [ -n "$arch" ]; then
   if download; then
     exit 0
   fi
-  warn "Falling back to building from source."
+  if [ "$mismatch" = yes ]; then
+    warn "Ignoring the downloaded binary and building from the source herdr cloned instead."
+  else
+    warn "Falling back to building from source."
+  fi
 fi
 
 if build; then

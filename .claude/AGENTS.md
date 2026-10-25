@@ -93,6 +93,9 @@ flags dashes and likely Oxford commas in Markdown.
   when it's part of one. If there's no issue yet, create one first. The `issue-link`
   check fails without it.
 - Every PR gets labels and a milestone, matching its issue plus anything else that fits.
+- The author is assigned to the PR and its linked issues automatically when it opens.
+- Copilot reviews every PR to `main` using [.github/copilot-instructions.md](../.github/copilot-instructions.md).
+  Read its comments and either fix them or reply saying why not.
 - Commit messages start with an emoji that fits the change, for example ✨ feature,
   🐛 fix, 🧪 tests, 📝 docs, 🧹 chore, 🔒 security, 🚀 release.
 - Never add AI attribution, `Co-Authored-By` lines or "generated with" footers.

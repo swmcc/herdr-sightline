@@ -32,12 +32,20 @@ thread before any code.
 You'll need [Go](https://go.dev/dl/) (the version in `go.mod` or newer) and, to try
 your change for real, [herdr](https://herdr.dev) 0.9.1 or newer on macOS or Linux.
 
+[Fork the repo](https://github.com/swmcc/herdr-sightline/fork), then clone your fork
+and keep the original as `upstream`:
+
 ```sh
-git clone https://github.com/swmcc/herdr-sightline
+git clone https://github.com/<you>/herdr-sightline
 cd herdr-sightline
+git remote add upstream https://github.com/swmcc/herdr-sightline
 make setup   # installs staticcheck and govulncheck, and the git hooks
 make link    # builds bin/sightline and links the plugin into your herdr
 ```
+
+Push your branch to your fork and open the pull request against `main` on
+`swmcc/herdr-sightline`. Before starting new work, bring your `main` up to date with
+`git switch main && git pull --rebase upstream main`.
 
 `herdr plugin link` doesn't run build steps, so run `make link` again after each change.
 `make unlink` takes it back out.
@@ -103,7 +111,8 @@ Read Copilot's comments and either fix them or reply saying why not.
 and every conversation on it has to be resolved. A new push after approval needs
 approving again. Copilot's review doesn't count as an approval.
 
-If `main` moves while your PR is open, rebase onto it and push with
+If `main` moves while your PR is open, rebase onto it with
+`git fetch upstream && git rebase upstream/main` and push to your fork with
 `git push --force-with-lease`.
 
 ## Working with coding agents

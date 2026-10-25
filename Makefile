@@ -1,6 +1,8 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
+.DEFAULT_GOAL := build
+
 .PHONY: setup build test check link unlink hooks clean
 
 # One time setup: the tools `make check` needs, plus the git hooks.

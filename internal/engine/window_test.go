@@ -89,6 +89,31 @@ func TestOrderAcrossSources(t *testing.T) {
 	}
 }
 
+// Matches at the same time are filed in the order the engine saw them, not by
+// source id, so the first to arrive is the oldest.
+func TestEqualTimesKeepArrivalOrder(t *testing.T) {
+	for range 20 {
+		e := newWatching()
+		order := []SourceID{"d", "c", "b", "a"}
+		for _, id := range order {
+			e.Watch(Source{ID: id})
+		}
+		for _, id := range order {
+			e.Feed(id, []string{"Error: from " + string(id)}, t0)
+		}
+		e.Tick(t0.Add(5 * time.Second))
+
+		var got []string
+		for _, en := range e.Entries() {
+			got = append(got, en.Lines[0])
+		}
+		want := []string{"Error: from a", "Error: from b", "Error: from c", "Error: from d"}
+		if !slices.Equal(got, want) {
+			t.Fatalf("newest first = %q, want %q", got, want)
+		}
+	}
+}
+
 func TestUnwatchFilesCaptures(t *testing.T) {
 	e := newWatching()
 	e.Feed("web", []string{"before", "Error: half way", "after"}, t0)

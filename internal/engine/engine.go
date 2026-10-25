@@ -37,12 +37,13 @@ const maxContextLines = 200
 // from the clock. It has no locks either: one goroutine owns it and makes every
 // call, which in Sightline is the feed's model.
 type Engine struct {
-	opts    Options
-	sources map[SourceID]*source
-	records []*record // oldest first
-	byID    map[EntryID]*record
-	lastID  int
-	groups  groups // #7's bookkeeping, see group.go
+	opts     Options
+	sources  map[SourceID]*source
+	records  []*record // oldest first
+	byID     map[EntryID]*record
+	lastID   int
+	groups   groups   // #7's bookkeeping, see group.go
+	arrivals arrivals // order of matches across sources, see window.go
 }
 
 // source is what the engine keeps for one watched source.

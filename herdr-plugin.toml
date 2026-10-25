@@ -5,7 +5,9 @@ min_herdr_version = "0.9.1"
 description = "Your agents can see the panes next to them"
 platforms = ["macos", "linux"]
 
-# Installs bin/sightline. Builds from source for now. Prebuilt binaries come in #29.
+# Installs bin/sightline. Downloads the release binary matching `version` and checks
+# its checksum, or builds from source with Go if that fails. herdr runs this on install
+# and on `herdr plugin update`, but not on `herdr plugin link`.
 [[build]]
 command = ["sh", "scripts/install.sh"]
 

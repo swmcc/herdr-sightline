@@ -26,6 +26,11 @@ jobs:
       - name: Prose
         run: .claude/scripts/check-prose.sh
 
+      - name: Install script
+        run: |
+          shellcheck -s sh scripts/*.sh
+          sh scripts/install_test.sh
+
       - name: Vet
         run: go vet ./...
 

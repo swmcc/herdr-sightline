@@ -51,7 +51,12 @@ herdr plugin install swmcc/herdr-sightline
 ```
 
 Requires herdr 0.9.1 or later on macOS or Linux. Sightline is a single Go binary and
-the install downloads the right one for your machine, so there's nothing else to set up.
+the install downloads the right one for your machine, checking it against the release
+checksums, so there's nothing else to set up. If the download fails and Go is
+installed, it builds from source instead.
+
+To update, run `herdr plugin update swmcc.sightline` (herdr 0.9.4 or later) or run the
+install command again.
 
 ## Quick start
 
@@ -239,7 +244,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
 - [ ] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
 - [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
-- [ ] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
+- [x] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
 - [x] Protect `main` and run the tests on every pull request ([#31](https://github.com/swmcc/herdr-sightline/issues/31))
 - [x] CONTRIBUTING.md and the contribution rules ([#33](https://github.com/swmcc/herdr-sightline/issues/33))
 - [ ] Make it easy for coding agents to pick up issues ([#34](https://github.com/swmcc/herdr-sightline/issues/34))

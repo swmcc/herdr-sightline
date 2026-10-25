@@ -138,4 +138,6 @@ Step by step guides any tool can follow:
 - Plugins get `HERDR_SOCKET_PATH`, `HERDR_PLUGIN_CONFIG_DIR`, `HERDR_PLUGIN_STATE_DIR` and friends in their environment.
 - `herdr api schema --json` prints the full socket API schema.
 - No background daemons. Long running work lives in a plugin pane.
-- `[[build]]` runs on GitHub install, not on `plugin link`.
+- `[[build]]` runs on GitHub install and on `herdr plugin update` (0.9.4 and later),
+  each time in a fresh checkout, but not on `plugin link`. It runs `scripts/install.sh`,
+  which must stay plain POSIX sh with no bash-isms and no Python.

@@ -1,0 +1,33 @@
+name: 🐛 Bug
+description: Sightline did something the README says it shouldn't
+labels: ["🐛 bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect from the README?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      placeholder: |
+        1. Watch a pane running ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Pane output
+      description: The output Sightline was watching, if it's relevant. Remove anything private first.
+      render: text
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `bin/sightline version` and `herdr --version`, plus your OS
+    validations:
+      required: true

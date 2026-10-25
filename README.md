@@ -240,6 +240,9 @@ send one to an agent with a keypress and find out if the fix worked.
 - [ ] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
 - [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
 - [ ] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
+- [x] Protect `main` and run the tests on every pull request ([#31](https://github.com/swmcc/herdr-sightline/issues/31))
+- [x] CONTRIBUTING.md and the contribution rules ([#33](https://github.com/swmcc/herdr-sightline/issues/33))
+- [ ] Make it easy for coding agents to pick up issues ([#34](https://github.com/swmcc/herdr-sightline/issues/34))
 - [ ] Release v0.1 ([#18](https://github.com/swmcc/herdr-sightline/issues/18))
 
 ### [v0.2 · Queue mode](https://github.com/swmcc/herdr-sightline/milestone/2)
@@ -274,10 +277,10 @@ Sightline everywhere herdr runs.
 Ideas and issues are welcome, especially error formats Sightline should recognise.
 Include a sample of the output.
 
-Sightline is written in Go. To run your own copy, `make link` from the repo. It builds
-`bin/sightline` and links the plugin into your herdr. Linking doesn't run build steps,
-so run `make link` again after changes. `make check` runs everything that has to pass
-before a push, and `make hooks` makes git run it for you.
+Everything starts with an issue, and every pull request is tested and reviewed by
+Copilot automatically. Pull requests from anyone but me also need someone else on the
+project to approve them. [CONTRIBUTING.md](CONTRIBUTING.md) has the full rules, how to
+get set up and how to work on Sightline with a coding agent.
 
 If you'd like to help, issues labelled
 [🌱 good first issue](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aopen+label%3A%22%F0%9F%8C%B1+good+first+issue%22)
@@ -286,4 +289,4 @@ are the best place to start.
 
 ## Licence
 
-MIT
+[MIT](LICENSE)

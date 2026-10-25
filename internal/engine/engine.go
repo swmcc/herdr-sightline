@@ -27,6 +27,10 @@ type Options struct {
 	ClosingLine  string        // last line of the message (#11)
 }
 
+// maxContextLines bounds ContextLines, and so the size of a message, until #11
+// adds a cap on the whole message.
+const maxContextLines = 200
+
 // Engine turns lines of output into entries and messages.
 //
 // It's synchronous and owns no goroutines. Time is always passed in, never read
@@ -38,26 +42,25 @@ type Engine struct {
 	records []*record // oldest first
 	byID    map[EntryID]*record
 	lastID  int
+	groups  groups // #7's bookkeeping, see group.go
 }
 
 // source is what the engine keeps for one watched source.
 type source struct {
 	info    Source
-	window  window
-	pending []*capture
-	// captured counts captures started, to keep ones that match at the same time
-	// in order.
-	captured int
+	capture capturer // #8's window and captures in progress, see window.go
 }
 
 // record is an entry plus the bookkeeping behind it that callers never see.
 type record struct {
-	entry  Entry
-	settle settle
+	entry Entry
+	fix   fixState // #12's settle period, see fixcheck.go
 }
 
-// New makes an engine with the given options.
+// New makes an engine with the given options. ContextLines is clamped to
+// between 0 and 200.
 func New(opts Options) *Engine {
+	opts.ContextLines = min(max(opts.ContextLines, 0), maxContextLines)
 	return &Engine{
 		opts:    opts,
 		sources: make(map[SourceID]*source),
@@ -72,12 +75,20 @@ func (e *Engine) Watch(src Source) {
 		s.info = src
 		return
 	}
-	e.sources[src.ID] = &source{info: src, window: window{size: e.opts.ContextLines}}
+	e.sources[src.ID] = &source{info: src, capture: newCapturer(e.opts.ContextLines)}
 }
 
-// Unwatch stops accepting lines from id. Errors still being captured are dropped.
-// Entries already in the feed stay.
+// Unwatch stops accepting lines from id. Errors still being captured are filed
+// straight away with whatever context they have. Entries already in the feed stay.
+//
+// After a reconnect, call Gap rather than Unwatch and Watch, so the source keeps
+// its captures and they're flagged as possibly incomplete.
 func (e *Engine) Unwatch(id SourceID) {
+	s, ok := e.sources[id]
+	if !ok {
+		return
+	}
+	e.fileAll(s)
 	delete(e.sources, id)
 }
 
@@ -93,14 +104,14 @@ func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {
 	e.Tick(now)
 	for _, line := range splitLines(lines) {
 		e.observe(s, line, now)
+		e.sawLine(id, line, now)
 	}
 	e.finishCaptures(now)
 }
 
 // Gap tells the engine output from id may have been missed, for example after a
 // reconnect or a cleared screen. Errors still being captured are flagged, because
-// their context may have a hole in it. The window is emptied so lines from before
-// the gap aren't passed off as context for errors after it.
+// their context may have a hole in it.
 func (e *Engine) Gap(id SourceID, now time.Time) {
 	s, ok := e.sources[id]
 	if !ok {
@@ -108,10 +119,7 @@ func (e *Engine) Gap(id SourceID, now time.Time) {
 	}
 	// Captures already due were complete before the gap.
 	e.Tick(now)
-	for _, c := range s.pending {
-		c.maybeGap = true
-	}
-	s.window.reset()
+	s.capture.gap()
 }
 
 // Tick moves waits and timers on to now. The adapter calls it regularly, whether
@@ -122,34 +130,23 @@ func (e *Engine) Tick(now time.Time) {
 }
 
 // MarkSent records that an entry was sent to agent. Unknown ids are ignored.
-func (e *Engine) MarkSent(id EntryID, agent string, _ time.Time) {
-	r, ok := e.byID[id]
-	if !ok {
-		return
+func (e *Engine) MarkSent(id EntryID, agent string, now time.Time) {
+	if r, ok := e.byID[id]; ok {
+		e.sent(r, agent, now)
 	}
-	r.entry.State = StateSent
-	r.entry.Agent = agent
-	r.settle = settle{}
 }
 
 // AgentFinished starts the settle period for every entry sent to agent and still
 // waiting on it.
 func (e *Engine) AgentFinished(agent string, now time.Time) {
-	for _, r := range e.records {
-		if r.entry.State == StateSent && r.entry.Agent == agent {
-			r.settle.start(now, e.opts.Settle)
-		}
-	}
+	e.agentFinished(agent, now)
 }
 
 // Dismiss hides an entry. A repeat inside the cooldown stays dismissed.
 func (e *Engine) Dismiss(id EntryID) {
-	r, ok := e.byID[id]
-	if !ok {
-		return
+	if r, ok := e.byID[id]; ok {
+		e.dismissed(r)
 	}
-	r.entry.State = StateDismissed
-	r.settle = settle{}
 }
 
 // Entries returns a copy of every entry, newest first. Changing it doesn't
@@ -169,14 +166,15 @@ func (e *Engine) Message(id EntryID) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("building message: no entry %q", id)
 	}
-	return buildMessage(r.entry, e.opts.ClosingLine), nil
+	return buildMessage(r.entry, e.opts), nil
 }
 
-// add puts a new entry in the feed.
-func (e *Engine) add(en Entry) {
+// add puts a new entry in the feed and returns its record.
+func (e *Engine) add(en Entry) *record {
 	e.lastID++
 	en.ID = EntryID(fmt.Sprintf("e%d", e.lastID))
 	r := &record{entry: en}
 	e.records = append(e.records, r)
 	e.byID[en.ID] = r
+	return r
 }

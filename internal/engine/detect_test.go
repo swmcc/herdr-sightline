@@ -25,21 +25,23 @@ func TestSubstring(t *testing.T) {
 
 func TestStartsError(t *testing.T) {
 	e := New(Options{
-		Matchers: []Matcher{Substring{Label: "generic", Text: "Error"}},
+		Matchers: []Matcher{Substring{Label: "generic", Text: "Error"}, Substring{Label: "panic", Text: "panic:"}},
 		Ignores:  []Matcher{Substring{Label: "noise", Text: "DeprecationWarning"}},
 	})
 	tests := []struct {
-		line string
-		want bool
+		line     string
+		wantName string
+		want     bool
 	}{
-		{"Error: boom", true},
-		{"DeprecationWarning: Error soon", false},
-		{"   ", false},
-		{"all good", false},
+		{"Error: boom", "generic", true},
+		{"panic: oh no", "panic", true},
+		{"DeprecationWarning: Error soon", "", false},
+		{"   ", "", false},
+		{"all good", "", false},
 	}
 	for _, tt := range tests {
-		if got := e.startsError(tt.line); got != tt.want {
-			t.Errorf("startsError(%q) = %v, want %v", tt.line, got, tt.want)
+		if name, ok := e.startsError(tt.line); ok != tt.want || name != tt.wantName {
+			t.Errorf("startsError(%q) = %q, %v, want %q, %v", tt.line, name, ok, tt.wantName, tt.want)
 		}
 	}
 }

@@ -20,10 +20,16 @@ func TestBoundary(t *testing.T) {
 		t.Skip("the go tool isn't on PATH, so the boundary can't be checked")
 	}
 	// The test runs in the package directory, so ./... is the engine and its subpackages.
+	// Only stdout is parsed, so toolchain or download chatter on stderr can't
+	// pass for a dependency.
 	out, err := exec.Command(goTool, "list", "-deps", "-test",
-		"-f", "{{.ImportPath}}\t{{.Standard}}", "./...").CombinedOutput()
+		"-f", "{{.ImportPath}}\t{{.Standard}}", "./...").Output()
 	if err != nil {
-		t.Fatalf("go list: %v\n%s", err, out)
+		var stderr []byte
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr = exitErr.Stderr
+		}
+		t.Fatalf("go list: %v\n%s", err, stderr)
 	}
 	if bad := outsideBoundary(strings.Split(strings.TrimSpace(string(out)), "\n")); len(bad) > 0 {
 		t.Fatalf("the engine must use only the standard library, but depends on:\n  %s",

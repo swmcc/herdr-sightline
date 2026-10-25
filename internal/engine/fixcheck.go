@@ -19,7 +19,10 @@ func (s *settle) start(now time.Time, d time.Duration) {
 
 // recurred is called when an entry's error is seen again at matchedAt.
 func (e *Engine) recurred(r *record, matchedAt time.Time) {
-	if r.entry.State != StateSent || !r.settle.running || matchedAt.Before(r.settle.from) {
+	// Only a repeat inside the settle period counts. One after it ended, but
+	// before the next Tick gave the verdict, doesn't.
+	s := r.settle
+	if r.entry.State != StateSent || !s.running || matchedAt.Before(s.from) || !matchedAt.Before(s.until) {
 		return
 	}
 	r.entry.State = StateStillFailing

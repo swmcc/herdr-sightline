@@ -68,7 +68,7 @@ func TestEndToEnd(t *testing.T) {
 	if !slices.Equal(en.Lines, wantLines) || !slices.Equal(en.Before, wantBefore) || !slices.Equal(en.After, wantAfter) {
 		t.Fatalf("captured\n lines %q\n before %q\n after %q", en.Lines, en.Before, en.After)
 	}
-	if en.Source.Title != "web" || en.Count != 1 || !en.FirstSeen.Equal(enginetest.Start) {
+	if en.Source.Title != "web" || en.Count != 1 || !en.FirstSeen.Equal(enginetest.Start()) {
 		t.Fatalf("entry = %+v", en)
 	}
 
@@ -127,6 +127,16 @@ func TestFixCheck(t *testing.T) {
 				a.Advance(time.Hour)
 			},
 			want: engine.StateSent,
+		},
+		{
+			name: "same error after the settle period ends but before a tick isn't still failing",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(29 * time.Second)
+				a.Run([]enginetest.Step{{Wait: 16 * time.Second, Source: web, Lines: []string{boom}}})
+			},
+			want: engine.StateUnverified,
 		},
 		{
 			name: "quiet settle period is unverified",
@@ -256,6 +266,41 @@ func TestGapFlagsEntriesBeingCaptured(t *testing.T) {
 				t.Fatalf("MaybeGap = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGapEmptiesTheWindow(t *testing.T) {
+	a := newAdapter(t)
+	a.Print(web, "old line")
+	a.Engine.Gap(web, a.Now())
+	a.Print(web, "new line", "Error: after the gap")
+	a.Advance(time.Second)
+	if got := only(t, a).Before; !slices.Equal(got, []string{"new line"}) {
+		t.Fatalf("Before = %q, want only lines from after the gap", got)
+	}
+}
+
+// Captures that finish on the same Tick are filed in the order they matched, not
+// in map order, so the feed never reorders itself.
+func TestOrderAcrossSources(t *testing.T) {
+	for range 20 {
+		a := newAdapter(t)
+		for _, id := range []engine.SourceID{"a", "b", "c", "d"} {
+			a.Watch(id, string(id), "")
+		}
+		a.Print("c", "Error: first")
+		a.Advance(100 * time.Millisecond)
+		a.Engine.Feed("a", []string{"Error: second"}, a.Now())
+		a.Engine.Feed("d", []string{"Error: third"}, a.Now())
+		a.Engine.Tick(a.Now().Add(5 * time.Second))
+
+		var got []string
+		for _, en := range a.Engine.Entries() {
+			got = append(got, en.Lines[0])
+		}
+		if want := []string{"Error: third", "Error: second", "Error: first"}; !slices.Equal(got, want) {
+			t.Fatalf("newest first = %q, want %q", got, want)
+		}
 	}
 }
 

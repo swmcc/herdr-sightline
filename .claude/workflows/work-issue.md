@@ -19,4 +19,4 @@ Take one issue from open to a pull request.
     changed and why, ending with `Closes #<n>`.
 11. **Label the PR.** Give it the same labels and milestone as the issue, plus any
     others that fit what actually changed. `gh pr edit <pr> --add-label "<label>" --milestone "<milestone>"`.
-12. **Wait for CI.** The `test` check has to pass before the PR can merge.
+12. **Wait for CI.** The `test` and `issue-link` checks have to pass before the PR can merge.

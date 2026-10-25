@@ -1,0 +1,5 @@
+settle_seconds = "thirty"
+
+[pattern]
+name = "x"
+regex = "y"

@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -189,11 +190,15 @@ func Parse(name string, data []byte) (Config, error) {
 		var strict *toml.StrictMissingError
 		if !errors.As(err, &strict) {
 			// A table written the wrong way, like ignore = { ... }, also makes the
-			// decoder give up. The layout error says what to do about it.
-			if len(v.errs) > 0 {
+			// decoder give up. When that's the cause, the layout error says what to
+			// do about it far better than the decoder can. Otherwise the decoder's
+			// error is the real one, and any layout errors go alongside it.
+			if w.causedFailure(err) {
 				return Config{}, errors.Join(v.errs...)
 			}
-			return Config{}, decodeError(name, err)
+			errs := append(v.errs, decodeError(name, err))
+			sortErrors(errs)
+			return Config{}, errors.Join(errs...)
 		}
 		errs = append(errs, unknownKeyErrors(name, strict)...)
 	}
@@ -412,10 +417,19 @@ type documentWalk struct {
 	// shapeErrors are tables written the wrong way, such as [pattern] for
 	// [[pattern]]. The decoder quietly accepts those as a single entry.
 	shapeErrors []shapeError
+	// lineStarts holds the byte offset of the start of each line. The parser's own
+	// Shape scans from the top of the file for every node, which turns a long file
+	// into a stalled reload, so positions are worked out from this instead.
+	lineStarts []int
 }
 
 func walkDocument(data []byte) documentWalk {
-	w := documentWalk{positions: map[string]unstable.Position{}}
+	w := documentWalk{positions: map[string]unstable.Position{}, lineStarts: []int{0}}
+	for i, b := range data {
+		if b == '\n' {
+			w.lineStarts = append(w.lineStarts, i+1)
+		}
+	}
 	counts := map[string]int{}
 	prefix := ""
 
@@ -432,7 +446,7 @@ func walkDocument(data []byte) documentWalk {
 				counts[name]++
 			}
 			if first != nil {
-				w.positions[prefix] = p.Shape(first.Raw).Start
+				w.positions[prefix] = w.at(first.Raw)
 				if e.Kind == unstable.Table && slices.Contains(arrayTables, string(first.Data)) {
 					w.shapeErrors = append(w.shapeErrors, shapeError{prefix,
 						fmt.Sprintf("use [[%s]] (an array of tables), not [%s]", first.Data, name)})
@@ -445,7 +459,7 @@ func walkDocument(data []byte) documentWalk {
 				key = prefix + "." + name
 			}
 			if first != nil {
-				w.positions[key] = p.Shape(first.Raw).Start
+				w.positions[key] = w.at(first.Raw)
 			}
 			value := e.Value()
 			if prefix == "" && first != nil && slices.Contains(arrayTables, string(first.Data)) &&
@@ -453,17 +467,42 @@ func walkDocument(data []byte) documentWalk {
 				w.shapeErrors = append(w.shapeErrors, shapeError{key,
 					fmt.Sprintf("%s must be a list of tables, use [[%s]]", first.Data, first.Data)})
 			}
-			w.value(&p, key, value)
+			w.value(key, value)
 		}
 	}
 	return w
 }
 
+// at turns a node's byte range into a line and column, both starting at 1.
+// Columns count bytes, the same as the decoder's own errors.
+func (w *documentWalk) at(r unstable.Range) unstable.Position {
+	offset := int(r.Offset)
+	// The last line that starts at or before offset.
+	line := sort.Search(len(w.lineStarts), func(i int) bool { return w.lineStarts[i] > offset }) - 1
+	return unstable.Position{Offset: offset, Line: line + 1, Column: offset - w.lineStarts[line] + 1}
+}
+
+// causedFailure reports whether a layout error is behind a fatal decode error,
+// which is the case when the decoder failed on the same top level key.
+func (w *documentWalk) causedFailure(err error) bool {
+	var de *toml.DecodeError
+	if !errors.As(err, &de) || len(de.Key()) == 0 {
+		return false
+	}
+	for _, s := range w.shapeErrors {
+		top, _, _ := strings.Cut(s.key, ".")
+		if top == de.Key()[0] {
+			return true
+		}
+	}
+	return false
+}
+
 // value records where a value is, and the values inside it for arrays and inline
 // tables.
-func (w *documentWalk) value(p *unstable.Parser, key string, n *unstable.Node) {
+func (w *documentWalk) value(key string, n *unstable.Node) {
 	if n.Raw.Length > 0 {
-		w.positions[key] = p.Shape(n.Raw).Start
+		w.positions[key] = w.at(n.Raw)
 	}
 	switch n.Kind {
 	case unstable.Array:
@@ -473,7 +512,7 @@ func (w *documentWalk) value(p *unstable.Parser, key string, n *unstable.Node) {
 			if child.Kind == unstable.Comment {
 				continue
 			}
-			w.value(p, key+"."+strconv.Itoa(i), child)
+			w.value(key+"."+strconv.Itoa(i), child)
 			i++
 		}
 	case unstable.InlineTable:
@@ -485,9 +524,9 @@ func (w *documentWalk) value(p *unstable.Parser, key string, n *unstable.Node) {
 			name, first := joinKey(child)
 			childKey := key + "." + name
 			if first != nil {
-				w.positions[childKey] = p.Shape(first.Raw).Start
+				w.positions[childKey] = w.at(first.Raw)
 			}
-			w.value(p, childKey, child.Value())
+			w.value(childKey, child.Value())
 		}
 	}
 }

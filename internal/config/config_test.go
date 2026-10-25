@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -91,6 +92,10 @@ func TestParseErrorsPointAtTheLine(t *testing.T) {
 			"plain-table.toml:1:2: use [[pattern]] (an array of tables), not [pattern]",
 			"plain-table.toml:5:2: use [[watch]] (an array of tables), not [watch]",
 		}},
+		{"wrong-type-and-layout.toml", []string{
+			"wrong-type-and-layout.toml:1:18: settle_seconds has the wrong type (got a TOML string)",
+			"wrong-type-and-layout.toml:3:2: use [[pattern]] (an array of tables), not [pattern]",
+		}},
 		{"inline-table.toml", []string{"inline-table.toml:1:10: ignore must be a list of tables, use [[ignore]]"}},
 		{"negative.toml", []string{
 			"negative.toml:1:18: settle_seconds must be between 1 and 3600, got 0",
@@ -135,6 +140,38 @@ func TestLoadReportsTheFilePath(t *testing.T) {
 	_, err := Load(dir)
 	if err == nil || !strings.HasPrefix(err.Error(), Path(dir)+":1:") {
 		t.Fatalf("Load error = %v, want it to start with the path and line", err)
+	}
+}
+
+// manyIgnores is a file with n ignore rules, the last of them broken. It's well
+// under MaxFileSize but big enough that working out positions by scanning from the
+// top of the file for every key would stall a reload.
+func manyIgnores(n int) []byte {
+	var b strings.Builder
+	for i := range n - 1 {
+		fmt.Fprintf(&b, "[[ignore]]\nregex = \"rule %d\"\n\n", i)
+	}
+	b.WriteString("[[ignore]]\nregex = \"[broken\"\n")
+	return []byte(b.String())
+}
+
+func TestParseLargeFileKeepsPositions(t *testing.T) {
+	const n = 20000
+	data := manyIgnores(n)
+	if len(data) > MaxFileSize {
+		t.Fatalf("fixture is %d bytes, over MaxFileSize", len(data))
+	}
+	_, err := Parse("big.toml", data)
+	want := fmt.Sprintf("big.toml:%d:9: bad regex", 3*n-1)
+	if err == nil || !strings.HasPrefix(err.Error(), want) {
+		t.Fatalf("Parse error = %v, want it to start %q", err, want)
+	}
+}
+
+func BenchmarkParseLargeFile(b *testing.B) {
+	data := manyIgnores(20000)
+	for b.Loop() {
+		_, _ = Parse("big.toml", data)
 	}
 }
 

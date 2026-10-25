@@ -22,8 +22,9 @@ Two halves with a hard line between them:
 - **`internal/engine`** takes lines of output in and gives entries and messages out.
   Detection, grouping, the fix check and the message format all live here. It uses
   the Go standard library only and knows nothing about herdr, sockets or panes.
-- **`internal/herdr`** is the adapter. It talks to herdr's socket, subscribes to pane
-  output and agent status, and delivers messages with `agent prompt`.
+- **`internal/herdr`** is the adapter. It talks to herdr's socket, reads the watched
+  panes and hands new lines to the engine, subscribes to agent status and pane events
+  and delivers messages with `agent prompt`.
 
 **The engine never imports the adapter.** A test enforces this (#3). If you find
 yourself wanting to cross the line, the interface is wrong. Change the interface.
@@ -141,3 +142,15 @@ Step by step guides any tool can follow:
 - `[[build]]` runs on GitHub install and on `herdr plugin update` (0.9.4 and later),
   each time in a fresh checkout, but not on `plugin link`. It runs `scripts/install.sh`,
   which must stay plain POSIX sh with no bash-isms and no Python.
+- The socket speaks one JSON object per line: `{"id","method","params"}` out,
+  `{"id","result"}` or `{"id","error"}` back. A plugin pane runs with the plugin root
+  as its working directory.
+- `pane.output_matched` is edge triggered on a snapshot of the last `lines` lines. It
+  fires once when a match appears and not again until the match leaves the window, and
+  a burst between snapshots can be missed entirely. Don't use it to find errors. Read
+  watched panes with `pane.read` (`recent_unwrapped`) and diff the snapshots. Details
+  and the spike are in #1.
+- `revision` is always 0 on 0.9.1, so it can't tell you a pane changed. There's no
+  `events_lost` event either. Handle the socket closing instead.
+- Event envelopes come in two shapes: `{"event":"pane.output_matched","data":{...}}`
+  and `{"event":"pane_closed","data":{"type":"pane_closed",...}}`. Accept both.

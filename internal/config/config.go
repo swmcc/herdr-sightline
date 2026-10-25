@@ -172,6 +172,9 @@ func readFile(path string) (data []byte, exists bool, err error) {
 // rest of the file being checked, because the decoder has filled in everything it
 // did recognise. A syntax error or a value of the wrong type does stop it, because
 // then the decoded values can't be trusted, so that's the only error you'll see.
+// A key in the wrong case stops the value checks too. TOML keys are case
+// sensitive but the decoder isn't, so it has already taken the value under the
+// right name and any problem with it would have no line to point at.
 func Parse(name string, data []byte) (Config, error) {
 	data = bytes.TrimPrefix(data, utf8BOM)
 
@@ -181,6 +184,9 @@ func Parse(name string, data []byte) (Config, error) {
 	v := validator{name: name, positions: w.positions}
 	for _, s := range w.shapeErrors {
 		v.fail(s.key, "%s", s.msg)
+	}
+	for _, c := range w.caseErrors {
+		v.errs = append(v.errs, &Error{File: name, Line: c.pos.Line, Column: c.pos.Column, Msg: c.msg})
 	}
 
 	var raw fileConfig
@@ -201,6 +207,11 @@ func Parse(name string, data []byte) (Config, error) {
 			return Config{}, errors.Join(errs...)
 		}
 		errs = append(errs, unknownKeyErrors(name, strict)...)
+	}
+	if len(w.caseErrors) > 0 {
+		errs = append(errs, v.errs...)
+		sortErrors(errs)
+		return Config{}, errors.Join(errs...)
 	}
 	cfg := v.build(raw)
 	errs = append(errs, v.errs...)
@@ -407,6 +418,57 @@ type shapeError struct {
 	msg string
 }
 
+// caseError is a known key spelt with the wrong case. top is the top level key it
+// sits under, as written, so a decode failure on it can be traced back.
+type caseError struct {
+	top string
+	pos unstable.Position
+	msg string
+}
+
+// schema lists the keys each table allows, with "" for the top level. It's only
+// used to catch the wrong case. The decoder's strict mode deals with keys that
+// aren't known at all.
+var schema = map[string][]string{
+	"":        {"settle_seconds", "context_lines", "presets", "pattern", "ignore", "watch"},
+	"pattern": {"name", "regex"},
+	"ignore":  {"regex"},
+	"watch":   {"pane_title", "agent"},
+}
+
+// checkCase follows the parts of a key down from table and records every part
+// that matches a known key only when case is ignored. It carries on under the
+// right spelling, so a wrong case field inside a wrong case table is caught too.
+// It returns the right spelling of the first part, or "" if it isn't known.
+func (w *documentWalk) checkCase(table string, parts []*unstable.Node) string {
+	top, canonFirst := table, ""
+	for i, n := range parts {
+		got := string(n.Data)
+		if i == 0 && table == "" {
+			top = got
+		}
+		next := ""
+		for _, want := range schema[table] {
+			if strings.EqualFold(want, got) {
+				next = want
+				break
+			}
+		}
+		if next == "" {
+			break
+		}
+		if next != got {
+			w.caseErrors = append(w.caseErrors, caseError{top: top, pos: w.at(n.Raw),
+				msg: fmt.Sprintf("unknown key %q (keys are case sensitive, did you mean %s?)", got, next)})
+		}
+		if i == 0 {
+			canonFirst = next
+		}
+		table = next
+	}
+	return canonFirst
+}
+
 // documentWalk is what walkDocument finds.
 type documentWalk struct {
 	// positions maps each key to where it is, so validation errors can point at
@@ -417,6 +479,8 @@ type documentWalk struct {
 	// shapeErrors are tables written the wrong way, such as [pattern] for
 	// [[pattern]]. The decoder quietly accepts those as a single entry.
 	shapeErrors []shapeError
+	// caseErrors are keys spelt with the wrong case, such as SETTLE_SECONDS.
+	caseErrors []caseError
 	// lineStarts holds the byte offset of the start of each line. The parser's own
 	// Shape scans from the top of the file for every node, which turns a long file
 	// into a stalled reload, so positions are worked out from this instead.
@@ -431,7 +495,9 @@ func walkDocument(data []byte) documentWalk {
 		}
 	}
 	counts := map[string]int{}
-	prefix := ""
+	// prefix is the current table as written. table is its right spelling, used
+	// to check the keys inside it.
+	prefix, table := "", ""
 
 	var p unstable.Parser
 	p.Reset(data)
@@ -439,7 +505,9 @@ func walkDocument(data []byte) documentWalk {
 		e := p.Expression()
 		switch e.Kind {
 		case unstable.Table, unstable.ArrayTable:
-			name, first := joinKey(e)
+			name, parts := joinKey(e)
+			first := firstPart(parts)
+			table = w.checkCase("", parts)
 			prefix = name
 			if e.Kind == unstable.ArrayTable {
 				prefix = name + "." + strconv.Itoa(counts[name])
@@ -447,13 +515,20 @@ func walkDocument(data []byte) documentWalk {
 			}
 			if first != nil {
 				w.positions[prefix] = w.at(first.Raw)
-				if e.Kind == unstable.Table && slices.Contains(arrayTables, string(first.Data)) {
+				if e.Kind == unstable.Table && slices.Contains(arrayTables, table) {
 					w.shapeErrors = append(w.shapeErrors, shapeError{prefix,
-						fmt.Sprintf("use [[%s]] (an array of tables), not [%s]", first.Data, name)})
+						fmt.Sprintf("use [[%s]] (an array of tables), not [%s]", table, name)})
 				}
 			}
 		case unstable.KeyValue:
-			name, first := joinKey(e)
+			name, parts := joinKey(e)
+			first := firstPart(parts)
+			top := table
+			if prefix == "" {
+				top = w.checkCase("", parts)
+			} else {
+				w.checkCase(table, parts)
+			}
 			key := name
 			if prefix != "" {
 				key = prefix + "." + name
@@ -462,12 +537,12 @@ func walkDocument(data []byte) documentWalk {
 				w.positions[key] = w.at(first.Raw)
 			}
 			value := e.Value()
-			if prefix == "" && first != nil && slices.Contains(arrayTables, string(first.Data)) &&
-				(name != string(first.Data) || value.Kind != unstable.Array) {
+			if prefix == "" && slices.Contains(arrayTables, top) &&
+				(len(parts) > 1 || value.Kind != unstable.Array) {
 				w.shapeErrors = append(w.shapeErrors, shapeError{key,
-					fmt.Sprintf("%s must be a list of tables, use [[%s]]", first.Data, first.Data)})
+					fmt.Sprintf("%s must be a list of tables, use [[%s]]", top, top)})
 			}
-			w.value(key, value)
+			w.value(top, key, value)
 		}
 	}
 	return w
@@ -491,7 +566,12 @@ func (w *documentWalk) causedFailure(err error) bool {
 	}
 	for _, s := range w.shapeErrors {
 		top, _, _ := strings.Cut(s.key, ".")
-		if top == de.Key()[0] {
+		if strings.EqualFold(top, de.Key()[0]) {
+			return true
+		}
+	}
+	for _, c := range w.caseErrors {
+		if strings.EqualFold(c.top, de.Key()[0]) {
 			return true
 		}
 	}
@@ -499,8 +579,9 @@ func (w *documentWalk) causedFailure(err error) bool {
 }
 
 // value records where a value is, and the values inside it for arrays and inline
-// tables.
-func (w *documentWalk) value(key string, n *unstable.Node) {
+// tables. table is the top level key the value sits under, which says which keys
+// an inline table inside it may have.
+func (w *documentWalk) value(table, key string, n *unstable.Node) {
 	if n.Raw.Length > 0 {
 		w.positions[key] = w.at(n.Raw)
 	}
@@ -512,7 +593,7 @@ func (w *documentWalk) value(key string, n *unstable.Node) {
 			if child.Kind == unstable.Comment {
 				continue
 			}
-			w.value(key+"."+strconv.Itoa(i), child)
+			w.value(table, key+"."+strconv.Itoa(i), child)
 			i++
 		}
 	case unstable.InlineTable:
@@ -521,26 +602,33 @@ func (w *documentWalk) value(key string, n *unstable.Node) {
 			if child.Kind != unstable.KeyValue {
 				continue
 			}
-			name, first := joinKey(child)
+			name, parts := joinKey(child)
+			first := firstPart(parts)
+			w.checkCase(table, parts)
 			childKey := key + "." + name
 			if first != nil {
 				w.positions[childKey] = w.at(first.Raw)
 			}
-			w.value(childKey, child.Value())
+			w.value(table, childKey, child.Value())
 		}
 	}
 }
 
-// joinKey returns a node's dotted key and the node for its first part.
-func joinKey(e *unstable.Node) (string, *unstable.Node) {
-	var parts []string
-	var first *unstable.Node
+// joinKey returns a node's dotted key and the nodes for each part.
+func joinKey(e *unstable.Node) (string, []*unstable.Node) {
+	var names []string
+	var parts []*unstable.Node
 	for it := e.Key(); it.Next(); {
 		n := it.Node()
-		if first == nil {
-			first = n
-		}
-		parts = append(parts, string(n.Data))
+		parts = append(parts, n)
+		names = append(names, string(n.Data))
 	}
-	return strings.Join(parts, "."), first
+	return strings.Join(names, "."), parts
+}
+
+func firstPart(parts []*unstable.Node) *unstable.Node {
+	if len(parts) == 0 {
+		return nil
+	}
+	return parts[0]
 }

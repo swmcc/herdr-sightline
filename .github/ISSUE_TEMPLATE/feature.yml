@@ -1,0 +1,29 @@
+name: ✨ Idea
+description: Something Sightline should do
+labels: ["✨ feature"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What's getting in your way today? Start here rather than with a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: How would we know it's finished? This makes the issue easy to pick up, for people and agents.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Fit
+      options:
+        - label: I've read "What it doesn't do" in the README and this isn't one of those
+          required: true

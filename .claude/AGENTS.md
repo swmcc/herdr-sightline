@@ -88,7 +88,14 @@ flags dashes and likely Oxford commas in Markdown.
 
 - One branch per issue, named like `12-fix-check`.
 - Rebase on `main` before opening a PR.
-- `main` is protected. Everything goes through a pull request and the `test` check must pass.
+- `main` is protected. Everything goes through a pull request, and `test` and
+  `issue-link` must pass on a branch that's up to date with `main`. History is linear:
+  rebase or squash, never a merge commit.
+- PRs from anyone but the maintainer need an approval from someone else on the project.
+  The maintainer merges their own PRs with `gh pr merge --rebase --admin`, which skips
+  the approval only. The checks still apply.
+- Contribution rules for people are in [CONTRIBUTING.md](../CONTRIBUTING.md). Keep the
+  two in step.
 - Every PR links to an issue. Use `Closes #N` when it finishes the issue and `Refs #N`
   when it's part of one. If there's no issue yet, create one first. The `issue-link`
   check fails without it.

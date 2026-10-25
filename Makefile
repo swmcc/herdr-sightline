@@ -1,7 +1,12 @@
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -X main.version=$(VERSION)
 
-.PHONY: build test check link unlink hooks clean
+.PHONY: setup build test check link unlink hooks clean
+
+# One time setup: the tools `make check` needs, plus the git hooks.
+setup: hooks
+	go install honnef.co/go/tools/cmd/staticcheck@latest
+	go install golang.org/x/vuln/cmd/govulncheck@latest
 
 # Build bin/sightline, the binary herdr calls.
 build:

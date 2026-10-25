@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Run the full check before anything leaves this machine. Installed with `make hooks`.
+exec "$(git rev-parse --show-toplevel)/.claude/scripts/pre-push.sh"

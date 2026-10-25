@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Prose check on the Markdown being committed. Installed with `make hooks`.
+set -euo pipefail
+
+files=$(git diff --cached --name-only --diff-filter=ACM -- '*.md')
+[ -z "$files" ] && exit 0
+
+# shellcheck disable=SC2086
+exec "$(git rev-parse --show-toplevel)/.claude/scripts/check-prose.sh" $files

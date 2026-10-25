@@ -1,0 +1,48 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(gofmt:*)",
+      "Bash(staticcheck:*)",
+      "Bash(govulncheck:*)",
+      "Bash(make build:*)",
+      "Bash(make test:*)",
+      "Bash(make check:*)",
+      "Bash(make link:*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(herdr plugin link:*)",
+      "Bash(herdr plugin list:*)",
+      "Bash(herdr plugin action list:*)",
+      "Bash(herdr plugin log:*)",
+      "Bash(herdr api schema:*)",
+      "Bash(.claude/scripts/check-prose.sh:*)",
+      "Bash(.claude/scripts/pre-push.sh:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --no-verify:*)",
+      "Bash(git commit --no-verify:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/after-edit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -141,7 +141,7 @@ still reads as pane output, because every line of it starts with `| `. The heade
 says how many lines follow and the last line says where they end.
 
 The closing line ("Please investigate and fix the cause.") is configurable. It's
-kept to one line of at most 200 characters, with backticks turned into quotes.
+kept to one line of at most 200 characters, with backticks turned into apostrophes.
 
 Each line is cut at 500 characters and the whole message at 16 KiB, so a long
 stack trace or a pane full of noise can't flood the agent. When the cap bites,

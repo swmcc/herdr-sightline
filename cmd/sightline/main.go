@@ -50,9 +50,9 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout, std
 
 	switch args[0] {
 	case "watch":
-		return notBuiltYet(stdout, "watch", "#5", getenv("HERDR_PANE_ID"))
+		return watch(getenv, stdout, stderr)
 	case "unwatch":
-		return notBuiltYet(stdout, "unwatch", "#5", getenv("HERDR_PANE_ID"))
+		return unwatch(getenv, stdout, stderr)
 	case "feed":
 		return feed(args[1:], getenv, stdin, stdout, stderr)
 	case "version", "--version", "-v":
@@ -65,16 +65,6 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout, std
 		fmt.Fprintf(stderr, "sightline: unknown command %q\n\n%s", args[0], usage)
 		return 2
 	}
-}
-
-// notBuiltYet proves herdr is wiring actions through correctly until the real
-// behaviour lands.
-func notBuiltYet(stdout io.Writer, command, issue, pane string) int {
-	if pane == "" {
-		pane = "(no pane in context)"
-	}
-	fmt.Fprintf(stdout, "sightline %s: called for pane %s. Not built yet, see %s.\n", command, pane, issue)
-	return 0
 }
 
 // paneList collects --watch flags.
@@ -117,19 +107,27 @@ func feed(args []string, getenv func(string) string, stdin io.Reader, stdout, st
 		return 1
 	}
 
+	stateDir, self := getenv(watchlist.StateDirEnv), getenv("HERDR_PANE_ID")
+	if err := registerFeed(stateDir, self); err != nil {
+		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
+	}
 	err = sightlinefeed.Run(ctx, sightlinefeed.Options{
 		Client:    client,
 		ConfigDir: getenv("HERDR_PLUGIN_CONFIG_DIR"),
-		StateDir:  getenv(watchlist.StateDirEnv),
+		StateDir:  stateDir,
 		Watch:     panes,
-		Self:      getenv("HERDR_PANE_ID"),
+		Self:      self,
 		Program:   []tea.ProgramOption{tea.WithAltScreen()},
 	})
+	code := 0
 	if err != nil {
 		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
-		return 1
+		code = 1
 	}
-	return 0
+	if err := endFeed(client, stateDir, self); err != nil {
+		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
+	}
+	return code
 }
 
 // dial connects to the herdr named in the environment.

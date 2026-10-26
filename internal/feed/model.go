@@ -28,9 +28,10 @@ const (
 type mode int
 
 const (
-	modeList mode = iota // the entries
-	modeView             // the exact message for one entry
-	modePick             // choosing an agent for one entry
+	modeList  mode = iota // the entries
+	modeView              // the exact message for one entry
+	modePick              // choosing an agent for one entry
+	modeNever             // writing an ignore rule for one entry (#14)
 )
 
 // await is an agent that has been sent errors and hasn't finished yet.
@@ -69,6 +70,9 @@ type Model struct {
 	loops  *loops
 	now    func() time.Time
 	self   string // the feed's own pane, never watched
+	// configDir is where sightline.toml lives, set by Run. Empty means n can't
+	// save a rule.
+	configDir string
 
 	engine *engine.Engine
 	cfg    config.Config
@@ -115,6 +119,8 @@ type Model struct {
 	pickID     engine.EntryID
 	pickList   []herdr.Target
 	pickCursor int
+
+	never neverState // see ignore.go
 
 	status string
 	width  int
@@ -217,6 +223,7 @@ func (m *Model) reloadConfig(u config.Update) {
 	default:
 		m.status = "Reloaded sightline.toml."
 	}
+	m.noteRule()
 }
 
 // dismissed reports whether id is still in the engine but dismissed, so the
@@ -286,6 +293,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd = m.checked(msg)
 	case sentMsg:
 		m.sent(msg)
+	case neverMsg:
+		m.neverDone(msg)
 	}
 	m.refresh()
 	return m, cmd
@@ -771,6 +780,8 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 	case modePick:
 		m.pickKey(k)
 		return nil
+	case modeNever:
+		return m.neverKey(k)
 	}
 	return m.listKey(k)
 }
@@ -818,10 +829,11 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 			}
 		}
 	case "n":
-		// #14 replaces this with a suggested ignore rule.
 		if i >= 0 {
-			m.status = "Never again isn't built yet (#14). Press d to dismiss this one for now."
+			m.openNever(m.entries[i].Lines)
 		}
+	case "u":
+		return m.undoRule()
 	case "t":
 		if i >= 0 {
 			m.openPicker(m.entries[i])

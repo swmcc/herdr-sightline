@@ -118,6 +118,8 @@ func (m *Model) View() string {
 		return m.messageView()
 	case modePick:
 		return m.pickView()
+	case modeNever:
+		return m.neverView()
 	}
 	return m.listView()
 }

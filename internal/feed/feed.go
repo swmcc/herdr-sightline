@@ -109,6 +109,7 @@ func Run(parent context.Context, opts Options) (err error) {
 	}
 
 	m := newModel(ctx, opts.Client, now, opts.Self, first)
+	m.configDir = opts.ConfigDir
 	// Bubble Tea's own panic catch stays on. The guard gets there first for
 	// everything the feed runs, but Bubble Tea's catch still covers Bubble Tea
 	// itself and restores the terminal if that ever panics.

@@ -1,0 +1,15 @@
+# My Sightline config. Hand written, with odd spacing kept on purpose.
+settle_seconds   = 45
+context_lines = 10   # trailing comment
+
+presets = [
+  "node",   # web
+  "go",
+]
+
+[[pattern]]
+name  = "my-framework"
+regex = '^FATAL: .+'
+
+[[ignore]]
+regex = "DeprecationWarning"

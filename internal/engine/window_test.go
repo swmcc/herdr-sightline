@@ -176,6 +176,21 @@ func TestCleanLine(t *testing.T) {
 		{"unterminated OSC", "Error\x1b]0;hidden payload", "Error"},
 		{"charset escape", "\x1b(BError", "Error"},
 		{"ESC cancels a string", "\x1b]0;x\x1b[31mError", "Error"},
+		// C1 controls start a sequence from any state, as in a terminal.
+		{"C1 OSC after ESC", "\x1b\u009dHIDDEN\x07ok", "ok"},
+		{"C1 OSC inside a CSI", "\x1b[\u009dHIDDEN\x07ok", "ok"},
+		{"C1 DCS after an intermediate", "\x1b(\u0090HIDDEN\x1b\\ok", "ok"},
+		{"C1 OSC after ESC inside an OSC", "\x1b]x\x1b\u009dHIDDEN\x07ok", "ok"},
+		{"C1 CSI inside an OSC", "\x1b]0;t\u009bmError: visible", "Error: visible"},
+		// C0 controls and DEL inside an escape are acted on, not an end to it.
+		{"BEL after ESC", "\x1b\x07]0;HIDDEN\x07ok", "ok"},
+		{"CR after ESC", "\x1b\r]0;HIDDEN\x07ok", "ok"},
+		{"DEL after ESC", "\x1b\x7f]0;HIDDEN\x07ok", "ok"},
+		{"DEL inside a CSI", "\x1b[\x7f31;HIDDENmok", "IDDENmok"},
+		{"overlong CSI", "\x1b[" + strings.Repeat("1", 70) + "1337 0000 ?=?mok", "ok"},
+		// CAN and SUB cancel any sequence.
+		{"CAN ends an OSC", "\x1b]0;t\x18Error: visible", "Error: visible"},
+		{"SUB ends a CSI", "\x1b[1\x1apanic: visible", "panic: visible"},
 		{"unicode tags", "Error\U000E0069\U000E0067\U000E006E", "Error"},
 		{"bidi override", "\u202eError\u202c", "Error"},
 		{"zero width and BOM", "Er\u200bror\ufeff", "Error"},
@@ -276,8 +291,8 @@ func TestUnterminatedStringIsAbandonedAtTheCap(t *testing.T) {
 		name  string
 		flood []string
 	}{
-		{"too many lines", repeatLine("swallowed", maxSwallowLines+1)},
-		{"too many bytes", []string{strings.Repeat("x", maxSwallowBytes+1)}},
+		{"too many lines", repeatLine("swallowed", maxHiddenLines+1)},
+		{"too many bytes", []string{strings.Repeat("x", maxHiddenBytes+1)}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -294,11 +309,44 @@ func TestUnterminatedStringIsAbandonedAtTheCap(t *testing.T) {
 	}
 }
 
+// Reopening a string just before the cap mustn't reset it, or output could be
+// hidden for ever without a gap being reported.
+func TestReopeningStringsStillHitsTheCap(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"GET /\x1b]x 404"}, t0)
+	for range 50 {
+		e.Feed("web", repeatLine("healthy", 90), t0)
+		e.Feed("web", []string{"Error: real failure", "GET /\x1b]x 404"}, t0)
+	}
+	e.Tick(t0.Add(time.Second))
+	entries := e.Entries()
+	if len(entries) == 0 {
+		t.Fatal("every error was hidden and no gap was reported")
+	}
+	for _, en := range entries {
+		if !en.MaybeGap {
+			t.Fatalf("entry %q isn't flagged MaybeGap", en.Lines)
+		}
+	}
+}
+
+// When a string is abandoned part way through a line, the rest of that line is
+// dropped, because a terminal would still be hiding it.
+func TestAbandonedStringDropsTheRestOfTheLine(t *testing.T) {
+	got, overflowed := readAll([]string{
+		"shown \x1b]0;" + strings.Repeat("A", maxHiddenBytes) + "Error: HIDDEN PAYLOAD\x07",
+		"next",
+	})
+	if want := []string{"shown ", "next"}; !slices.Equal(got, want) || !overflowed {
+		t.Fatalf("read = %q (overflowed %v), want %q", got, overflowed, want)
+	}
+}
+
 // Below the cap, an error inside the string is never seen.
 func TestStringUnderTheCapHidesErrors(t *testing.T) {
 	e := newWatching()
 	e.Feed("web", []string{"\x1b]0;title"}, t0)
-	e.Feed("web", append(repeatLine("swallowed", maxSwallowLines-2), "Error: hidden"), t0)
+	e.Feed("web", append(repeatLine("swallowed", maxHiddenLines-2), "Error: hidden"), t0)
 	e.Feed("web", []string{"\x07"}, t0)
 	e.Tick(t0.Add(time.Second))
 	if got := e.Entries(); len(got) != 0 {

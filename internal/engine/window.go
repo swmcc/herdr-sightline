@@ -181,7 +181,13 @@ func (e *Engine) fileAll(s *source) {
 // terminal reads them: as a stream, with state kept across lines and across Feed
 // calls. Splitting into lines first would let a control string that spans lines
 // (which a terminal never shows) leak its middle lines, or let a sequence split
-// across two Feed calls leak its tail.
+// across two Feed calls leak its tail. The states and transitions follow the
+// DEC VT500 parser that xterm and VTE are built on, including the controls that
+// act from any state.
+//
+// One known gap, left for #8: a carriage return or cursor movement that
+// overwrites text on screen isn't interpreted, so both the old and new text are
+// kept. That fails towards showing more, never less, and `v` shows it.
 
 type scrubState uint8
 
@@ -190,43 +196,52 @@ const (
 	scrubEsc                  // after ESC
 	scrubEscInter             // after ESC and an intermediate byte, as in ESC ( B
 	scrubCSI                  // a control sequence: ESC [ or C1 CSI
+	scrubCSIIgnore            // a control sequence too long to be real, swallowed to its end
 	scrubOSC                  // an operating system command: ESC ] or C1 OSC
 	scrubString               // DCS, SOS, PM or APC
 	scrubStringEsc            // ESC inside OSC or one of the strings, maybe the start of ST
+	scrubDropLine             // the rest of a line after a control string was abandoned
 )
 
 const (
-	maxCSIBytes     = 64       // a longer CSI is junk, so stop treating it as one
-	maxSwallowBytes = 64 << 10 // the most a control string may swallow
-	maxSwallowLines = 100      // the most line ends a control string may swallow
+	maxCSIBytes      = 64       // a longer CSI is junk, so it's swallowed to its final byte
+	maxHiddenBytes   = 64 << 10 // the most output control strings may hide in a row
+	maxHiddenLines   = 100      // the most line ends control strings may hide in a row
+	ctrlCAN, ctrlSUB = 0x18, 0x1a
+	ctrlESC, ctrlBEL = 0x1b, 0x07
+	ctrlDEL          = 0x7f
+	c1DCS, c1SOS     = 0x90, 0x98
+	c1CSI, c1ST      = 0x9b, 0x9c
+	c1OSC            = 0x9d
+	c1PM, c1APC      = 0x9e, 0x9f
 )
 
 // scrubber turns a stream of terminal output into clean lines.
 type scrubber struct {
 	state    scrubState
-	inOSC    bool // in scrubStringEsc, whether the string was an OSC
 	line     strings.Builder
-	seqBytes int // bytes in the current CSI or control string
-	seqLines int // line ends swallowed by the current control string
+	csiBytes int // bytes in the current CSI
+	// hiddenBytes and hiddenLines count what control strings have swallowed since
+	// the last visible character. Starting a new string doesn't reset them, so
+	// output that keeps reopening strings still hits the cap.
+	hiddenBytes int
+	hiddenLines int
 }
 
 // write runs text through the scrubber. emit gets each complete, clean line.
-// overflow is called if a control string runs past its cap, at which point the
-// scrubber gives up on it and carries on as if it had ended, so one unterminated
-// sequence can't blind the watcher for ever.
+// overflow is called if control strings hide more than the cap, at which point
+// the scrubber abandons the string, drops the rest of that line and carries on,
+// so output that never closes a string can't blind the watcher for ever.
 func (s *scrubber) write(text string, emit func(string), overflow func()) {
 	for _, r := range text {
 		s.step(r, emit, overflow)
 	}
 }
 
-func (s *scrubber) enter(st scrubState) {
-	s.state = st
-	s.seqBytes = 0
-	s.seqLines = 0
-}
-
 func (s *scrubber) step(r rune, emit func(string), overflow func()) {
+	if s.anywhere(r) {
+		return
+	}
 	switch s.state {
 	case scrubText:
 		s.text(r, emit)
@@ -234,19 +249,15 @@ func (s *scrubber) step(r rune, emit func(string), overflow func()) {
 	case scrubEsc:
 		switch {
 		case r == '[':
-			s.enter(scrubCSI)
+			s.state, s.csiBytes = scrubCSI, 0
 		case r == ']':
-			s.enter(scrubOSC)
+			s.state = scrubOSC
 		case r == 'P', r == 'X', r == '^', r == '_':
-			s.enter(scrubString)
+			s.state = scrubString
 		case r >= 0x20 && r <= 0x2f:
 			s.state = scrubEscInter
-		case r == 0x1b:
-			// ESC ESC: the first is abandoned, the second starts again.
-		case r == '\n':
-			// A terminal acts on a line end inside an escape and stays in it, so
-			// one split across Feed calls still ends where it should.
-			s.text(r, emit)
+		case r < 0x20 || r == ctrlDEL:
+			s.control(r, emit)
 		default:
 			// The final byte of a two byte escape, or junk. Neither is shown.
 			s.state = scrubText
@@ -255,40 +266,33 @@ func (s *scrubber) step(r rune, emit func(string), overflow func()) {
 	case scrubEscInter:
 		switch {
 		case r >= 0x20 && r <= 0x2f:
-		case r == '\n':
-			s.text(r, emit)
+		case r < 0x20 || r == ctrlDEL:
+			s.control(r, emit)
 		default:
 			s.state = scrubText
 		}
 
-	case scrubCSI:
-		s.seqBytes++
+	case scrubCSI, scrubCSIIgnore:
+		s.csiBytes++
 		switch {
 		case r >= 0x40 && r <= 0x7e:
 			s.state = scrubText
-		case r == '\n':
-			// A terminal acts on a line end inside a CSI and stays in the sequence.
-			s.text(r, emit)
-		case r == 0x1b:
-			s.state = scrubEsc
+		case r < 0x20 || r == ctrlDEL:
+			s.control(r, emit)
 		case r >= 0x20 && r <= 0x3f:
-			if s.seqBytes > maxCSIBytes {
-				s.state = scrubText
+			if s.csiBytes > maxCSIBytes {
+				s.state = scrubCSIIgnore
 			}
-		case r < 0x20:
-			// Other C0 controls are acted on, never shown.
 		default:
+			// Not ASCII, so not part of any sequence. Abandon it unshown.
 			s.state = scrubText
 		}
 
 	case scrubOSC, scrubString:
 		switch {
-		case r == 0x9c: // C1 ST
+		case r == ctrlBEL && s.state == scrubOSC:
 			s.state = scrubText
-		case r == 0x07 && s.state == scrubOSC:
-			s.state = scrubText
-		case r == 0x1b:
-			s.inOSC = s.state == scrubOSC
+		case r == ctrlESC:
 			s.state = scrubStringEsc
 		default:
 			s.swallow(r, emit, overflow)
@@ -303,44 +307,98 @@ func (s *scrubber) step(r rune, emit func(string), overflow func()) {
 		// escape, as it does in a terminal.
 		s.state = scrubEsc
 		s.step(r, emit, overflow)
+
+	case scrubDropLine:
+		if r == '\n' {
+			s.state = scrubText
+			s.text(r, emit)
+		}
 	}
 }
 
-// swallow drops r as part of a control string, until the string has swallowed
-// too much.
-func (s *scrubber) swallow(r rune, emit func(string), overflow func()) {
-	s.seqBytes += utf8.RuneLen(r)
-	if r == '\n' {
-		s.seqLines++
+// anywhere handles the controls a terminal acts on whatever state it's in, and
+// reports whether r was one of them. On a line being dropped after an abandoned
+// string nothing counts, so the rest of that line can't be brought back.
+func (s *scrubber) anywhere(r rune) bool {
+	if s.state == scrubDropLine {
+		return false
 	}
-	if s.seqBytes <= maxSwallowBytes && s.seqLines <= maxSwallowLines {
+	inString := s.state == scrubOSC || s.state == scrubString
+	switch {
+	case r == ctrlCAN, r == ctrlSUB, r == c1ST:
+		// Cancel any sequence. Nothing is shown.
+		s.state = scrubText
+	case r == ctrlESC && !inString:
+		s.state = scrubEsc
+	case r == c1CSI:
+		s.state, s.csiBytes = scrubCSI, 0
+	case r == c1OSC:
+		s.state = scrubOSC
+	case r == c1DCS, r == c1SOS, r == c1PM, r == c1APC:
+		s.state = scrubString
+	case r >= 0x80 && r <= 0x9f:
+		// Any other C1 control is acted on and never shown. A terminal also ends a
+		// string here, but carrying on swallowing is the safe way to differ: it
+		// can only hide more, and the cap bounds that.
+		if !inString {
+			s.state = scrubText
+		}
+	default:
+		return false
+	}
+	return true
+}
+
+// control handles a C0 control or DEL inside an escape or CSI. A terminal acts on
+// it and stays in the sequence. Only a line end matters here, because it ends a
+// line.
+func (s *scrubber) control(r rune, emit func(string)) {
+	if r == '\n' {
+		s.endLine(emit)
+	}
+}
+
+// swallow drops r as part of a control string, until control strings have hidden
+// too much in a row.
+func (s *scrubber) swallow(r rune, emit func(string), overflow func()) {
+	s.hiddenBytes += utf8.RuneLen(r)
+	if r == '\n' {
+		s.hiddenLines++
+	}
+	if s.hiddenBytes <= maxHiddenBytes && s.hiddenLines <= maxHiddenLines {
 		return
 	}
-	s.state = scrubText
+	s.hiddenBytes, s.hiddenLines = 0, 0
 	overflow()
-	s.text(r, emit)
+	if r == '\n' {
+		s.state = scrubText
+		s.endLine(emit)
+		return
+	}
+	s.state = scrubDropLine
 }
 
 // text handles r outside any escape sequence.
 func (s *scrubber) text(r rune, emit func(string)) {
 	switch {
 	case r == '\n':
-		emit(s.line.String())
-		s.line.Reset()
-	case r == 0x1b:
-		s.state = scrubEsc
-	case r == 0x9b:
-		s.enter(scrubCSI)
-	case r == 0x9d:
-		s.enter(scrubOSC)
-	case r == 0x90, r == 0x98, r == 0x9e, r == 0x9f: // C1 DCS, SOS, PM and APC
-		s.enter(scrubString)
+		s.endLine(emit)
 	case r == '\t':
-		s.line.WriteRune(r)
+		s.visible(r)
 	case unicode.In(r, invisible...):
 	default:
-		s.line.WriteRune(r)
+		s.visible(r)
 	}
+}
+
+func (s *scrubber) visible(r rune) {
+	s.line.WriteRune(r)
+	s.hiddenBytes, s.hiddenLines = 0, 0
+}
+
+func (s *scrubber) endLine(emit func(string)) {
+	emit(s.line.String())
+	s.line.Reset()
 }
 
 // invisible is every character that shows nothing, or something other than

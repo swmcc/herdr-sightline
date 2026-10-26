@@ -979,6 +979,45 @@ func TestPaneMoveUpdatesTheWatchList(t *testing.T) {
 	}
 }
 
+// An error caught after a move, before a snapshot has seen the new id, still
+// shows the pane's label.
+func TestPaneMoveKeepsTheTitle(t *testing.T) {
+	h := newHarness(t)
+	h.sync()
+	h.update(watchListMsg{panes: []string{webPane}})
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p1", PreviousPaneID: webPane}})
+	h.update(deltaMsg{pane: "w2:p1", gen: h.gen("w2:p1"), delta: herdr.Delta{Initial: true}})
+	h.update(deltaMsg{pane: "w2:p1", gen: h.gen("w2:p1"), delta: herdr.Delta{Lines: []string{"TypeError: boom"}}})
+	h.clock.Advance(2 * time.Second)
+	h.update(tickMsg{})
+	if len(h.model.entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(h.model.entries))
+	}
+	if got := h.model.entries[0].Source; got.ID != "w2:p1" || got.Title != "web" {
+		t.Fatalf("source = %+v, want w2:p1 titled web", got)
+	}
+}
+
+// Only a listed pane's move goes to the watch list file, and a write that
+// fails says so.
+func TestPaneMoveWrites(t *testing.T) {
+	h := newHarness(t)
+	h.sync()
+	h.update(watchListMsg{panes: []string{webPane}})
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p5", PreviousPaneID: "w1:p7"}})
+	if got := h.loops.takeMoves(); len(got) != 0 {
+		t.Fatalf("an unlisted pane's move was queued: %v", got)
+	}
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p1", PreviousPaneID: webPane}})
+	if got := h.loops.takeMoves(); !slices.Equal(got, []paneMove{{webPane, "w2:p1"}}) {
+		t.Fatalf("queued %v, want the watched pane's move", got)
+	}
+	h.update(moveSaveFailedMsg{pane: "w2:p1", err: errors.New("disk full")})
+	if !strings.Contains(h.model.status, "couldn't be updated") || !strings.Contains(h.model.status, "disk full") {
+		t.Fatalf("status = %q", h.model.status)
+	}
+}
+
 func TestConfigChangeKeepsEntries(t *testing.T) {
 	h := newHarness(t)
 	h.catchError()

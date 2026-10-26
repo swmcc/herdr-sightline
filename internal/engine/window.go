@@ -1043,6 +1043,14 @@ func (s *scrubber) anywhere(r rune) bool {
 		// ignores UTF-8 C1 controls (checked live for #15), so it may well keep
 		// hiding. Carrying on is the safe way to differ: it can only hide more,
 		// the shadow flags every line shown meanwhile and the cap bounds it.
+		//
+		// A C1 that opens a string is the exception. xterm starts that string,
+		// so an OSC can become a DCS that BEL doesn't end. herdr carries on
+		// with the string it's in. Hiding as for a DCS covers both, because
+		// only BEL tells the two kinds apart and a DCS ignores it.
+		if r == c1OSC || r == c1DCS || r == c1SOS || r == c1PM || r == c1APC {
+			s.state = scrubString
+		}
 		return false
 	case r == ctrlCAN, r == ctrlSUB, r == c1ST:
 		// Cancel any sequence. Nothing is shown here, though some terminals

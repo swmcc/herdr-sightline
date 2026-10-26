@@ -1,0 +1,54 @@
+{
+  "pane_list": {
+    "type": "pane_list",
+    "panes": [
+      {"pane_id": "w1:p1", "terminal_id": "term_1", "workspace_id": "w1", "tab_id": "w1:t1", "focused": true, "revision": 0,
+       "agent": null, "display_agent": null, "agent_status": "unknown", "label": "web", "title": null,
+       "terminal_title": "next dev", "terminal_title_stripped": "next dev", "cwd": "/src/app"},
+      {"pane_id": "w1:p2", "terminal_id": "term_2", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "revision": 0,
+       "agent": "claude", "display_agent": null, "agent_status": "idle", "label": null, "title": null,
+       "terminal_title": "Fix the notice list", "terminal_title_stripped": "Fix the notice list", "cwd": "/src/app"},
+      {"pane_id": "w1:p3", "terminal_id": "term_3", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "revision": 0,
+       "agent": "codex", "display_agent": "Codex", "agent_status": "idle", "label": null, "title": null,
+       "terminal_title": "codex", "terminal_title_stripped": "codex", "cwd": "/src/app"},
+      {"pane_id": "w1:p4", "terminal_id": "term_4", "workspace_id": "w1", "tab_id": "w1:t2", "focused": false, "revision": 0,
+       "agent": "claude", "display_agent": null, "agent_status": "idle", "label": null, "title": null,
+       "terminal_title": "Claude Code", "terminal_title_stripped": "Claude Code", "cwd": "/src/app"},
+      {"pane_id": "w1:p5", "terminal_id": "term_5", "workspace_id": "w1", "tab_id": "w1:t2", "focused": false, "revision": 0,
+       "agent": null, "display_agent": null, "agent_status": "unknown", "label": "api", "title": null,
+       "terminal_title": "rails s", "terminal_title_stripped": "rails s", "cwd": "/src/api"},
+      {"pane_id": "w1:p6", "terminal_id": "term_6", "workspace_id": "w1", "tab_id": "w1:t3", "focused": false, "revision": 0,
+       "agent": null, "display_agent": null, "agent_status": "unknown", "label": null, "title": null,
+       "terminal_title": "swm@gollum:~/src/worker", "terminal_title_stripped": "swm@gollum:~/src/worker", "cwd": "/src/worker"},
+      {"pane_id": "w2:p1", "terminal_id": "term_7", "workspace_id": "w2", "tab_id": "w2:t1", "focused": false, "revision": 0,
+       "agent": "claude", "display_agent": null, "agent_status": "blocked", "label": "claude-docs", "title": null,
+       "terminal_title": "claude --resume 49b3f772", "terminal_title_stripped": "claude --resume 49b3f772", "cwd": "/src/docs"},
+      {"pane_id": "w2:p2", "terminal_id": "term_8", "workspace_id": "w2", "tab_id": "w2:t1", "focused": false, "revision": 0,
+       "agent": null, "display_agent": null, "agent_status": "unknown", "label": null, "title": null,
+       "terminal_title": "hugo server", "terminal_title_stripped": "hugo server", "cwd": "/src/docs"}
+    ]
+  },
+  "agent_list": {
+    "type": "agent_list",
+    "agents": [
+      {"pane_id": "w1:p2", "terminal_id": "term_2", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "revision": 0,
+       "agent": "claude", "display_agent": null, "name": null, "agent_status": "idle", "state_change_seq": 221,
+       "agent_session": {"agent": "claude", "kind": "id", "source": "herdr:claude", "value": "bb21aa54"}},
+      {"pane_id": "w1:p3", "terminal_id": "term_3", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "revision": 0,
+       "agent": "codex", "display_agent": "Codex", "name": null, "agent_status": "idle", "state_change_seq": 225},
+      {"pane_id": "w1:p4", "terminal_id": "term_4", "workspace_id": "w1", "tab_id": "w1:t2", "focused": false, "revision": 0,
+       "agent": "claude", "display_agent": null, "name": "reviewer", "agent_status": "idle", "state_change_seq": 230},
+      {"pane_id": "w2:p1", "terminal_id": "term_7", "workspace_id": "w2", "tab_id": "w2:t1", "focused": false, "revision": 0,
+       "agent": "claude", "display_agent": null, "name": null, "agent_status": "blocked", "state_change_seq": 219}
+    ]
+  },
+  "tab_list": {
+    "type": "tab_list",
+    "tabs": [
+      {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "Agentic", "focused": true, "pane_count": 3, "agent_status": "idle"},
+      {"tab_id": "w1:t2", "workspace_id": "w1", "number": 2, "label": "2", "focused": false, "pane_count": 2, "agent_status": "idle"},
+      {"tab_id": "w1:t3", "workspace_id": "w1", "number": 3, "label": "3", "focused": false, "pane_count": 1, "agent_status": "unknown"},
+      {"tab_id": "w2:t1", "workspace_id": "w2", "number": 1, "label": "Docs", "focused": false, "pane_count": 2, "agent_status": "blocked"}
+    ]
+  }
+}

@@ -332,6 +332,9 @@ func (l *loops) runWatchList(dir string, extra []string) {
 		}
 		select {
 		case <-l.ctx.Done():
+			// A move just before quitting still reaches the file, or the
+			// next feed would find the old id gone and drop the pane.
+			l.saveMoves(dir)
 			return
 		case <-t.C:
 		case <-l.moved:

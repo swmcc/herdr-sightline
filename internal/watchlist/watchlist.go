@@ -247,7 +247,7 @@ func Replace(dir, from, to string) (bool, error) {
 	return true, Write(dir, panes)
 }
 
-// readForChange reads the list for Add or Remove. Bad ids alone don't stop a
+// readForChange reads the list for Add, Remove or Replace. Bad ids alone don't stop a
 // change, since rewriting the file is what clears them out. A file that can't
 // be read at all does, so a change can't wipe a list it didn't understand.
 func readForChange(dir string) ([]string, error) {

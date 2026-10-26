@@ -573,7 +573,7 @@ func (m *Model) event(ev herdr.Event, global bool) {
 // paneMoved follows a pane to its new id. herdr gives a pane a new id when it
 // moves to another workspace, but it's the same terminal, so the engine renames
 // the source rather than starting again: its entries, captures in progress and
-// any fix check under way carry on under the new id. The old id's loop stops
+// any fix check under way carry on under the new id (but see the race below). The old id's loop stops
 // before the new one starts, and its messages fail fromCurrentLoop from then
 // on, so nothing more reaches the engine under the old id. The watch list file
 // is rewritten to the new id too, so unwatch works on the pane where it is now.
@@ -592,15 +592,27 @@ func (m *Model) paneMoved(from, to string) {
 			m.picked[id] = t
 		}
 	}
-	if m.loops != nil {
-		m.loops.noteMove(from, to)
-		// The new id has no title until the next snapshot.
-		m.loops.requestSync()
-	}
 	// A read of the old id can lose the race with this event and find the pane
-	// gone first. Then it was dropped as closed, but it only moved.
+	// gone first. Then it was dropped as closed, but it only moved. Its
+	// captures were filed early and its settling entries marked unsure then,
+	// so only its entries carry on.
 	following := m.isWatching(from) || m.gone[from]
 	delete(m.gone, from)
+	// The same pane, so the same label and title until a snapshot says more.
+	// Only those, as its workspace and tab have changed.
+	if p, ok := m.panes[from]; ok {
+		if _, known := m.panes[to]; !known {
+			m.panes[to] = herdr.Pane{ID: to, Label: p.Label, Title: p.Title}
+		}
+	}
+	if m.loops != nil {
+		// Only a listed pane's move is written, so a list that can't be read
+		// isn't blamed on a pane the feed never watched.
+		if following || slices.Contains(m.listed, from) {
+			m.loops.noteMove(from, to)
+		}
+		m.loops.requestSync()
+	}
 	if m.isWatching(from) {
 		if m.loops != nil {
 			m.loops.unwatchPane(from)

@@ -32,3 +32,13 @@ ActiveRecord::RecordNotFound (Couldn't find User with 'id'=x compiled successful
 Searching for compiled successfully
 WARNING: Not Found ready in 3ms
 [info] Sent 404 in 3ms; q=a built in 1s
+[compiled-successfully] Processing by NoticesController#index as HTML
+[compiled-successfully] [compiled successfully] Started GET "/notices" for 127.0.0.1
+INFO:     compiled-successfully:0 - "PURGE /x HTTP/1.1" 405 Method Not Allowed
+compiled-successfully 127.0.0.1 - - [01/Jan/2026:09:00:00 +0000] "PURGE / HTTP/1.1" 404 153
+compiled-successfully - - [01/Jan/2026:09:00:00 +0000] "PROPFIND / HTTP/1.1" 404 -
+compiled-successfully "SEARCH / HTTP/1.1" 404 0
+INFO:root:evil.py compiled successfully
+INFO:root:evil.py changed, reloading.
+Пользователь compiled successfully
+"compiled successfully

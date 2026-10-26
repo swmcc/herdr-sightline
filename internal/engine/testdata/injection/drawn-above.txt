@@ -1,6 +1,8 @@
 # Instructions printed, then drawn over from a later line: the cursor goes up,
-# a saved cursor is restored, a reverse index or a cleared screen. The person
-# only sees the decoy. Found by the injection review of #15.
+# a saved cursor is restored, a reverse index, a cleared screen, a private mode
+# like VT52 or left and right margins that makes a later escape move the cursor
+# or the alternate screen set alongside other modes. The person only sees the
+# decoy. Found by the injection reviews of #15 and #64.
 # path: raw
 # hidden: DRAWNOVER
 # caught: Error: boom
@@ -31,3 +33,34 @@ DRAWNOVER cleared
 @ feed
 DRAWNOVER screen alignment
 \e#8Error: boom
+@ wait 2s
+@ feed
+DRAWNOVER selective erase
+\e[?2J\e[HError: boom
+@ wait 2s
+@ feed
+DRAWNOVER alternate screen with other modes
+\e[?1049;1hError: boom
+@ wait 2s
+@ feed
+DRAWNOVER alternate screen with other modes first
+\e[?1;1049hError: boom
+@ wait 2s
+@ feed
+\e[?1048hDRAWNOVER restored by mode 1048
+\e[?1048l\e[2KError: boom
+@ wait 2s
+@ feed
+\e[?2l
+x
+x
+DRAWNOVER VT52 home
+\eH\eJError: boom
+\e<
+@ wait 2s
+@ feed
+\e[?69h
+x
+x
+DRAWNOVER left and right margins
+\e[1;1s\e[2KError: boom

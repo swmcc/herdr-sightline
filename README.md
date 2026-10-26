@@ -186,10 +186,26 @@ agent finished, in the first half of the settle period so the error has had time
 to come back:
 
 - A compile, build, restart or test run finishing, like `compiled successfully`,
-  `ready in 312 ms`, `Tests: 4 passed` or `* Listening on`. Request logs don't
-  count. They only show the server is up.
-- If the error came with a request (`GET /notices 500`), that same request again,
-  without a 5xx. A recompile doesn't prove a request bug is gone.
+  `ready in 312 ms`, `Tests: 4 passed` or `* Listening on`. It only counts at the
+  start of its line, after at most a symbol, a time, tags, a log level and the
+  tool's name. Request logs don't count. They only show the server is up.
+- If the error came with a request (`GET /notices?page=2 500`), that same
+  request again, query and all, with a 2xx. A redirect or a 404 doesn't count,
+  because anyone can send the same request in a way that never reaches the bug.
+  Where the server logs the request before its status (Rails' `Started` and
+  `Completed`), the next request to end has to be that one. It only counts in a
+  request line's own form, so a request someone puts in a query string doesn't.
+  A recompile doesn't prove a request bug is gone. If Sightline can't tell which
+  of several requests the error came from, it says `? unverified`. With Rails or
+  Phoenix that's whenever two requests are logged near the error, even after a
+  recompile, because their logs don't say which request each `Completed` ends.
+
+A request only counts as the error's when the app answered it with a 5xx or it
+was still being handled when the error struck. A bug that only shows for one
+user, one session or one header can still look fixed when someone else's same
+request gets a 2xx. Request logs that end with a referer and user agent (the combined
+format of nginx, morgan and gunicorn) aren't read, so an error from one of those
+stays `? unverified` unless something recompiles.
 
 If Sightline may have missed output from the pane during the settle period, or
 the pane stops being watched, it says `? unverified` whatever else it saw.
@@ -276,8 +292,15 @@ What that protects against, and what it doesn't:
   reaches the message like any other text, so check `v` before you send.
 - **It can't** see what herdr's terminal hid. If a pane hides the error coming back
   (in a terminal title, say) then Sightline doesn't see it either. A server that logs
-  text someone else chose can still print a line that looks like a recompile. So
-  `✓ fixed` only ever means the error stopped showing.
+  text someone else chose can still print a line that looks like a recompile or a
+  request succeeding, for example when it logs a newline from a request path as
+  it is, so the text after it starts a line of its own. A server handling
+  requests side by side can also log someone else's request ending where yours
+  should. When a request logs more than the context before it fails, its start
+  is lost, and a request someone else started in that time can stand in for it.
+  A dev server that compiles pages on demand (Next.js) prints a real compile
+  line for anyone's request. So `✓ fixed` only ever means the error stopped
+  showing.
 
 Sightline can't control the agent that receives the message. If you use Claude Code,
 set `CLAUDE_CODE_DISABLE_FILE_MENTIONS=1` in the `env` of your user settings (Claude

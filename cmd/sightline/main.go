@@ -4,9 +4,20 @@ package main
 
 import (
 	"bufio"
+	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	sightlinefeed "github.com/swmcc/herdr-sightline/internal/feed"
+	"github.com/swmcc/herdr-sightline/internal/herdr"
+	"github.com/swmcc/herdr-sightline/internal/watchlist"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
@@ -16,6 +27,7 @@ const usage = `Sightline: your agents can see the panes next to them.
 
 Usage:
   sightline <command>
+  sightline feed [--watch PANE]...
 
 Commands:
   watch     Start watching the focused pane
@@ -42,7 +54,7 @@ func run(args []string, getenv func(string) string, stdin io.Reader, stdout, std
 	case "unwatch":
 		return notBuiltYet(stdout, "unwatch", "#5", getenv("HERDR_PANE_ID"))
 	case "feed":
-		return feed(stdin, stdout)
+		return feed(args[1:], getenv, stdin, stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, "sightline", version)
 		return 0
@@ -65,10 +77,66 @@ func notBuiltYet(stdout io.Writer, command, issue, pane string) int {
 	return 0
 }
 
-// feed is a placeholder for the real feed (#9). It stays open until enter is
-// pressed so the pane doesn't flash and vanish.
-func feed(stdin io.Reader, stdout io.Writer) int {
-	fmt.Fprintf(stdout, "Sightline %s\n\nThe feed isn't built yet, see #9.\nPress enter to close.\n", version)
-	_, _ = bufio.NewReader(stdin).ReadString('\n')
+// paneList collects --watch flags.
+type paneList []string
+
+func (p *paneList) String() string { return strings.Join(*p, ",") }
+
+func (p *paneList) Set(v string) error {
+	for _, id := range strings.Split(v, ",") {
+		id = strings.TrimSpace(id)
+		if !watchlist.ValidPaneID(id) {
+			return fmt.Errorf("%q isn't a pane id", id)
+		}
+		*p = append(*p, id)
+	}
+	return nil
+}
+
+// feed runs the feed, which is also the watcher. It watches the panes in the
+// watch list in HERDR_PLUGIN_STATE_DIR and any given with --watch.
+func feed(args []string, getenv func(string) string, stdin io.Reader, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("feed", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	var panes paneList
+	flags.Var(&panes, "watch", "a pane id to watch as well as the watch list (repeat it, or separate ids with commas)")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
+
+	// herdr sends SIGHUP when the pane closes. Bubble Tea handles SIGINT and
+	// SIGTERM itself.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGHUP)
+	defer stop()
+
+	client, err := dial(ctx, getenv)
+	if err != nil {
+		// Stay open so the message can be read before the pane closes.
+		fmt.Fprintf(stdout, "Sightline %s\n\nThe feed can't start: %v\nPress enter to close.\n", version, err)
+		_, _ = bufio.NewReader(stdin).ReadString('\n')
+		return 1
+	}
+
+	err = sightlinefeed.Run(ctx, sightlinefeed.Options{
+		Client:    client,
+		ConfigDir: getenv("HERDR_PLUGIN_CONFIG_DIR"),
+		StateDir:  getenv(watchlist.StateDirEnv),
+		Watch:     panes,
+		Self:      getenv("HERDR_PANE_ID"),
+		Program:   []tea.ProgramOption{tea.WithAltScreen()},
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
+		return 1
+	}
 	return 0
+}
+
+// dial connects to the herdr named in the environment.
+func dial(ctx context.Context, getenv func(string) string) (*herdr.Client, error) {
+	path := getenv(herdr.SocketEnv)
+	if path == "" {
+		return nil, fmt.Errorf("%s is not set, so herdr can't be reached (is this running inside herdr?)", herdr.SocketEnv)
+	}
+	return herdr.Dial(ctx, path)
 }

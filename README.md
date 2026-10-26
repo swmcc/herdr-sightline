@@ -253,6 +253,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [ ] Watch and unwatch a pane ([#5](https://github.com/swmcc/herdr-sightline/issues/5))
 - [x] Built-in error patterns with real fixtures ([#6](https://github.com/swmcc/herdr-sightline/issues/6))
 - [x] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))
+- [x] Cap how many entries the engine keeps ([#41](https://github.com/swmcc/herdr-sightline/issues/41))
 - [ ] Capture the lines around an error ([#8](https://github.com/swmcc/herdr-sightline/issues/8))
 - [ ] The feed pane ([#9](https://github.com/swmcc/herdr-sightline/issues/9))
 - [ ] Choose which agent gets the error ([#10](https://github.com/swmcc/herdr-sightline/issues/10))

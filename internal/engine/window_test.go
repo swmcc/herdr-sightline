@@ -182,6 +182,7 @@ func TestCleanLine(t *testing.T) {
 		// included, because herdr ignores UTF-8 C1 controls and may keep hiding.
 		{"C1 ST inside an OSC", "\u009d0;title\u009cHIDDEN", ""},
 		{"C1 ST inside a DCS", "\x1bPq\u009cHIDDEN\x1b\\ok", "ok"},
+		{"C1 SOS inside an OSC outlasts BEL", "\x1b]0;a\u0098b\x07HIDDEN\x1b\\ok", "ok"},
 		{"unterminated OSC", "Error\x1b]0;hidden payload", "Error"},
 		{"charset escape", "\x1b(BError", "Error"},
 		{"ESC cancels a string", "\x1b]0;x\x1b[31mError", "Error"},

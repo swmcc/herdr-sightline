@@ -285,7 +285,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
 - [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
 - [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
-- [ ] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
+- [x] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
 - [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
 - [x] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
 - [x] Protect `main` and run the tests on every pull request ([#31](https://github.com/swmcc/herdr-sightline/issues/31))

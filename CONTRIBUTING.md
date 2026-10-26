@@ -95,7 +95,7 @@ checked it. Then these run on their own:
 
 | What | When | What it does |
 | --- | --- | --- |
-| `test` | every PR and every push to `main` | prose check, `go vet` and `go test -race` |
+| `test` | every PR and every push to `main` | `make check` on Linux and macOS: prose, gofmt, `go vet`, `go test -race`, staticcheck and govulncheck |
 | `issue-link` | every PR | fails unless the description links an issue with `Closes #N` or `Refs #N` |
 | `assign` | when a PR opens | assigns you to the PR and the issues it links |
 | Copilot review | every PR and every new push | reviews against the [shared guide](.claude/AGENTS.md) and the review checklists |

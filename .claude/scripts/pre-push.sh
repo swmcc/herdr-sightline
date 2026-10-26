@@ -41,11 +41,11 @@ step "go test -race"
 go test -race ./...
 
 step "staticcheck"
-command -v staticcheck >/dev/null || missing staticcheck "go install honnef.co/go/tools/cmd/staticcheck@latest"
+command -v staticcheck >/dev/null || missing staticcheck "make tools"
 staticcheck ./...
 
 step "govulncheck"
-command -v govulncheck >/dev/null || missing govulncheck "go install golang.org/x/vuln/cmd/govulncheck@latest"
+command -v govulncheck >/dev/null || missing govulncheck "make tools"
 govulncheck ./...
 
 printf '\nAll checks passed.\n'

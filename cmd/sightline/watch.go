@@ -21,22 +21,25 @@ const pluginID = "swmcc.sightline"
 // feedEntrypoint is the feed's pane id in herdr-plugin.toml.
 const feedEntrypoint = "feed"
 
-// feedsDir holds one empty file per open feed, named after its pane, inside the
-// state directory. It's how watch finds a feed to reuse and how a closing feed
-// knows whether it was the last one. herdr's pane list doesn't say which panes
-// belong to a plugin, so Sightline keeps track itself.
+// feedsDir holds one empty file per open feed inside the state directory. It's
+// how watch finds the feed to reuse and how a closing feed knows whether it was
+// the last one. herdr's pane list doesn't say which panes belong to a plugin,
+// so Sightline keeps track itself.
+//
+// Each file is named after the feed's terminal id rather than its pane id,
+// because a pane that moves to another workspace gets a new pane id but keeps
+// its terminal.
 const feedsDir = "feeds"
 
 // actionTimeout bounds a watch, so a herdr that stops answering can't leave
 // the action hanging in herdr's log.
 const actionTimeout = 10 * time.Second
 
-// exitTimeout bounds the tidy up when a feed closes. The feed's own context is
-// already cancelled by then.
+// exitTimeout bounds asking herdr about other feeds when a feed closes.
 const exitTimeout = 2 * time.Second
 
 // watch puts the focused pane on the watch list and makes sure a feed is open
-// in its workspace to watch it.
+// to watch it.
 func watch(getenv func(string) string, stdout, stderr io.Writer) int {
 	pane, stateDir, err := actionTarget(getenv)
 	if err != nil {
@@ -61,20 +64,25 @@ func watch(getenv func(string) string, stdout, stderr io.Writer) int {
 }
 
 // watchPane does the work of watch and returns what to tell the user.
+//
+// There's only ever one feed. Every feed reads the whole watch list, so a
+// second one would show each error twice and could send it twice. If a feed is
+// open anywhere it's focused, even in another workspace, so it's clear where
+// the errors will go.
 func watchPane(ctx context.Context, client *herdr.Client, stateDir, pane, plugin string) (string, error) {
 	panes, err := client.ListPanes(ctx)
 	if err != nil {
 		return "", fmt.Errorf("listing panes: %w", err)
 	}
-	var workspace string
+	var target herdr.Pane
 	alive := map[string]bool{}
 	for _, p := range panes {
 		alive[p.ID] = true
 		if p.ID == pane {
-			workspace = p.WorkspaceID
+			target = p
 		}
 	}
-	if !alive[pane] {
+	if target.ID == "" {
 		return "", fmt.Errorf("pane %s isn't open", pane)
 	}
 
@@ -82,8 +90,10 @@ func watchPane(ctx context.Context, client *herdr.Client, stateDir, pane, plugin
 	if err != nil {
 		return "", err
 	}
-	if _, ok := feeds[pane]; ok {
-		return "", fmt.Errorf("%s is the Sightline feed, which can't watch itself", pane)
+	for _, f := range feeds {
+		if f.ID == pane {
+			return "", fmt.Errorf("%s is the Sightline feed, which can't watch itself", pane)
+		}
 	}
 	// With no feed open the list is only ids waiting for the next feed, so the
 	// ones for closed panes can go. With a feed open they stay, because the feed
@@ -103,17 +113,20 @@ func watchPane(ctx context.Context, client *herdr.Client, stateDir, pane, plugin
 		msg = "Already watching " + pane + "."
 	}
 
-	for id, ws := range feeds {
-		if ws != workspace {
-			continue
+	// The feed in the pane's own workspace comes first. One that can't be
+	// focused (it closed a moment ago, say) is passed over.
+	for _, sameWorkspace := range []bool{true, false} {
+		for _, f := range feeds {
+			if (f.WorkspaceID == target.WorkspaceID) != sameWorkspace {
+				continue
+			}
+			if client.FocusPluginPane(ctx, f.ID) == nil {
+				return msg + " The feed is already open in " + f.ID + ".", nil
+			}
 		}
-		if err := client.FocusPluginPane(ctx, id); err != nil {
-			return "", fmt.Errorf("%s is on the watch list, but the feed in %s couldn't be focused: %w", pane, id, err)
-		}
-		return msg + " The feed is already open.", nil
 	}
 
-	id, err := client.OpenPluginPane(ctx, herdr.PluginPaneOpen{
+	opened, err := client.OpenPluginPane(ctx, herdr.PluginPaneOpen{
 		PluginID:   plugin,
 		Entrypoint: feedEntrypoint,
 		Placement:  "split",
@@ -128,7 +141,7 @@ func watchPane(ctx context.Context, client *herdr.Client, stateDir, pane, plugin
 	// before it does, so a quick second watch can't open another. If this
 	// fails the feed's own note still covers it, so it's not worth failing a
 	// watch that worked.
-	_ = registerFeed(stateDir, id)
+	_ = registerFeed(stateDir, opened.TerminalID)
 	return msg + " Opened the feed beside it.", nil
 }
 
@@ -211,46 +224,71 @@ func pruneWatchList(stateDir string, alive map[string]bool) error {
 	return watchlist.Write(stateDir, keep)
 }
 
-// openFeeds returns the feeds that are open, as pane id to workspace id.
-// Notes for feeds whose panes have gone (a feed that crashed, say) are removed
-// on the way. herdr doesn't reuse pane ids, so a note can't point at the wrong
-// pane.
-func openFeeds(stateDir string, panes []herdr.Pane) (map[string]string, error) {
-	entries, err := os.ReadDir(filepath.Join(stateDir, feedsDir))
+// selfTerminal is the terminal id of the pane the feed runs in, or empty if
+// herdr can't say.
+func selfTerminal(ctx context.Context, client *herdr.Client, self string) string {
+	if self == "" {
+		return ""
+	}
+	panes, err := client.ListPanes(ctx)
+	if err != nil {
+		return ""
+	}
+	for _, p := range panes {
+		if p.ID == self {
+			return p.TerminalID
+		}
+	}
+	return ""
+}
+
+// openFeeds returns the panes of the feeds that are open. Notes for feeds that
+// have gone (one that crashed, say) are removed on the way. herdr doesn't reuse
+// ids, so a note can't point at the wrong pane.
+func openFeeds(stateDir string, panes []herdr.Pane) ([]herdr.Pane, error) {
+	dir := filepath.Join(stateDir, feedsDir)
+	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
-		return map[string]string{}, nil
+		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("looking for open feeds: %w", err)
 	}
-	workspaces := make(map[string]string, len(panes))
+	byTerminal := make(map[string]herdr.Pane, len(panes))
 	for _, p := range panes {
-		workspaces[p.ID] = p.WorkspaceID
+		if p.TerminalID != "" {
+			byTerminal[p.TerminalID] = p
+		}
 	}
-	feeds := map[string]string{}
+	var feeds []herdr.Pane
 	for _, e := range entries {
-		id := e.Name()
-		ws, ok := workspaces[id]
-		if !ok || !watchlist.ValidPaneID(id) {
-			_ = os.Remove(filepath.Join(stateDir, feedsDir, id))
+		p, ok := byTerminal[e.Name()]
+		if !ok {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
 			continue
 		}
-		feeds[id] = ws
+		feeds = append(feeds, p)
 	}
 	return feeds, nil
 }
 
-// registerFeed notes that the feed in pane is open.
-func registerFeed(stateDir, pane string) error {
-	if stateDir == "" || !watchlist.ValidPaneID(pane) {
+// validTerminalID reports whether id is safe to use as a file name. herdr's
+// look like "term_65eb4db4ed59f65", which fits the same rules as a pane id.
+func validTerminalID(id string) bool {
+	return watchlist.ValidPaneID(id)
+}
+
+// registerFeed notes that the feed in terminal is open.
+func registerFeed(stateDir, terminal string) error {
+	if stateDir == "" || !validTerminalID(terminal) {
 		return nil
 	}
 	dir := filepath.Join(stateDir, feedsDir)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("noting the feed in %s: %w", pane, err)
+		return fmt.Errorf("noting the feed in %s: %w", terminal, err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, pane), nil, 0o644); err != nil {
-		return fmt.Errorf("noting the feed in %s: %w", pane, err)
+	if err := os.WriteFile(filepath.Join(dir, terminal), nil, 0o644); err != nil {
+		return fmt.Errorf("noting the feed in %s: %w", terminal, err)
 	}
 	return nil
 }
@@ -259,37 +297,40 @@ func registerFeed(stateDir, pane string) error {
 // feed is open, clears the watch list. The README says closing the feed stops
 // watching, so opening one again starts from nothing rather than quietly
 // picking up panes watched an hour ago.
-func endFeed(client *herdr.Client, stateDir, self string) error {
+func endFeed(client *herdr.Client, stateDir, terminal string) error {
 	if stateDir == "" {
 		return nil
 	}
-	if watchlist.ValidPaneID(self) {
-		err := os.Remove(filepath.Join(stateDir, feedsDir, self))
+	dir := filepath.Join(stateDir, feedsDir)
+	if validTerminalID(terminal) {
+		err := os.Remove(filepath.Join(dir, terminal))
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("removing the feed's note: %w", err)
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), exitTimeout)
-	defer cancel()
-	others := 0
-	if panes, err := client.ListPanes(ctx); err == nil {
+	// herdr kills the process soon after it closes the pane, too soon to ask
+	// it anything (seen on herdr 0.9.1). So with no other note the list is
+	// cleared straight away, and herdr is only asked when there is one.
+	entries, err := os.ReadDir(dir)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("looking for open feeds: %w", err)
+	}
+	if len(entries) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), exitTimeout)
+		defer cancel()
+		panes, err := client.ListPanes(ctx)
+		if err != nil {
+			// Without herdr to ask, the other feed could still be open.
+			return nil
+		}
 		feeds, err := openFeeds(stateDir, panes)
 		if err != nil {
 			return err
 		}
-		others = len(feeds)
-	} else {
-		// Without herdr to ask, any note left could be a feed still open, so
-		// only clear the list when there are none.
-		entries, err := os.ReadDir(filepath.Join(stateDir, feedsDir))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("looking for open feeds: %w", err)
+		if len(feeds) > 0 {
+			return nil
 		}
-		others = len(entries)
-	}
-	if others > 0 {
-		return nil
 	}
 	if err := watchlist.Write(stateDir, nil); err != nil {
 		return fmt.Errorf("clearing the watch list: %w", err)

@@ -20,7 +20,10 @@ const (
 // Pane is one pane as pane.list describes it. herdr sends null for anything it
 // doesn't know, which arrives here as an empty string.
 type Pane struct {
-	ID           string      `json:"pane_id"`
+	ID string `json:"pane_id"`
+	// TerminalID stays the same when the pane moves to another workspace,
+	// unlike ID.
+	TerminalID   string      `json:"terminal_id"`
 	WorkspaceID  string      `json:"workspace_id"`
 	TabID        string      `json:"tab_id"`
 	Focused      bool        `json:"focused"`

@@ -156,9 +156,9 @@ func TestListPanes(t *testing.T) {
 		t.Fatalf("ListPanes: %v", err)
 	}
 	want := []herdr.Pane{
-		{ID: "w1:p1", WorkspaceID: "w1", TabID: "w1:t1", Focused: true, Cwd: "/src", Agent: "claude",
+		{ID: "w1:p1", TerminalID: "t1", WorkspaceID: "w1", TabID: "w1:t1", Focused: true, Cwd: "/src", Agent: "claude",
 			DisplayAgent: "Claude", AgentStatus: herdr.AgentWorking, Title: "claude"},
-		{ID: "w1:p2", WorkspaceID: "w1", TabID: "w1:t1", AgentStatus: herdr.AgentUnknown},
+		{ID: "w1:p2", TerminalID: "t2", WorkspaceID: "w1", TabID: "w1:t1", AgentStatus: herdr.AgentUnknown},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ListPanes =\n%+v\nwant\n%+v", got, want)

@@ -356,6 +356,15 @@ func (e *Engine) group(src Source, f found) {
 		e.recurred(r, f.matchedAt)
 		return
 	}
+	// Ignored lines never start a capture, so this only happens to one that
+	// was in progress when Reconfigure added a rule matching it. That rule
+	// should still win, as it does for entries already filed. A repeat of a
+	// sent entry is counted above whatever the rules say, so the fix check
+	// stays honest.
+	state := StateNew
+	if len(f.lines) > 0 && e.ignored(f.lines[0]) {
+		state = StateDismissed
+	}
 	r := e.add(Entry{
 		Source:      src,
 		Matcher:     f.matcher,
@@ -366,7 +375,7 @@ func (e *Engine) group(src Source, f found) {
 		Count:       1,
 		FirstSeen:   f.matchedAt,
 		LastSeen:    f.matchedAt,
-		State:       StateNew,
+		State:       state,
 		MaybeGap:    f.maybeGap,
 	})
 	if e.groups.newest == nil {

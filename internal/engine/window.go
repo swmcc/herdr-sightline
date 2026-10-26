@@ -19,6 +19,9 @@ import (
 //   - ContextLines lines have been collected
 //   - CaptureWait has passed since the match
 //
+// Both are the values when the match was made. Reconfigure doesn't change them
+// for a capture in progress.
+//
 // A match on a line that carries on a block being captured is part of that
 // error, so it's folded in rather than starting a capture of its own.
 //

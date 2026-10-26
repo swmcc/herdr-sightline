@@ -225,8 +225,8 @@ func (c *capture) result() found {
 	return f
 }
 
-// maxStoredBytes caps each line the window and captures keep. Detection still
-// sees the whole line. Only what's kept, and so what can reach a message, is cut.
+// maxStoredBytes caps each line the window and captures keep, and so what can
+// reach a message. Detection matches the same head (see scanned).
 const maxStoredBytes = 4 << 10
 
 // capStored shortens a very long line and says so, so the cut is visible. The
@@ -240,11 +240,10 @@ func capStored(line string) string {
 	if len(line) <= maxStoredBytes {
 		return line
 	}
-	cut := maxStoredBytes
-	for cut > 0 && !utf8.RuneStart(line[cut]) {
-		cut--
-	}
-	return line[:cut] + cutMarker(utf8.RuneCountInString(line[cut:]))
+	// cut, as detection uses, so what's kept is exactly the head that was
+	// matched (see scanned).
+	kept := cut(line, maxStoredBytes)
+	return kept + cutMarker(utf8.RuneCountInString(line[len(kept):]))
 }
 
 // observe takes one clean line from s. It returns the line it used, which unhide
@@ -535,30 +534,37 @@ var (
 var composePrefix = regexp.MustCompile(`^[\w.\-]+[-_]\d+ +\| ?`)
 
 // shapeOf works out what line looks like, after any docker compose prefix.
+//
+// Its patterns only read the head of the line, like detection (see scanned),
+// so a huge line costs it little more than a short one. The shapes that must end the
+// line ("goroutine 1 [running]:", "... 12 more") are short, so a line longer
+// than the head is never one of them.
 func shapeOf(line string) shape {
-	line = strings.TrimPrefix(line, composePrefix.FindString(line))
+	line = strings.TrimPrefix(line, composePrefix.FindString(cut(line, maxScannedLine)))
+	head := cut(line, maxScannedLine)
+	whole := len(head) == len(line)
 	switch {
 	case strings.TrimSpace(line) == "":
 		return shape{kind: shapeBlank}
 	case line[0] == ' ' || line[0] == '\t':
 		return shape{
 			kind:     shapeIndented,
-			indent:   indentOf(line),
-			location: strings.HasPrefix(strings.TrimLeft(line, " \t"), "--> "),
+			indent:   indentOf(head),
+			location: strings.HasPrefix(strings.TrimLeft(head, " \t"), "--> "),
 		}
 	case line == "Traceback (most recent call last):":
 		return shape{kind: shapeTraceback}
-	case goroutineHeading.MatchString(line):
+	case whole && goroutineHeading.MatchString(line):
 		return shape{kind: shapeGoroutine}
-	case strings.Contains(line, " panicked at ") && strings.HasSuffix(line, ":"):
+	case strings.Contains(head, " panicked at ") && strings.HasSuffix(line, ":"):
 		return shape{kind: shapeRustPanic}
-	case jvmMore.MatchString(line):
+	case whole && jvmMore.MatchString(line):
 		return shape{kind: shapeMarker}
 	case strings.Trim(line, "}]);, ") == "":
 		return shape{kind: shapeClosing}
-	case sourceExcerpt.MatchString(line):
+	case sourceExcerpt.MatchString(head):
 		return shape{kind: shapeSource}
-	case jvmHeading.MatchString(line):
+	case isJVMHeading(head, whole):
 		return shape{kind: shapeJVMHeading}
 	case isGoFunc(line):
 		return shape{kind: shapeGoFunc}
@@ -596,6 +602,14 @@ func indentOf(line string) int {
 		}
 	}
 	return n
+}
+
+// isJVMHeading reports whether head, the head of a line, starts a JVM exception
+// heading. A heading may end the line or go on after a colon. When head isn't
+// the whole line its end isn't the line's end, so only the colon counts.
+func isJVMHeading(head string, whole bool) bool {
+	m := jvmHeading.FindString(head)
+	return m != "" && (whole || strings.HasSuffix(m, ":"))
 }
 
 // isGoFunc reports whether line looks like the function line of a Go frame: a
@@ -1145,6 +1159,10 @@ func (s *scrubber) text(r rune, emit func(string)) {
 		return
 	}
 	switch {
+	case r >= ' ' && r < ctrlDEL:
+		// Printable ASCII, by far the most common, is never invisible. Saying
+		// so first keeps a huge line from costing a table lookup a character.
+		s.visible(r)
 	case r == '\n':
 		s.endLine(emit)
 	case r == '\t':

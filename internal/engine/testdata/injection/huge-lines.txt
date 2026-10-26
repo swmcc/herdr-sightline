@@ -1,11 +1,14 @@
 # Very long lines. The message caps each line at 500 characters and says how
 # many of the line as printed were cut, even when the window had already cut
-# it at 4 KiB. The whole message stays under 16 KiB.
+# it at 4 KiB. The whole message stays under 16 KiB. Only the first 4 KiB of a
+# line is matched, so the errors start early, but that 4 KiB is taken after the
+# scrubber has read the whole line: 80 KB of escapes before "Error: escapes"
+# still leave it at the start.
 # caught: [99506 more characters cut]
 # caught: [19506 more characters cut]
 # caught: Error: escapes
 @ feed
-{{100000|A}} Error
+Error {{100000|A}}
 Error {{20000|😀}}
 {{3000|`}} Error: backticks
 {{20000|\e[0m}}Error: escapes

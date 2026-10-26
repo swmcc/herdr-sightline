@@ -686,13 +686,13 @@ func TestCaptureWaitsForTheRestOfTheTrace(t *testing.T) {
 }
 
 func TestStoredLinesAreCapped(t *testing.T) {
-	long := strings.Repeat("x", 5000) + " Error: at the end"
+	long := "Error: at the start " + strings.Repeat("x", 5000)
 	e := newWatching()
 	e.Feed("web", []string{long, strings.Repeat("é", 3000)}, t0)
 	e.Tick(t0.Add(time.Second))
 	en := onlyEntry(t, e)
 
-	wantLine := strings.Repeat("x", maxStoredBytes) + fmt.Sprintf(" [%d more characters cut]", len(long)-maxStoredBytes)
+	wantLine := long[:maxStoredBytes] + fmt.Sprintf(" [%d more characters cut]", len(long)-maxStoredBytes)
 	if en.Lines[0] != wantLine {
 		t.Fatalf("matched line kept as %d bytes, want it cut to %d with a marker", len(en.Lines[0]), maxStoredBytes)
 	}

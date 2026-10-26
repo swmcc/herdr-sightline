@@ -292,6 +292,9 @@ key that happens to be on the line above it.
 - **Production monitoring.** Sightline runs inside herdr, on your machine, while
   herdr is running. Use a proper error tracker for production.
 - **Log storage or search.** It keeps a short window of output, nothing more.
+- **Read the end of a very long line.** Only the first 4 KiB of each line is
+  matched, so one huge line can't freeze the feed. An error that starts further
+  into a line than that isn't caught.
 - **Fix things on its own.** v1 always asks first. Automatic sending may come later,
   if people want it and it can be made safe.
 

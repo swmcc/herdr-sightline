@@ -731,7 +731,7 @@ func TestMessageCutCountsTheWholeLine(t *testing.T) {
 	tests := []struct {
 		name, line, want string
 	}{
-		{"ASCII", strings.Repeat("x", 100000) + " Error", strings.Repeat("x", maxLineRunes) + " [99506 more characters cut]"},
+		{"ASCII", "Error " + strings.Repeat("x", 100000), "Error " + strings.Repeat("x", maxLineRunes-6) + " [99506 more characters cut]"},
 		{"four byte runes", "Error " + strings.Repeat("\U0001F600", 5000), "Error " + strings.Repeat("\U0001F600", maxLineRunes-6) + " [4506 more characters cut]"},
 		{"just over the window", "Error " + strings.Repeat("y", maxStoredBytes), "Error " + strings.Repeat("y", maxLineRunes-6) + fmt.Sprintf(" [%d more characters cut]", maxStoredBytes+6-maxLineRunes)},
 		{"forged marker", forged, forged},

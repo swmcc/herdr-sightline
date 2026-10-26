@@ -295,6 +295,9 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 	case engine.StateFixed:
 		return "✓ fixed, it stopped appearing after " + agent + " finished", "[d] dismiss"
 	case engine.StateUnverified:
+		if en.Note != "" {
+			return "? unverified, " + clean(en.Note) + ". Send it again or check it yourself", "[enter] send again   [d] dismiss"
+		}
 		return "? unverified, nothing ran to prove it either way. Check it yourself", "[enter] send again   [d] dismiss"
 	}
 	if m.sending[en.ID] {

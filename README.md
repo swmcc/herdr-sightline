@@ -194,6 +194,12 @@ to come back:
 If Sightline may have missed output from the pane during the settle period, or
 the pane stops being watched, it says `? unverified` whatever else it saw.
 
+If the agent goes away before it finishes (its pane closes or exits, or another
+agent takes the pane over), there's nothing left to wait for. The entry says
+`? unverified` with the reason, and `enter` sends it again to whichever agent is
+chosen then. Once the agent has finished, it going away changes nothing, because
+the verdict comes from the pane, not the agent.
+
 ## Configuration
 
 Sightline reads `sightline.toml` from its config directory
@@ -312,7 +318,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Check whether the fix worked ([#12](https://github.com/swmcc/herdr-sightline/issues/12))
 - [x] Use scroll events to catch output the pane diff can't see ([#45](https://github.com/swmcc/herdr-sightline/issues/45))
 - [ ] Follow a watched pane's entries when it moves ([#56](https://github.com/swmcc/herdr-sightline/issues/56))
-- [ ] End the wait when the agent an error was sent to exits ([#57](https://github.com/swmcc/herdr-sightline/issues/57))
+- [x] End the wait when the agent an error was sent to exits ([#57](https://github.com/swmcc/herdr-sightline/issues/57))
 - [x] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
 - [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
 - [x] Apply config changes without reopening the feed ([#58](https://github.com/swmcc/herdr-sightline/issues/58))

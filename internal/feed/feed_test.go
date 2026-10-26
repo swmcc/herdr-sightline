@@ -57,7 +57,8 @@ type fakeHerdr struct {
 	mu      sync.Mutex
 	status  map[string]herdr.AgentStatus // agent pane to its status
 	seq     map[string]uint64
-	text    string // what pane.read returns for the watched pane
+	kind    map[string]string // agent pane to its kind, claude if not set
+	text    string            // what pane.read returns for the watched pane
 	prompts []promptCall
 	reads   atomic.Int64
 }
@@ -73,6 +74,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 		srv:    herdrtest.New(t),
 		status: map[string]herdr.AgentStatus{agentPane: herdr.AgentIdle},
 		seq:    map[string]uint64{agentPane: 10},
+		kind:   map[string]string{},
 		text:   "ready",
 	}
 	f.srv.Handle("pane.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
@@ -87,7 +89,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 			if pane == otherAgent {
 				tab = "w1:t3"
 			}
-			panes = append(panes, map[string]any{"pane_id": pane, "workspace_id": "w1", "tab_id": tab, "agent": "claude", "agent_status": st})
+			panes = append(panes, map[string]any{"pane_id": pane, "workspace_id": "w1", "tab_id": tab, "agent": f.kindOf(pane), "agent_status": st})
 		}
 		return map[string]any{"type": "pane_list", "panes": panes}, nil
 	})
@@ -100,7 +102,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 			if pane == otherAgent {
 				tab = "w1:t3"
 			}
-			agents = append(agents, map[string]any{"pane_id": pane, "workspace_id": "w1", "tab_id": tab, "agent": "claude", "agent_status": st, "state_change_seq": f.seq[pane]})
+			agents = append(agents, map[string]any{"pane_id": pane, "workspace_id": "w1", "tab_id": tab, "agent": f.kindOf(pane), "agent_status": st, "state_change_seq": f.seq[pane]})
 		}
 		return map[string]any{"type": "agent_list", "agents": agents}, nil
 	})
@@ -139,6 +141,30 @@ func (f *fakeHerdr) setStatus(pane string, st herdr.AgentStatus) {
 	defer f.mu.Unlock()
 	f.status[pane] = st
 	f.seq[pane]++
+}
+
+// kindOf is the kind of agent in pane. The caller holds f.mu.
+func (f *fakeHerdr) kindOf(pane string) string {
+	if k, ok := f.kind[pane]; ok {
+		return k
+	}
+	return "claude"
+}
+
+// setKind puts another kind of agent in pane.
+func (f *fakeHerdr) setKind(pane, kind string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.kind[pane] = kind
+	f.seq[pane]++
+}
+
+// removeAgent closes an agent's pane.
+func (f *fakeHerdr) removeAgent(pane string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.status, pane)
+	delete(f.seq, pane)
 }
 
 func (f *fakeHerdr) promptCalls() []promptCall {
@@ -631,6 +657,123 @@ func TestAgentStillIdleIsNotFinished(t *testing.T) {
 	h.sync()
 	if _, ok := h.model.awaiting[agentPane]; !ok {
 		t.Error("an agent that hasn't moved was taken as finished")
+	}
+}
+
+// An agent that goes away before finishing ends the wait, however the feed
+// hears of it. Events end it straight away. Snapshots take two in a row, as one
+// can overtake the event saying the pane moved.
+func TestAgentGoneEndsTheWait(t *testing.T) {
+	tests := []struct {
+		name string
+		gone func(h *harness)
+		// syncs is how many snapshots it takes to notice.
+		syncs int
+	}{
+		{
+			name: "its pane closed",
+			gone: func(h *harness) {
+				h.herdr.removeAgent(agentPane)
+				h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneClosed, PaneID: agentPane}, global: true})
+			},
+		},
+		{
+			name: "it exited",
+			gone: func(h *harness) {
+				h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneExited, PaneID: agentPane}, global: true})
+			},
+		},
+		{
+			name: "it left the pane",
+			gone: func(h *harness) {
+				h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventAgentStatusChanged, PaneID: agentPane, AgentStatus: herdr.AgentUnknown}})
+			},
+		},
+		{
+			name: "another kind of agent took the pane over",
+			gone: func(h *harness) {
+				h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventAgentStatusChanged, PaneID: agentPane, Agent: "codex", AgentStatus: herdr.AgentIdle}})
+			},
+		},
+		{
+			name:  "snapshots stopped showing its pane",
+			gone:  func(h *harness) { h.herdr.removeAgent(agentPane) },
+			syncs: 2,
+		},
+		{
+			name:  "snapshots showed another kind in its pane",
+			gone:  func(h *harness) { h.herdr.setKind(agentPane, "codex") },
+			syncs: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.catchError()
+			h.run(h.press("enter"))
+			h.herdr.setStatus(agentPane, herdr.AgentWorking)
+			h.sync()
+
+			tt.gone(h)
+			for i := range tt.syncs {
+				if i > 0 {
+					if en, _ := h.model.entry(h.model.selected); en.State != engine.StateSent {
+						t.Fatalf("one snapshot ended the wait: %v", en.State)
+					}
+				}
+				h.clock.Advance(3 * time.Second)
+				h.sync()
+			}
+			en, _ := h.model.entry(h.model.selected)
+			if en.State != engine.StateUnverified || en.Note != engine.NoteAgentGone {
+				t.Fatalf("entry = %v %q, want unverified with a note", en.State, en.Note)
+			}
+			if _, ok := h.model.awaiting[agentPane]; ok {
+				t.Error("still waiting on an agent that has gone")
+			}
+			if view := h.model.View(); !strings.Contains(view, engine.NoteAgentGone) {
+				t.Errorf("view doesn't say why:\n%s", view)
+			}
+
+			// enter sends it again, to whichever agent is chosen now.
+			const newAgent = "w1:p4"
+			h.herdr.removeAgent(agentPane)
+			h.herdr.setStatus(newAgent, herdr.AgentIdle)
+			h.clock.Advance(time.Second) // so the snapshot is newer than any event
+			h.sync()
+			h.run(h.press("enter"))
+			calls := h.herdr.promptCalls()
+			if len(calls) != 2 || calls[1].Target != newAgent {
+				t.Fatalf("prompts = %+v, want a second one to %s", calls, newAgent)
+			}
+			if en, _ := h.model.entry(h.model.selected); en.State != engine.StateSent || en.Note != "" {
+				t.Errorf("after sending again = %v %q, want sent with no note", en.State, en.Note)
+			}
+		})
+	}
+}
+
+// Once the agent has finished, the verdict comes from the pane, so the agent
+// going away during the settle period changes nothing.
+func TestAgentGoneWhileSettlingKeepsTheVerdict(t *testing.T) {
+	h := newHarness(t)
+	h.catchError()
+	h.run(h.press("enter"))
+	h.herdr.setStatus(agentPane, herdr.AgentWorking)
+	h.sync()
+	h.clock.Advance(5 * time.Second)
+	h.herdr.setStatus(agentPane, herdr.AgentIdle)
+	h.sync()
+
+	h.herdr.removeAgent(agentPane)
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneClosed, PaneID: agentPane}, global: true})
+	h.clock.Advance(2 * time.Second)
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{" GET /notices 200", "✓ Compiled /notices in 312ms"}}})
+	h.clock.Advance(time.Duration(config.DefaultSettleSeconds)*time.Second + 2*captureWait)
+	h.update(tickMsg{})
+
+	if en, _ := h.model.entry(h.model.selected); en.State != engine.StateFixed || en.Note != "" {
+		t.Fatalf("entry = %v %q, want fixed", en.State, en.Note)
 	}
 }
 

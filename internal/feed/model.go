@@ -48,6 +48,13 @@ type await struct {
 	sawWorking bool
 	// since is when the last send was made.
 	since time.Time
+	// kind is the kind of agent the last send went to, such as claude. If
+	// another kind turns up in the pane, the agent that was sent to has gone.
+	kind string
+	// missing says the last snapshot taken since the send had no such agent
+	// in the pane. Only a second one in a row ends the wait, because a
+	// snapshot can overtake the event saying the pane moved.
+	missing bool
 }
 
 // Model is the feed. It owns the engine and is its only caller, so every engine
@@ -396,6 +403,7 @@ func (m *Model) snapshot(msg snapshotMsg) {
 	for _, a := range msg.snap.Agents {
 		m.agentStatus(a.PaneID, a.Status, a.StateChangeSeq, true, msg.snap.Taken, now)
 	}
+	m.checkAgentsThere(msg.snap)
 	for _, pane := range m.watching {
 		m.engine.Watch(m.source(pane))
 	}
@@ -429,20 +437,93 @@ func (m *Model) agentStatus(pane string, status herdr.AgentStatus, seq uint64, h
 	}
 }
 
+// checkAgentsThere ends the wait on any agent that a snapshot taken since its
+// last send, and the one before it, didn't find: its pane has gone, runs no
+// agent or runs a different kind. This catches what the events missed.
+func (m *Model) checkAgentsThere(snap herdr.AgentSnapshot) {
+	kinds := map[string]string{}
+	for _, p := range snap.Panes {
+		if p.Agent != "" || p.DisplayAgent != "" {
+			kinds[p.ID] = p.Agent
+		}
+	}
+	// agent.list is the newer of the two.
+	for _, a := range snap.Agents {
+		if a.Agent != "" || a.DisplayAgent != "" {
+			kinds[a.PaneID] = a.Agent
+		}
+	}
+	for pane, a := range m.awaiting {
+		if snap.Taken.Before(a.since) {
+			continue
+		}
+		kind, ok := kinds[pane]
+		if ok && (a.kind == "" || kind == a.kind) {
+			a.missing = false
+			continue
+		}
+		if a.missing {
+			m.agentGone(pane)
+			continue
+		}
+		a.missing = true
+	}
+}
+
+// agentGone ends the wait on the agent in pane, which has gone before
+// finishing. What was sent to it becomes unverified and can be sent again, to
+// whichever agent is chosen then.
+func (m *Model) agentGone(pane string) {
+	if _, ok := m.awaiting[pane]; !ok {
+		return
+	}
+	m.endWait(pane)
+	for id, t := range m.picked {
+		if t.PaneID == pane {
+			delete(m.picked, id)
+		}
+	}
+}
+
+// endWait tells the engine the agent awaited in pane has gone and stops
+// waiting on it.
+func (m *Model) endWait(pane string) {
+	a, ok := m.awaiting[pane]
+	if !ok {
+		return
+	}
+	now := m.now()
+	for _, key := range a.keys {
+		m.engine.AgentGone(key, now)
+	}
+	delete(m.awaiting, pane)
+}
+
 // event handles one herdr event.
 func (m *Model) event(ev herdr.Event, global bool) {
 	now := m.now()
 	m.tracker.Observe(ev, now)
 	switch ev.Kind {
 	case herdr.EventAgentStatusChanged:
-		m.agentStatus(ev.PaneID, ev.AgentStatus, 0, false, now, now)
+		a, ok := m.awaiting[ev.PaneID]
+		switch {
+		case !ok:
+		case ev.Agent == "" && ev.AgentStatus == herdr.AgentUnknown:
+			// The agent has left the pane.
+			m.agentGone(ev.PaneID)
+		case ev.Agent != "" && a.kind != "" && ev.Agent != a.kind:
+			// Another kind of agent has taken the pane over.
+			m.agentGone(ev.PaneID)
+		default:
+			m.agentStatus(ev.PaneID, ev.AgentStatus, 0, false, now, now)
+		}
 	case herdr.EventPaneClosed:
 		m.dropPane(ev.PaneID, "closed")
-		delete(m.awaiting, ev.PaneID)
+		m.agentGone(ev.PaneID)
 	case herdr.EventPaneExited:
 		// The pane may stay open showing what it last printed, so watching
 		// carries on. An agent that exited won't finish.
-		delete(m.awaiting, ev.PaneID)
+		m.agentGone(ev.PaneID)
 	case herdr.EventPaneMoved:
 		m.paneMoved(ev.PreviousPaneID, ev.PaneID)
 	case herdr.EventReconnected:
@@ -974,6 +1055,11 @@ func (m *Model) sent(sm sentMsg) {
 	}
 	delete(m.maybeSent, msg.id)
 	pane := msg.target.PaneID
+	if a, ok := m.awaiting[pane]; ok && a.kind != msg.target.Kind {
+		// A different agent now runs in the pane, so the one that was sent
+		// errors before has gone without finishing.
+		m.endWait(pane)
+	}
 	m.engine.MarkSent(msg.id, pane, m.now())
 	m.labels[pane] = msg.target.Label
 	a, ok := m.awaiting[pane]
@@ -985,6 +1071,7 @@ func (m *Model) sent(sm sentMsg) {
 		a.keys = append(a.keys, pane)
 	}
 	a.seq, a.seqKnown, a.sawWorking, a.since = msg.seq, msg.seqKnown, false, msg.checkedAt
+	a.kind, a.missing = msg.target.Kind, false
 	m.status = fmt.Sprintf("Sent to %s.", label)
 }
 

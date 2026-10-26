@@ -1,0 +1,39 @@
+[nodemon] 3.1.9
+[nodemon] to restart at any time, enter `rs`
+[nodemon] watching path(s): *.*
+[nodemon] watching extensions: js,mjs,cjs,json
+[nodemon] starting `node server.js`
+2026-01-01T09:00:01.204Z info: listening on http://localhost:3000 (pid 41233)
+2026-01-01T09:00:01.517Z Error: connect ECONNREFUSED 127.0.0.1:5432 after 312ms
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1607:16)
+    at Pool.connect (/app/node_modules/pg-pool/index.js:45:11)
+    at connectDb (/app/server.js:12:9)
+    at async main (/app/server.js:31:3)
+[nodemon] app crashed - waiting for file changes before starting...
+[nodemon] restarting due to changes...
+[nodemon] starting `node server.js`
+2026-01-01T09:00:14.882Z info: listening on http://localhost:3000 (pid 41290)
+2026-01-01T09:00:15.101Z Error: connect ECONNREFUSED 127.0.0.1:5432 after 207ms
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1607:16)
+    at Pool.connect (/app/node_modules/pg-pool/index.js:45:11)
+    at connectDb (/app/server.js:13:9)
+    at async main (/app/server.js:32:3)
+[nodemon] app crashed - waiting for file changes before starting...
+[nodemon] restarting due to changes...
+[nodemon] starting `node server.js`
+2026-01-01T09:00:29.330Z info: listening on http://localhost:3001 (pid 41377)
+2026-01-01T09:00:29.611Z Error: connect ECONNREFUSED 127.0.0.1:5432 after 1.2s
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1607:16)
+    at Pool.connect (/app/node_modules/pg-pool/index.js:45:11)
+    at connectDb (/app/server.js:15:9)
+    at async main (/app/server.js:34:3)
+[nodemon] app crashed - waiting for file changes before starting...
+[nodemon] restarting due to changes...
+[nodemon] starting `node server.js`
+2026-01-01T09:00:41.009Z info: listening on http://localhost:3001 (pid 41402)
+2026-01-01T09:00:41.250Z Error: connect ECONNREFUSED 127.0.0.1:5432 after 240ms
+    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1607:16)
+    at Pool.connect (/app/node_modules/pg-pool/index.js:45:11)
+    at connectDb (/app/server.js:15:9)
+    at async main (/app/server.js:34:3)
+[nodemon] app crashed - waiting for file changes before starting...

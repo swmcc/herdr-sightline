@@ -235,7 +235,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] herdr socket client ([#4](https://github.com/swmcc/herdr-sightline/issues/4))
 - [ ] Watch and unwatch a pane ([#5](https://github.com/swmcc/herdr-sightline/issues/5))
 - [ ] Built-in error patterns with real fixtures ([#6](https://github.com/swmcc/herdr-sightline/issues/6))
-- [ ] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))
+- [x] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))
 - [ ] Capture the lines around an error ([#8](https://github.com/swmcc/herdr-sightline/issues/8))
 - [ ] The feed pane ([#9](https://github.com/swmcc/herdr-sightline/issues/9))
 - [ ] Choose which agent gets the error ([#10](https://github.com/swmcc/herdr-sightline/issues/10))

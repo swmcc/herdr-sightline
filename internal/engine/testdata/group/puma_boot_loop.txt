@@ -1,0 +1,54 @@
+web-1  | => Booting Puma
+web-1  | => Rails 8.0.1 application starting in development
+web-1  | => Run `bin/rails server --help` for more startup options
+web-1  | [41] Puma starting in cluster mode...
+web-1  | [41] * Puma version: 6.5.0 ("Sky's Version")
+web-1  | [41] * Ruby version: ruby 3.4.1 (2024-12-25 revision 48d4efcb85) +PRISM [aarch64-linux]
+web-1  | [41] *  Min threads: 3
+web-1  | [41] *  Max threads: 3
+web-1  | [41] *  Environment: development
+web-1  | [41] *   Master PID: 41
+web-1  | [41] *      Workers: 2
+web-1  | [41] ! Unable to load application: NameError: uninitialized constant ApplicationController::Authentication
+web-1  | bundler: failed to load command: puma (/usr/local/bundle/bin/puma)
+web-1  | /app/app/controllers/application_controller.rb:2:in '<class:ApplicationController>': uninitialized constant ApplicationController::Authentication (NameError)
+web-1  | 	from /app/app/controllers/application_controller.rb:1:in '<main>'
+web-1  | 	from /usr/local/bundle/gems/zeitwerk-2.7.1/lib/zeitwerk/core_ext/kernel.rb:34:in 'Kernel#require'
+web-1  | 	from /usr/local/bundle/gems/bootsnap-1.18.4/lib/bootsnap/load_path_cache/core_ext/kernel_require.rb:30:in 'Kernel#require'
+web-1 exited with code 1
+web-1  | => Booting Puma
+web-1  | => Rails 8.0.1 application starting in development
+web-1  | => Run `bin/rails server --help` for more startup options
+web-1  | [58] Puma starting in cluster mode...
+web-1  | [58] * Puma version: 6.5.0 ("Sky's Version")
+web-1  | [58] * Ruby version: ruby 3.4.1 (2024-12-25 revision 48d4efcb85) +PRISM [aarch64-linux]
+web-1  | [58] *  Min threads: 3
+web-1  | [58] *  Max threads: 3
+web-1  | [58] *  Environment: development
+web-1  | [58] *   Master PID: 58
+web-1  | [58] *      Workers: 2
+web-1  | [58] ! Unable to load application: NameError: uninitialized constant ApplicationController::Authentication
+web-1  | bundler: failed to load command: puma (/usr/local/bundle/bin/puma)
+web-1  | /app/app/controllers/application_controller.rb:2:in '<class:ApplicationController>': uninitialized constant ApplicationController::Authentication (NameError)
+web-1  | 	from /app/app/controllers/application_controller.rb:1:in '<main>'
+web-1  | 	from /usr/local/bundle/gems/zeitwerk-2.7.1/lib/zeitwerk/core_ext/kernel.rb:34:in 'Kernel#require'
+web-1  | 	from /usr/local/bundle/gems/bootsnap-1.18.4/lib/bootsnap/load_path_cache/core_ext/kernel_require.rb:30:in 'Kernel#require'
+web-1 exited with code 1
+web-1  | => Booting Puma
+web-1  | => Rails 8.0.1 application starting in development
+web-1  | => Run `bin/rails server --help` for more startup options
+web-1  | [75] Puma starting in cluster mode...
+web-1  | [75] * Puma version: 6.5.0 ("Sky's Version")
+web-1  | [75] * Ruby version: ruby 3.4.1 (2024-12-25 revision 48d4efcb85) +PRISM [aarch64-linux]
+web-1  | [75] *  Min threads: 3
+web-1  | [75] *  Max threads: 3
+web-1  | [75] *  Environment: development
+web-1  | [75] *   Master PID: 75
+web-1  | [75] *      Workers: 2
+web-1  | [75] ! Unable to load application: NameError: uninitialized constant ApplicationController::Authentication
+web-1  | bundler: failed to load command: puma (/usr/local/bundle/bin/puma)
+web-1  | /app/app/controllers/application_controller.rb:2:in '<class:ApplicationController>': uninitialized constant ApplicationController::Authentication (NameError)
+web-1  | 	from /app/app/controllers/application_controller.rb:1:in '<main>'
+web-1  | 	from /usr/local/bundle/gems/zeitwerk-2.7.1/lib/zeitwerk/core_ext/kernel.rb:34:in 'Kernel#require'
+web-1  | 	from /usr/local/bundle/gems/bootsnap-1.18.4/lib/bootsnap/load_path_cache/core_ext/kernel_require.rb:30:in 'Kernel#require'
+web-1 exited with code 1

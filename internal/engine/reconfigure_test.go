@@ -323,3 +323,92 @@ func TestReconfigureMaxEntriesTrims(t *testing.T) {
 		})
 	}
 }
+
+// A capture still in progress when a rule arrives is filed dismissed if the rule
+// matches it, unless it's a repeat of a sent entry, which the fix check needs.
+func TestReconfigureIgnoresCatchCapturesInProgress(t *testing.T) {
+	a := newAdapter(t)
+	a.Print(web, "Error: sent")
+	a.Advance(time.Second)
+	sent := only(t, a).ID
+	a.Send(sent, "claude")
+	a.Finish("claude")
+
+	a.Advance(time.Second)
+	a.Print(web, "Error: noisy", "Error: sent")
+	opts := options()
+	opts.Ignores = append(opts.Ignores, engine.Substring{Label: "both", Text: "Error"})
+	if n := a.Engine.Reconfigure(opts); n != 0 {
+		t.Errorf("Reconfigure dismissed %d, want 0 as nothing new was filed yet", n)
+	}
+	a.Advance(time.Second)
+
+	got := byFirstLine(a)
+	if en := got["Error: noisy"]; en.State != engine.StateDismissed {
+		t.Errorf("capture in progress filed as %v, want dismissed", en.State)
+	}
+	if en := got["Error: sent"]; en.State != engine.StateStillFailing || en.Count != 2 {
+		t.Errorf("sent entry is %v count %d, want its repeat counted", en.State, en.Count)
+	}
+}
+
+// Gap times are kept while a capture from that read may still be filed, even
+// after CaptureWait shrinks, so a replayed error can't say still failing.
+func TestReconfigureCaptureWaitKeepsGapTimes(t *testing.T) {
+	opts := options()
+	opts.CaptureWait = 5 * time.Second
+	a := newAdapterWith(opts)
+	a.Print(web, "Error: boom")
+	a.Advance(5 * time.Second)
+	id := only(t, a).ID
+	a.Send(id, "claude")
+	a.Finish("claude")
+
+	a.Advance(2 * time.Second)
+	a.Engine.Gap(web, a.Now())
+	a.Print(web, "Error: boom") // may be a replay, filed 5s later
+	a.Advance(time.Second)
+	opts.CaptureWait = time.Second
+	a.Engine.Reconfigure(opts)
+	a.Advance(2 * time.Second)
+	a.Engine.Gap(web, a.Now()) // prunes gap times older than the longest wait
+	a.Advance(3 * time.Second)
+
+	if got := only(t, a); got.State != engine.StateSent || got.Count != 2 {
+		t.Fatalf("state = %v count %d, want a replayed repeat counted but not still failing", got.State, got.Count)
+	}
+}
+
+// Evidence counts in the first half of the settle period as it was when it
+// started, whichever way Settle changes after.
+func TestReconfigureSettleKeepsTheEvidenceWindow(t *testing.T) {
+	tests := []struct {
+		name     string
+		settle   time.Duration
+		evidence time.Duration // after the agent finished
+		want     engine.State
+	}{
+		{"shrinking", 2 * time.Second, 10 * time.Second, engine.StateFixed},
+		{"growing", time.Minute, 20 * time.Second, engine.StateUnverified},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAdapter(t) // 30s settle
+			a.Print(web, "Error: boom")
+			a.Advance(time.Second)
+			id := only(t, a).ID
+			a.Send(id, "claude")
+			a.Finish("claude")
+			opts := options()
+			opts.Settle = tt.settle
+			a.Engine.Reconfigure(opts)
+
+			a.Advance(tt.evidence)
+			a.Print(web, "compiled successfully in 80 ms")
+			a.Advance(31*time.Second - tt.evidence)
+			if got := only(t, a); got.State != tt.want {
+				t.Fatalf("state = %v, want %v", got.State, tt.want)
+			}
+		})
+	}
+}

@@ -95,7 +95,8 @@ func clamp(opts Options) Options {
 // clamps them. Each option takes effect like this:
 //
 //   - Matchers and Ignores apply from the next line fed. A capture already in
-//     progress carries on and is filed as usual.
+//     progress carries on and is filed as usual, except that a new entry it
+//     makes is filed dismissed if an ignore rule now matches it (see group).
 //   - ClosingLine applies to the next Message.
 //   - ContextLines applies to captures that start after. A capture in progress
 //     keeps the limit it started with, so it never loses a line it has. Each

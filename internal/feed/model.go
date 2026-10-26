@@ -196,9 +196,35 @@ func (m *Model) reloadConfig(u config.Update) {
 		m.status = "sightline.toml has a problem, so the last good config is still in use."
 	case n > 0:
 		m.status = fmt.Sprintf("Reloaded sightline.toml. Its ignore rules dismissed %s.", plural(n, "entry", "entries"))
+		// Adding a rule for the entry in front of you is the usual case. Say so
+		// here, rather than leave refresh to call it dropped. As with a drop,
+		// nothing else is selected for the person.
+		if m.selected != "" && m.dismissed(m.selected) {
+			m.selected, m.selectionLost = "", true
+			m.status += " The selected one was among them. Press j or k to choose another."
+		}
 	default:
 		m.status = "Reloaded sightline.toml."
 	}
+}
+
+// dismissed reports whether id is still in the engine but dismissed, so the
+// feed can tell that apart from an entry dropped by the cap.
+func (m *Model) dismissed(id engine.EntryID) bool {
+	for _, en := range m.engine.Entries() {
+		if en.ID == id {
+			return en.State == engine.StateDismissed
+		}
+	}
+	return false
+}
+
+// goneWord says why id has left the list.
+func (m *Model) goneWord(id engine.EntryID) string {
+	if m.dismissed(id) {
+		return "dismissed by an ignore rule"
+	}
+	return "dropped"
 }
 
 // Init does nothing. The loops are started by Run.
@@ -283,12 +309,12 @@ func (m *Model) refresh() {
 	// meant for them can't fall through to the list (see viewKey and pickKey).
 	if m.mode == modeView {
 		if _, ok := m.entry(m.viewID); !ok {
-			m.status = "This entry was dropped, so enter won't send it. Press esc to go back."
+			m.status = fmt.Sprintf("This entry was %s, so enter won't send it. Press esc to go back.", m.goneWord(m.viewID))
 		}
 	}
 	if m.mode == modePick {
 		if _, ok := m.entry(m.pickID); !ok {
-			m.status = "This entry was dropped, so there's nothing to pick for. Press esc to go back."
+			m.status = fmt.Sprintf("This entry was %s, so there's nothing to pick for. Press esc to go back.", m.goneWord(m.pickID))
 		}
 	}
 }

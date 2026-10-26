@@ -730,6 +730,40 @@ func TestReloadedIgnoreRuleAppliesStraightAway(t *testing.T) {
 	}
 }
 
+// Adding a rule for the selected entry says so, rather than calling it dropped,
+// and leaves nothing selected as a drop does.
+func TestReloadedIgnoreRuleDismissesTheSelectedEntry(t *testing.T) {
+	tests := []struct {
+		name string
+		mode string // key pressed before the reload
+		want string
+	}{
+		{"list", "", "The selected one was among them."},
+		{"view", "v", "This entry was dismissed by an ignore rule, so enter won't send it."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			en := h.catchError()
+			if tt.mode != "" {
+				h.press(tt.mode)
+			}
+			cfg := config.Default()
+			cfg.Ignores = []config.Ignore{{Regex: regexp.MustCompile(`^TypeError`)}}
+			h.update(configMsg{config.Update{Config: cfg}})
+			if !strings.Contains(h.model.status, tt.want) {
+				t.Errorf("status = %q, want it to contain %q", h.model.status, tt.want)
+			}
+			if h.model.selected == en.ID {
+				t.Error("the dismissed entry is still selected")
+			}
+			if cmd := h.press("enter"); cmd != nil {
+				t.Error("enter sent something after the selected entry was dismissed")
+			}
+		})
+	}
+}
+
 func TestBrokenConfigKeepsTheLastGoodOne(t *testing.T) {
 	h := newHarness(t)
 	h.catchError()

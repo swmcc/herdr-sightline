@@ -1,0 +1,424 @@
+package feed
+
+import (
+	"context"
+	"slices"
+	"sync"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/swmcc/herdr-sightline/internal/config"
+	"github.com/swmcc/herdr-sightline/internal/herdr"
+	"github.com/swmcc/herdr-sightline/internal/watchlist"
+)
+
+// Who owns what
+//
+// The engine and the agent tracker's view of the world belong to the model, and
+// only the Bubble Tea update loop touches them. Everything that waits on herdr,
+// the clock or a file runs in a loop below. Each loop owns its own state (a pane
+// loop owns its PaneWatcher) and reports back by sending a message to the
+// model. None of them shares memory with the model.
+//
+// Every loop runs under one root context and is counted in one WaitGroup.
+// Quitting the feed cancels the root, and Run waits for the group, so nothing
+// outlives the feed. A pane or agent loop also gets its own child context, so the
+// model can stop one when its pane is unwatched or closes.
+//
+// The only other goroutines are the Bubble Tea commands that check a target and
+// send a prompt. They run with the root context too, so they end with it.
+
+// Timings is how often the loops wake up. Zero values mean the defaults.
+type Timings struct {
+	// Poll is how often each watched pane is read. Default 500ms.
+	Poll time.Duration
+	// EarlyRead is the shortest gap between two reads when a scroll hint asks
+	// for one sooner. herdr batches scroll events about 100ms apart, and the
+	// watcher's credit for late hints only lasts one read, so reading faster
+	// than this would spend it too soon. Default 100ms.
+	EarlyRead time.Duration
+	// Sync is how often the agent tracker gets a fresh snapshot. Default 3s.
+	Sync time.Duration
+	// Tick is how often the engine's timers are moved on. Default 500ms.
+	Tick time.Duration
+	// List is how often the watch list file is checked. Default 1s.
+	List time.Duration
+	// Config is how often sightline.toml is checked. Default 1s.
+	Config time.Duration
+}
+
+func (t Timings) withDefaults() Timings {
+	or := func(d, def time.Duration) time.Duration {
+		if d <= 0 {
+			return def
+		}
+		return d
+	}
+	return Timings{
+		Poll:      or(t.Poll, 500*time.Millisecond),
+		EarlyRead: or(t.EarlyRead, 100*time.Millisecond),
+		Sync:      or(t.Sync, 3*time.Second),
+		Tick:      or(t.Tick, 500*time.Millisecond),
+		List:      or(t.List, time.Second),
+		Config:    or(t.Config, time.Second),
+	}
+}
+
+// loops starts and stops the feed's goroutines. Its methods are only called
+// from the model's update loop and from Run, so its maps need no lock. The
+// WaitGroup is the one thing shared with the goroutines themselves.
+type loops struct {
+	ctx    context.Context
+	client *herdr.Client
+	send   func(tea.Msg)
+	now    func() time.Time
+	every  Timings
+	wg     sync.WaitGroup
+
+	panes  map[string]context.CancelFunc // watched pane id to its loop
+	agents map[string]context.CancelFunc // agent pane id to its status loop
+	resync chan struct{}                 // asks the sync loop for a snapshot now
+}
+
+func newLoops(ctx context.Context, client *herdr.Client, send func(tea.Msg), now func() time.Time, every Timings) *loops {
+	return &loops{
+		ctx:    ctx,
+		client: client,
+		send:   send,
+		now:    now,
+		every:  every.withDefaults(),
+		panes:  map[string]context.CancelFunc{},
+		agents: map[string]context.CancelFunc{},
+		resync: make(chan struct{}, 1),
+	}
+}
+
+// goLoop runs fn in a goroutine counted in the WaitGroup.
+func (l *loops) goLoop(fn func()) {
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		fn()
+	}()
+}
+
+// wait blocks until every loop has stopped. Call it after cancelling the root.
+func (l *loops) wait() { l.wg.Wait() }
+
+// deliver hands msg to the model unless the feed is shutting down.
+func (l *loops) deliver(ctx context.Context, msg tea.Msg) {
+	if ctx.Err() != nil {
+		return
+	}
+	l.send(msg)
+}
+
+// startShared starts the loops that live as long as the feed: the engine tick,
+// the agent sync, the watch list, the config file and herdr's global events.
+func (l *loops) startShared(stateDir string, extra []string, configUpdates <-chan config.Update) {
+	l.goLoop(l.runTick)
+	l.goLoop(l.runSync)
+	l.goLoop(func() { l.runWatchList(stateDir, extra) })
+	if configUpdates != nil {
+		l.goLoop(func() { l.runConfig(configUpdates) })
+	}
+	l.goLoop(l.runGlobalEvents)
+}
+
+// requestSync asks the sync loop for a snapshot straight away. It never blocks:
+// if one is already asked for, that's enough.
+func (l *loops) requestSync() {
+	select {
+	case l.resync <- struct{}{}:
+	default:
+	}
+}
+
+// watchPane starts the loop for a watched pane, unless it's already running.
+func (l *loops) watchPane(pane string) {
+	if _, ok := l.panes[pane]; ok {
+		return
+	}
+	ctx, cancel := context.WithCancel(l.ctx)
+	l.panes[pane] = cancel
+	l.goLoop(func() { l.runPane(ctx, pane) })
+}
+
+// unwatchPane stops a pane's loop. It doesn't wait: the loop sees its context
+// end and any message it sends after is for a pane the model has forgotten.
+func (l *loops) unwatchPane(pane string) {
+	if cancel, ok := l.panes[pane]; ok {
+		cancel()
+		delete(l.panes, pane)
+	}
+}
+
+// followAgents makes the agent status loops match panes: one per agent pane.
+func (l *loops) followAgents(panes []string) {
+	for pane, cancel := range l.agents {
+		if !slices.Contains(panes, pane) {
+			cancel()
+			delete(l.agents, pane)
+		}
+	}
+	for _, pane := range panes {
+		if _, ok := l.agents[pane]; ok {
+			continue
+		}
+		ctx, cancel := context.WithCancel(l.ctx)
+		l.agents[pane] = cancel
+		l.goLoop(func() { l.runAgentStatus(ctx, pane) })
+	}
+}
+
+// tickMsg moves the engine's timers on.
+type tickMsg struct{}
+
+func (l *loops) runTick() {
+	t := time.NewTicker(l.every.Tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-t.C:
+			l.deliver(l.ctx, tickMsg{})
+		}
+	}
+}
+
+// snapshotMsg is a fresh look at herdr's panes, agents and tabs.
+type snapshotMsg struct {
+	snap herdr.AgentSnapshot
+	err  error
+}
+
+func (l *loops) runSync() {
+	t := time.NewTicker(l.every.Sync)
+	defer t.Stop()
+	for {
+		l.deliver(l.ctx, l.snapshot())
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-t.C:
+		case <-l.resync:
+		}
+	}
+}
+
+// snapshot fetches the three lists Sync needs. Panes are the one that matters:
+// without them nothing can be chosen. Agents and tabs only add names, the state
+// change counter and tab numbers, so if they fail the snapshot goes ahead.
+func (l *loops) snapshot() snapshotMsg {
+	snap := herdr.AgentSnapshot{Taken: l.now()}
+	panes, err := l.client.ListPanes(l.ctx)
+	if err != nil {
+		return snapshotMsg{err: err}
+	}
+	snap.Panes = panes
+	if agents, err := l.client.ListAgents(l.ctx); err == nil {
+		snap.Agents = agents
+	}
+	if tabs, err := l.client.ListTabs(l.ctx); err == nil {
+		snap.Tabs = tabs
+	}
+	return snapshotMsg{snap: snap}
+}
+
+// watchListMsg is the watch list, sent when it changes and once at the start.
+type watchListMsg struct {
+	panes []string
+	err   error
+}
+
+func (l *loops) runWatchList(dir string, extra []string) {
+	t := time.NewTicker(l.every.List)
+	defer t.Stop()
+	var last watchListMsg
+	first := true
+	for {
+		msg := watchListMsg{panes: slices.Clone(extra)}
+		if dir != "" {
+			panes, err := watchlist.Read(dir)
+			msg.err = err
+			for _, p := range panes {
+				if !slices.Contains(msg.panes, p) {
+					msg.panes = append(msg.panes, p)
+				}
+			}
+		}
+		if first || !sameList(msg, last) {
+			first = false
+			last = msg
+			l.deliver(l.ctx, msg)
+		}
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func sameList(a, b watchListMsg) bool {
+	errText := func(err error) string {
+		if err == nil {
+			return ""
+		}
+		return err.Error()
+	}
+	return slices.Equal(a.panes, b.panes) && errText(a.err) == errText(b.err)
+}
+
+// configMsg is sightline.toml, loaded again after a change.
+type configMsg struct{ update config.Update }
+
+func (l *loops) runConfig(updates <-chan config.Update) {
+	for {
+		select {
+		case <-l.ctx.Done():
+			return
+		case u, ok := <-updates:
+			if !ok {
+				return
+			}
+			l.deliver(l.ctx, configMsg{u})
+		}
+	}
+}
+
+// eventMsg is one event from herdr.
+type eventMsg struct{ ev herdr.Event }
+
+// eventsDownMsg says a subscription couldn't be opened, or herdr refused to
+// resume it, so some events won't arrive.
+type eventsDownMsg struct {
+	what string
+	err  error
+}
+
+// agentDetected subscribes to herdr noticing an agent start in a pane. The herdr
+// package has no helper for it, and the feed is the only thing that needs it.
+var agentDetected = herdr.Subscription{Type: "pane.agent_detected"}
+
+// runGlobalEvents follows panes closing, exiting and moving, and agents being
+// detected. These don't name a pane, so a closed pane can't take them down.
+func (l *loops) runGlobalEvents() {
+	events, err := l.client.Subscribe(l.ctx, herdr.PaneClosed(), herdr.PaneExited(), herdr.PaneMoved(), agentDetected)
+	if err != nil {
+		l.deliver(l.ctx, eventsDownMsg{what: "pane events", err: err})
+		return
+	}
+	for ev := range events {
+		l.deliver(l.ctx, eventMsg{ev})
+		if ev.Kind == herdr.EventFailed {
+			l.deliver(l.ctx, eventsDownMsg{what: "pane events", err: ev.Err})
+		}
+	}
+}
+
+// runAgentStatus follows one agent pane's status changes. herdr only offers
+// them per pane. The tracker works activity out from snapshots as well, so a
+// subscription that fails costs speed, not correctness, and isn't reported.
+func (l *loops) runAgentStatus(ctx context.Context, pane string) {
+	events, err := l.client.Subscribe(ctx, herdr.AgentStatusChanged(pane))
+	if err != nil {
+		return
+	}
+	for ev := range events {
+		l.deliver(ctx, eventMsg{ev})
+	}
+}
+
+// deltaMsg is what one read of a watched pane found.
+type deltaMsg struct {
+	pane  string
+	delta herdr.Delta
+	// hintsLost means the pane's scroll subscription dropped and came back, so
+	// hints may have been missed and a quiet read can't be trusted.
+	hintsLost bool
+}
+
+// paneGoneMsg says a watched pane has closed.
+type paneGoneMsg struct{ pane string }
+
+// paneErrMsg says reading a watched pane failed for a reason other than it
+// closing. The loop keeps trying.
+type paneErrMsg struct {
+	pane string
+	err  error
+}
+
+// runPane owns one pane's PaneWatcher. It reads the pane every Poll, and sooner
+// when a scroll hint says the pane printed something, and sends what each read
+// found to the model. It stops when ctx ends or the pane closes.
+func (l *loops) runPane(ctx context.Context, pane string) {
+	w := herdr.NewPaneWatcher(l.client, pane)
+
+	// Scroll hints are a bonus. Without them reads still happen on time, they
+	// just can't tell a quiet pane from a full window of the same output.
+	hints, err := l.client.Subscribe(ctx, herdr.ScrollChanged(pane))
+	switch {
+	case herdr.IsPaneNotFound(err):
+		l.deliver(ctx, paneGoneMsg{pane})
+		return
+	case err != nil:
+		l.deliver(ctx, paneErrMsg{pane: pane, err: err})
+		hints = nil
+	}
+
+	t := time.NewTicker(l.every.Poll)
+	defer t.Stop()
+	var lastRead time.Time
+	read := func(hintsLost bool) bool {
+		lastRead = time.Now()
+		d, err := w.Poll(ctx)
+		switch {
+		case ctx.Err() != nil:
+			return false
+		case herdr.IsPaneNotFound(err):
+			l.deliver(ctx, paneGoneMsg{pane})
+			return false
+		case err != nil:
+			l.deliver(ctx, paneErrMsg{pane: pane, err: err})
+			return true
+		}
+		l.deliver(ctx, deltaMsg{pane: pane, delta: d, hintsLost: hintsLost})
+		return true
+	}
+
+	if !read(false) {
+		return
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !read(false) {
+				return
+			}
+		case ev, ok := <-hints:
+			if !ok {
+				hints = nil
+				continue
+			}
+			switch ev.Kind {
+			case herdr.EventScrollChanged:
+				if ev.Scroll == nil || !w.Hint(*ev.Scroll) || time.Since(lastRead) < l.every.EarlyRead {
+					continue
+				}
+				if !read(false) {
+					return
+				}
+				t.Reset(l.every.Poll)
+			case herdr.EventReconnected:
+				if !read(true) {
+					return
+				}
+			}
+		}
+	}
+}

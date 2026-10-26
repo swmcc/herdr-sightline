@@ -77,7 +77,7 @@ install command again.
 4. Break something. The error appears in the feed:
 
    ```
-   ● web · next dev                                        2 lines ago
+   ● web · next dev                                            12s ago
      TypeError: Cannot read properties of undefined (reading 'map')
        at NoticeList (app/notices/page.tsx:14:22)
      → claude (tab 2)          [enter] send   [d] dismiss   [n] never
@@ -292,7 +292,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))
 - [x] Cap how many entries the engine keeps ([#41](https://github.com/swmcc/herdr-sightline/issues/41))
 - [x] Capture the lines around an error ([#8](https://github.com/swmcc/herdr-sightline/issues/8))
-- [ ] The feed pane ([#9](https://github.com/swmcc/herdr-sightline/issues/9))
+- [x] The feed pane ([#9](https://github.com/swmcc/herdr-sightline/issues/9))
 - [ ] Choose which agent gets the error ([#10](https://github.com/swmcc/herdr-sightline/issues/10))
 - [ ] Send the error safely ([#11](https://github.com/swmcc/herdr-sightline/issues/11))
 - [ ] Check whether the fix worked ([#12](https://github.com/swmcc/herdr-sightline/issues/12))

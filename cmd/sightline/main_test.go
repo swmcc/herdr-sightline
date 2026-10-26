@@ -32,7 +32,8 @@ func TestRun(t *testing.T) {
 			wantCode:   0,
 			wantStdout: "(no pane in context)",
 		},
-		{name: "feed closes on enter", args: []string{"feed"}, wantCode: 0, wantStdout: "Press enter to close."},
+		{name: "feed outside herdr says why and waits for enter", args: []string{"feed"}, wantCode: 1, wantStdout: "Press enter to close."},
+		{name: "feed refuses a bad pane id", args: []string{"feed", "--watch", "w1:p1;rm"}, wantCode: 2, wantStderr: "isn't a pane id"},
 	}
 
 	for _, tt := range tests {

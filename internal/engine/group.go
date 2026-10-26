@@ -48,11 +48,12 @@ const maxFrames = 3
 const maxLeadIn = 3
 
 // Output is untrusted and a line can be any length. Each line is cut to
-// maxScannedLine before it's looked at, then to maxFingerprintLine once the
-// volatile parts are out. Cutting only after normalising means a timestamp or PID
-// that changes length can't move where the cut falls.
+// maxScannedLine before it's looked at (the same head detection matches, see
+// scanned), then to maxFingerprintLine once the volatile parts are out. Cutting
+// only after normalising means a timestamp or PID that changes length can't
+// move where the cut falls.
 const (
-	maxScannedLine     = 4096
+	maxScannedLine     = maxStoredBytes
 	maxFingerprintLine = 1024
 )
 

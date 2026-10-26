@@ -116,8 +116,9 @@ func clamp(opts Options) Options {
 // error line an ignore rule matches is dismissed, and Reconfigure returns how
 // many were. Only new entries. An entry that has been sent, is settling, is
 // still failing or has a verdict is left alone, because it's the answer to
-// whether a fix worked and an ignore rule shouldn't hide that. A line cut short
-// to be stored (see capStored) is matched as it was kept.
+// whether a fix worked and an ignore rule shouldn't hide that. Only the head of
+// the line is matched (see scanned), which is the part that was kept and the
+// part detection matched.
 func (e *Engine) Reconfigure(opts Options) (dismissed int) {
 	e.opts = clamp(opts)
 	for _, s := range e.sources {

@@ -163,10 +163,9 @@ func FuzzInjection(f *testing.F) {
 			return
 		}
 		steps, canaries := decodeFuzz(data)
-		// Detection costs about 2s for each MiB in one line (every preset runs
-		// over all of it), so a few repeated big pieces make one input take a
-		// minute. That's a known cost, not what this target looks for, so
-		// inputs are kept just big enough to reach the 64 KiB hidden cap.
+		// Big inputs only make each run slower (TestHugeLineIsQuick in the
+		// engine covers their cost), so inputs are kept just big enough to
+		// reach the 64 KiB hidden cap, which is all this target needs.
 		total := 0
 		for _, s := range steps {
 			for _, el := range s.elements {

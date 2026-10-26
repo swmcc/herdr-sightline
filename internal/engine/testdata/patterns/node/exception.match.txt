@@ -1,0 +1,12 @@
+Error: listen EADDRINUSE: address already in use :::3000
+TypeError: Cannot read properties of undefined (reading 'map')
+ReferenceError: fetchUser is not defined
+SyntaxError: Unexpected token '}'
+SyntaxError: Cannot use import statement outside a module
+RangeError: Maximum call stack size exceeded
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'express' imported from /app/src/server.js
+Error [ERR_REQUIRE_ESM]: require() of ES Module /app/node_modules/chalk/source/index.js from /app/src/log.js not supported.
+Uncaught TypeError: user.profile is undefined
+AggregateError: All promises were rejected
+Error: Cannot find module 'dotenv'
+web-1  | TypeError: Cannot read properties of null (reading 'id')

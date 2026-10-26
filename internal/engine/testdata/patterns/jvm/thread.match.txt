@@ -1,0 +1,3 @@
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.length()" because "name" is null
+Exception in thread "main" kotlin.NotImplementedError: An operation is not implemented: login
+Exception in thread "http-nio-8080-exec-1" java.lang.OutOfMemoryError: Java heap space

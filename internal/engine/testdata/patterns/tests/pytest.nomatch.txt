@@ -1,0 +1,12 @@
+============================= test session starts ==============================
+collected 24 items
+tests/test_errors.py ........                                            [ 33%]
+tests/test_users.py ..F.....                                             [ 66%]
+============================== 24 passed in 0.42s ==============================
+=========================== short test summary info ============================
+FAILED tests/test_users.py::test_missing_user - assert 200 == 404
+==================== 1 failed, 23 passed in 0.51s ====================
+______________________________ test_missing_user _______________________________
+E       assert 200 == 404
+tests/test_users.py:18: AssertionError
+tests/test_errors.py::test_error_page PASSED                             [ 50%]

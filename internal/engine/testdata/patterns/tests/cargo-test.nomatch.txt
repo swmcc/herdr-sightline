@@ -1,0 +1,6 @@
+running 12 tests
+test tests::parses_empty_input ... FAILED
+test tests::parses_errors ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+failures:
+---- tests::parses_empty_input stdout ----

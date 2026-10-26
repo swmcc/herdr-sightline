@@ -1,0 +1,11 @@
+# starts: 1
+INFO:     127.0.0.1:52344 - "GET /boom HTTP/1.1" 500 Internal Server Error
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/h11_impl.py", line 406, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/main.py", line 9, in boom
+    return 1 / 0
+           ~~^~~
+ZeroDivisionError: division by zero

@@ -1,0 +1,3 @@
+Failures:
+An error occurred while loading ./spec/models/user_spec.rb.
+An error occurred in a `before(:suite)` hook.

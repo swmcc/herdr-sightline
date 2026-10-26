@@ -1,0 +1,7 @@
+index out of bounds: the len is 3 but the index is 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/129f3b9964af4d4a709d1383930ade12dfe7c081/library/std/src/panicking.rs:645:5
+2026-10-26T12:00:00.123456Z ERROR app::db: connection lost, retrying error=Connection refused (os error 61)
+2026-10-26T12:00:00.123456Z  INFO app: panic hook installed

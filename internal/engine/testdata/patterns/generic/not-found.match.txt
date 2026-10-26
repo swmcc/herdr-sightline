@@ -1,0 +1,4 @@
+zsh: command not found: vite
+bash: next: command not found
+sh: 1: tsc: not found
+bash: line 1: rspec: command not found

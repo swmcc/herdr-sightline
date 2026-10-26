@@ -1,0 +1,22 @@
+    at Object.<anonymous> (/app/src/server.js:12:11)
+    at Module._compile (node:internal/modules/cjs/loader:1256:14)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async Promise.all (index 0)
+(node:4821) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(node:4821) ExperimentalWarning: The Fetch API is an experimental feature. This feature could change at any time
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Server listening on http://localhost:3000
+GET /api/errors 200 4.123 ms - 2
+GET /error 404 1.203 ms - 139
+  [cause]: Error: connect ECONNREFUSED 127.0.0.1:5432
+  code: 'ERR_MODULE_NOT_FOUND'
+/app/src/server.js:12
+    throw new Error('boom');
+    ^
+Node.js v20.11.1
+errorHandler mounted at /api
+  ✓ handles a TypeError from the client (3 ms)
+logger: ErrorBoundary rendered fallback
+ValidationError: email is required
+[nodemon] restarting due to changes...
+[nodemon] starting `node src/server.js`

@@ -1,0 +1,6 @@
+# starts: 1
+building...
+# github.com/acme/app/internal/server
+internal/server/routes.go:41:2: declared and not used: err
+internal/server/routes.go:57:9: undefined: handleErrors
+failed to build, error: exit status 1

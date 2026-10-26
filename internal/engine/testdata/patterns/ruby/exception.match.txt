@@ -1,0 +1,5 @@
+app.rb:3:in 'Integer#/': divided by 0 (ZeroDivisionError)
+app.rb:3:in `/': divided by 0 (ZeroDivisionError)
+/usr/local/bundle/gems/bootsnap-1.18.3/lib/bootsnap/load_path_cache/core_ext/kernel_require.rb:30:in 'Kernel#require': cannot load such file -- sidekiq/web (LoadError)
+config/initializers/stripe.rb:1:in '<main>': undefined method 'api_key=' for nil (NoMethodError)
+lib/tasks/import.rake:12:in 'block (2 levels) in <top (required)>': Couldn't find User with 'id'=42 (ActiveRecord::RecordNotFound)

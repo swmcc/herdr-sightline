@@ -1,0 +1,4 @@
+src/server.ts(14,7): error TS2322: Type 'string' is not assignable to type 'number'.
+src/routes/users.ts:42:18 - error TS2339: Property 'emial' does not exist on type 'User'.
+error TS18003: No inputs were found in config file '/app/tsconfig.json'.
+web:build: src/index.ts(3,1): error TS2304: Cannot find name 'foo'.

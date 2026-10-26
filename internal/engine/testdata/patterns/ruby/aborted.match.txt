@@ -1,0 +1,3 @@
+bin/rails aborted!
+rake aborted!
+rails aborted!

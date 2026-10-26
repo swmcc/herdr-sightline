@@ -1,0 +1,6 @@
+Tasks: TOP => db:migrate
+(See full trace by running task with --trace)
+== 20261026120000 CreateErrors: migrating ====================================
+-- create_table(:errors)
+== 20261026120000 CreateErrors: migrated (0.0021s) ===========================
+NoMethodError: undefined method 'name' for nil

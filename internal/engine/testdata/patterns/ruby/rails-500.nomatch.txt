@@ -1,0 +1,10 @@
+Started GET "/errors/404" for ::1 at 2026-10-26 12:00:00 +0000
+Processing by ErrorsController#not_found as HTML
+  Rendered errors/not_found.html.erb within layouts/application (Duration: 1.2ms | Allocations: 512)
+Completed 200 OK in 12ms (Views: 8.1ms | ActiveRecord: 0.9ms | Allocations: 4521)
+Completed 404 Not Found in 3ms (ActiveRecord: 0.4ms | Allocations: 900)
+Completed 422 Unprocessable Content in 21ms (ActiveRecord: 3.3ms | Allocations: 7001)
+Completed 302 Found in 9ms (ActiveRecord: 1.1ms | Allocations: 2010)
+ActionController::RoutingError (No route matches [GET] "/wp-login.php"):
+ActionController::RoutingError (No route matches [GET] "/favicon.ico"):
+  Post Load (0.4ms)  SELECT "posts".* FROM "posts" WHERE "posts"."error_count" = $1  [["error_count", 0]]

@@ -1,0 +1,6 @@
+[INFO] BUILD SUCCESS
+[INFO] Total time:  3.214 s
+[WARNING] Using platform encoding (UTF-8 actually) to copy filtered resources
+[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.11.0:compile (default-compile) on project app: Compilation failure
+[ERROR] /app/src/main/java/com/acme/App.java:[12,5] cannot find symbol

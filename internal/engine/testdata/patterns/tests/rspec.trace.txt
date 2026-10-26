@@ -1,0 +1,20 @@
+# starts: 1
+..F.....
+
+Failures:
+
+  1) User#full_name joins first and last name
+     Failure/Error: expect(user.full_name).to eq("Ada Lovelace")
+
+       expected: "Ada Lovelace"
+            got: "Ada"
+
+       (compared using ==)
+     # ./spec/models/user_spec.rb:12:in 'block (3 levels) in <top (required)>'
+
+Finished in 0.41 seconds (files took 1.2 seconds to load)
+8 examples, 1 failure
+
+Failed examples:
+
+rspec ./spec/models/user_spec.rb:12 # User#full_name joins first and last name

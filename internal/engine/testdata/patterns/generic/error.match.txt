@@ -1,0 +1,6 @@
+error: could not compile `app` (bin "app") due to 2 previous errors
+Error: ENOENT: no such file or directory, open '/app/.env'
+ERROR: Could not find a version that satisfies the requirement djangoo (from versions: none)
+error: failed to push some refs to 'github.com:acme/app.git'
+db-1   | Error: Database is uninitialized and superuser password is not specified.
+error: none of the files matched

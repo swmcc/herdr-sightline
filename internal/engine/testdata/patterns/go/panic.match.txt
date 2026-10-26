@@ -1,0 +1,5 @@
+panic: runtime error: index out of range [5] with length 3
+panic: runtime error: invalid memory address or nil pointer dereference
+panic: assignment to entry in nil map
+panic: boom [recovered]
+api-1  | panic: listen tcp :8080: bind: address already in use

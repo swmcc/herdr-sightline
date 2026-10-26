@@ -1,0 +1,22 @@
+# starts: 1
+> app@1.0.0 dev
+> node src/server.js
+
+/app/src/server.js:12
+    throw new Error('boom');
+    ^
+
+Error: boom
+    at Object.<anonymous> (/app/src/server.js:12:11)
+    at Module._compile (node:internal/modules/cjs/loader:1256:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1310:10)
+    at node:internal/main/run_main_module:23:47
+
+Node.js v20.11.1
+npm error Lifecycle script `dev` failed with error:
+npm error code 1
+npm error path /app
+npm error workspace app@1.0.0
+npm error location /app
+npm error command failed
+npm error command sh -c node src/server.js

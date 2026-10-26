@@ -1,0 +1,12 @@
+  ▲ Next.js 14.2.3
+  - Local:        http://localhost:3000
+ ✓ Starting...
+ ✓ Ready in 1843ms
+ ○ Compiling /error ...
+ ✓ Compiled /error in 512ms (412 modules)
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.
+ GET /api/errors 200 in 31ms
+  10 |   const data = await getData()
+> 12 |   return <h1>{data.title}</h1>
+     |                    ^
+ ⨯ app/dashboard/page.tsx (12:18) @ DashboardPage

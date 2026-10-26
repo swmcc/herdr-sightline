@@ -1,6 +1,9 @@
 package engine
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Matcher decides whether a line starts an error. Name is shown in the feed.
 type Matcher interface {
@@ -8,9 +11,26 @@ type Matcher interface {
 	Match(line string) bool
 }
 
-// Substring matches any line containing text.
-//
-// Stand-in until #6 brings RE2 patterns and the built-in presets.
+// Regexp returns a Matcher for an RE2 pattern, such as a [[pattern]] or [[ignore]]
+// entry from sightline.toml. A nil re never matches, so a missing pattern can't
+// turn every line into an error.
+func Regexp(name string, re *regexp.Regexp) Matcher {
+	return regexpMatcher{name: name, re: re}
+}
+
+type regexpMatcher struct {
+	name string
+	re   *regexp.Regexp
+}
+
+func (m regexpMatcher) Name() string { return m.name }
+
+func (m regexpMatcher) Match(line string) bool {
+	return m.re != nil && m.re.MatchString(line)
+}
+
+// Substring matches any line containing text. It's handy in tests, where a word
+// is clearer than a pattern. Real matchers come from [Presets] and [Regexp].
 type Substring struct {
 	Label string
 	Text  string

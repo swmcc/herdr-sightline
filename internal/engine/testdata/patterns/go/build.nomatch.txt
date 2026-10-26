@@ -1,0 +1,13 @@
+./main.go:12:5: undefined: handleErrors
+internal/server/routes.go:41:2: declared and not used: err
+../shared/log.go:7:2: "fmt" imported and not used
+main.go:3:8: package github.com/acme/missing is not in std (/usr/local/go/src/github.com/acme/missing)
+2026/10/26 12:00:00 main.go:23: listening on :8080
+2026/10/26 12:00:01 server.go:88: error_count=0
+go: downloading github.com/go-chi/chi/v5 v5.0.12
+time=2026-10-26T12:00:00.000Z level=ERROR msg="request failed" path=/api/errors err="context canceled"
+building...
+running...
+# Running:
+# TODO
+FAIL	github.com/acme/app/internal/server [build failed]

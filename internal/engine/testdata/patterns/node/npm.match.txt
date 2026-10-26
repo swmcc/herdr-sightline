@@ -1,0 +1,3 @@
+npm ERR! Missing script: "dev"
+npm error Missing script: "start"
+npm ERR! missing script: start

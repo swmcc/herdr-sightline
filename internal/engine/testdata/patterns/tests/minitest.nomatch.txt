@@ -1,0 +1,8 @@
+Run options: --seed 4242
+# Running:
+..F..
+Finished in 0.123456s, 40.5 runs/s, 81.0 assertions/s.
+5 runs, 10 assertions, 1 failures, 0 errors, 0 skips
+5 runs, 10 assertions, 0 failures, 0 errors, 0 skips
+UserTest#test_full_name [test/models/user_test.rb:8]:
+bin/rails test test/models/user_test.rb:8

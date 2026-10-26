@@ -1,0 +1,4 @@
+# starts: 1
+app.rb:3:in 'Integer#/': divided by 0 (ZeroDivisionError)
+	from app.rb:3:in 'Object#divide'
+	from app.rb:7:in '<main>'

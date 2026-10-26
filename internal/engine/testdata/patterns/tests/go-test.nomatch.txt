@@ -1,0 +1,9 @@
+=== RUN   TestParseConfig
+=== RUN   TestParseConfig/missing_file
+    --- FAIL: TestParseConfig/missing_file (0.00s)
+    config_test.go:42: got error <nil>, want ErrNotExist
+--- PASS: TestErrors (0.00s)
+ok  	github.com/acme/app/internal/config	0.012s
+?   	github.com/acme/app/cmd/app	[no test files]
+PASS
+FAIL

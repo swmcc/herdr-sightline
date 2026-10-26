@@ -1,0 +1,8 @@
+webpack 5.89.0 compiled successfully in 1234 ms
+webpack 5.89.0 compiled with 2 warnings in 980 ms
+webpack 5.89.0 compiled with 1 error in 120 ms
+WARNING in ./src/index.js 5:2-14
+asset main.js 1.2 MiB [emitted] (name: main)
+<i> [webpack-dev-server] Project is running at:
+Module not found: Error: Can't resolve './Headr' in '/app/src/components'
+modules by path ./src/errors/ 4.1 KiB

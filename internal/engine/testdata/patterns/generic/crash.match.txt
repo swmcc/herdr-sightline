@@ -1,0 +1,5 @@
+Segmentation fault (core dumped)
+zsh: segmentation fault  ./bin/app
+Segmentation fault: 11
+Bus error (core dumped)
+zsh: bus error  ./bin/app

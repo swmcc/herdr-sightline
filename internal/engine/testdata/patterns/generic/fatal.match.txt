@@ -1,0 +1,5 @@
+fatal: not a git repository (or any of the parent directories): .git
+FATAL:  password authentication failed for user "postgres"
+FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory
+PHP Fatal error:  Uncaught Error: Call to undefined function foo() in /app/index.php:3
+Fatal error: Allowed memory size of 134217728 bytes exhausted (tried to allocate 20480 bytes)

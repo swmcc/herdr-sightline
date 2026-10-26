@@ -1,0 +1,15 @@
+# starts: 2 (Python prints a traceback for each exception in the chain)
+Traceback (most recent call last):
+  File "/app/settings.py", line 9, in load
+    port = int(os.environ["PORT"])
+               ~~~~~~~~~~^^^^^^^^
+KeyError: 'PORT'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/main.py", line 4, in <module>
+    settings.load()
+  File "/app/settings.py", line 11, in load
+    raise RuntimeError("PORT is not set")
+RuntimeError: PORT is not set

@@ -1,0 +1,9 @@
+2026-10-26T12:00:00.000Z  INFO 1 --- [main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8080 (http) with context path '/'
+2026-10-26T12:00:00.000Z  INFO 1 --- [main] o.s.b.a.w.s.ErrorMvcAutoConfiguration    : Registered error page
+2026-10-26T12:00:00.000Z ERROR 1 --- [main] o.s.boot.SpringApplication               : Application run failed
+Picked up JAVA_TOOL_OPTIONS: -Xmx512m
+com.acme.errors.ErrorController registered at /error
+django.core.exceptions.ImproperlyConfigured: SECRET_KEY must not be empty
+sqlalchemy.exc.OperationalError: (psycopg2.OperationalError) connection to server at "db" (172.18.0.2), port 5432 failed: Connection refused
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='api.example.com', port=443): Max retries exceeded
+psycopg2.errors.UndefinedTable: relation "users" does not exist

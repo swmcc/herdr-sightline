@@ -1,0 +1,11 @@
+# starts: 1
+Internal Server Error: /users/42/
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/site-packages/django/core/handlers/exception.py", line 55, in inner
+    response = get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/app/users/views.py", line 18, in detail
+    return render(request, "users/detail.html", {"user": users[pk]})
+                                                         ~~~~~^^^^
+KeyError: 42
+[26/Oct/2026 12:00:00] "GET /users/42/ HTTP/1.1" 500 71234

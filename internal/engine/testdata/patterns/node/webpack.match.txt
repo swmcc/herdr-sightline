@@ -1,0 +1,3 @@
+ERROR in ./src/index.js 3:0-28
+ERROR in ./src/App.tsx:12:5
+ERROR in /app/src/components/Header.tsx

@@ -1,0 +1,32 @@
+Watching for file changes with StatReloader
+Performing system checks...
+
+System check identified no issues (0 silenced).
+October 26, 2026 - 10:00:00
+Django version 5.1.2, using settings 'site.settings'
+Starting development server at http://127.0.0.1:8000/
+Quit the server with CONTROL-C.
+
+[26/Oct/2026 10:00:03] "GET / HTTP/1.1" 200 5123
+[26/Oct/2026 10:00:03] "GET /static/site.css HTTP/1.1" 200 2210
+Internal Server Error: /notices/42/
+Traceback (most recent call last):
+  File "/app/notices/views.py", line 12, in detail
+    notice = Notice.objects.get(pk=pk)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/django/db/models/query.py", line 649, in get
+    raise self.model.DoesNotExist(
+notices.models.Notice.DoesNotExist: Notice matching query does not exist.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/django/core/handlers/exception.py", line 55, in inner
+    response = get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+  File "/app/notices/views.py", line 14, in detail
+    raise LookupError(f"no notice {pk}")
+LookupError: no notice 42
+[26/Oct/2026 10:00:04] "GET /notices/42/ HTTP/1.1" 500 145
+[26/Oct/2026 10:00:05] "GET /static/site.css HTTP/1.1" 304 0
+[26/Oct/2026 10:00:06] "GET / HTTP/1.1" 200 5123

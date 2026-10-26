@@ -183,7 +183,8 @@ Sightline reads `sightline.toml` from its config directory
 # How long to watch after a fix before calling it.
 settle_seconds = 30
 
-# Lines of output sent before and after the error.
+# Lines of output sent before the error, and at most this many after it.
+# The lines after stop early once the stack trace ends.
 context_lines = 20
 
 # Built-in pattern sets. All are on by default.
@@ -277,7 +278,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Built-in error patterns with real fixtures ([#6](https://github.com/swmcc/herdr-sightline/issues/6))
 - [x] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))
 - [x] Cap how many entries the engine keeps ([#41](https://github.com/swmcc/herdr-sightline/issues/41))
-- [ ] Capture the lines around an error ([#8](https://github.com/swmcc/herdr-sightline/issues/8))
+- [x] Capture the lines around an error ([#8](https://github.com/swmcc/herdr-sightline/issues/8))
 - [ ] The feed pane ([#9](https://github.com/swmcc/herdr-sightline/issues/9))
 - [ ] Choose which agent gets the error ([#10](https://github.com/swmcc/herdr-sightline/issues/10))
 - [ ] Send the error safely ([#11](https://github.com/swmcc/herdr-sightline/issues/11))

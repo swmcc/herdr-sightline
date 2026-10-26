@@ -1,0 +1,31 @@
+> Task :compileJava UP-TO-DATE
+> Task :processResources UP-TO-DATE
+> Task :classes UP-TO-DATE
+
+> Task :bootRun
+2026-10-26T10:00:00.101Z  INFO 4242 --- [notices] [           main] c.e.notices.NoticesApplication           : Starting NoticesApplication using Java 21.0.4 with PID 4242
+2026-10-26T10:00:00.104Z  INFO 4242 --- [notices] [           main] c.e.notices.NoticesApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-10-26T10:00:01.220Z  INFO 4242 --- [notices] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8080 (http)
+2026-10-26T10:00:01.236Z  INFO 4242 --- [notices] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-26T10:00:01.237Z  INFO 4242 --- [notices] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.30]
+2026-10-26T10:00:01.290Z  INFO 4242 --- [notices] [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-10-26T10:00:01.950Z  WARN 4242 --- [notices] [           main] ConfigServletWebServerApplicationContext : Exception encountered during context initialization - cancelling refresh attempt: org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'noticeRepository'
+2026-10-26T10:00:01.960Z  INFO 4242 --- [notices] [           main] o.apache.catalina.core.StandardService   : Stopping service [Tomcat]
+2026-10-26T10:00:01.990Z ERROR 4242 --- [notices] [           main] o.s.boot.SpringApplication               : Application run failed
+
+org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'noticeRepository' defined in com.example.notices.NoticeRepository: Failed to initialise
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1806) ~[spring-beans-6.1.13.jar:6.1.13]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:335) ~[spring-boot-3.3.4.jar:3.3.4]
+	at com.example.notices.NoticesApplication.main(NoticesApplication.java:10) ~[main/:na]
+Caused by: java.lang.IllegalStateException: No table "notices" in schema "public"
+	at com.example.notices.NoticeRepository.check(NoticeRepository.java:18) ~[main/:na]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.invokeInitMethods(AbstractAutowireCapableBeanFactory.java:1853) ~[spring-beans-6.1.13.jar:6.1.13]
+	... 15 common frames omitted
+
+> Task :bootRun FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':bootRun'.
+> Process 'command '/usr/lib/jvm/java-21/bin/java'' finished with non-zero exit value 1

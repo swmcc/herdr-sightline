@@ -1,0 +1,55 @@
+  ▲ Next.js 14.2.3
+  - Local:        http://localhost:3000
+  - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1843ms
+ ○ Compiling / ...
+ ✓ Compiled / in 2.4s (512 modules)
+ GET / 200 in 2611ms
+ GET /_next/static/css/app/layout.css?v=1714058400000 200 in 14ms
+ GET /favicon.ico 200 in 9ms
+ GET /api/session 200 in 41ms
+ GET /api/session 200 in 12ms
+ ○ Compiling /about ...
+ ✓ Compiled /about in 640ms (520 modules)
+ GET /about 200 in 702ms
+ GET /api/session 200 in 10ms
+ GET /_next/static/chunks/app/about/page.js 200 in 5ms
+ GET / 200 in 48ms
+ GET /api/session 200 in 11ms
+ GET /api/notices/count 200 in 23ms
+ GET /api/session 200 in 9ms
+ ○ Compiling /notices ...
+ ✓ Compiled /notices in 812ms (530 modules)
+ ⨯ TypeError: Cannot read properties of undefined (reading 'map')
+    at NoticeList (./app/notices/page.tsx:14:22)
+    at stringify (<anonymous>)
+digest: "1442510217"
+  12 |   const notices = await getNotices();
+  13 |   return (
+> 14 |     <ul>{notices.map((n) => <li key={n.id}>{n.title}</li>)}</ul>
+     |                  ^
+  15 |   );
+  16 | }
+  17 |
+ GET /notices 500 in 1043ms
+ GET /_next/static/chunks/app/notices/page.js 200 in 6ms
+ GET /api/session 200 in 10ms
+ GET /api/notices/count 200 in 19ms
+ GET /api/session 200 in 8ms
+ GET /favicon.ico 200 in 4ms
+ GET /api/session 200 in 9ms
+ GET /api/notices/count 200 in 17ms
+ GET /api/session 200 in 8ms
+ GET /api/session 200 in 7ms
+ GET /api/notices/count 200 in 18ms
+ GET /api/session 200 in 9ms
+ GET /api/session 200 in 8ms
+ GET /api/notices/count 200 in 16ms
+ GET /api/session 200 in 7ms
+ GET /api/session 200 in 9ms
+ GET /api/notices/count 200 in 20ms
+ GET /api/session 200 in 8ms
+ GET /api/session 200 in 10ms
+ GET /api/notices/count 200 in 15ms

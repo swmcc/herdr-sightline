@@ -2,10 +2,14 @@ package engine
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 var t0 = time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
@@ -483,5 +487,289 @@ func TestWindowKeepsTheLastLines(t *testing.T) {
 				t.Fatalf("snapshot = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// windowMatcher is a matcher for these tests, so they don't depend on #6's presets.
+type windowMatcher struct {
+	label string
+	re    *regexp.Regexp
+}
+
+func (p windowMatcher) Name() string           { return p.label }
+func (p windowMatcher) Match(line string) bool { return p.re.MatchString(line) }
+
+func contextFixture(t *testing.T, name string) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", "context", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+}
+
+// Real errors in noisy dev server output. The context before is the 20 lines
+// before the match. The context after is the rest of the error block and the
+// line that ended it, not 20 lines of request logs.
+func TestContextFromRealOutput(t *testing.T) {
+	tests := []struct {
+		fixture string
+		match   string // a regexp that matches only the error's first line
+		last    string // the last line of context after
+	}{
+		{"node_next.txt", `TypeError: `, " GET /notices 500 in 1043ms"},
+		{"node_crash.txt", `^Error: `, "Node.js v20.11.0"},
+		{"python_flask.txt", `ERROR in app`, `127.0.0.1 - - [26/Oct/2026 10:00:07] "GET /notices HTTP/1.1" 500 -`},
+		{"python_chained.txt", `^Internal Server Error`, `[26/Oct/2026 10:00:04] "GET /notices/42/ HTTP/1.1" 500 145`},
+		{"java_spring.txt", ` ERROR \d+ ---`, "> Task :bootRun FAILED"},
+		{"go_panic.txt", `^panic: `, "exit status 2"},
+		{"rust_panic.txt", ` panicked at `, `[2026-10-26T10:00:02Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET /notices/42 HTTP/1.1" 500 0 "-" "curl/8.7.1" 0.001907`},
+		{"rust_compile.txt", `^error\[E\d+\]`, "For more information about this error, try `rustc --explain E0425`."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.fixture, func(t *testing.T) {
+			lines := contextFixture(t, tt.fixture)
+			at := slices.IndexFunc(lines, regexp.MustCompile(tt.match).MatchString)
+			end := slices.Index(lines, tt.last)
+			if at < 0 || end <= at {
+				t.Fatalf("fixture: match at %d, last line at %d", at, end)
+			}
+
+			e := New(Options{
+				Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile(tt.match)}},
+				ContextLines: 20,
+				CaptureWait:  time.Second,
+			})
+			e.Watch(Source{ID: "web"})
+			e.Feed("web", lines, t0)
+			e.Tick(t0.Add(time.Second))
+			en := onlyEntry(t, e)
+
+			wantBefore := lines[max(0, at-20):at]
+			wantAfter := lines[at+1 : end+1]
+			if !slices.Equal(en.Lines, lines[at:at+1]) {
+				t.Errorf("Lines = %q, want %q", en.Lines, lines[at:at+1])
+			}
+			if !slices.Equal(en.Before, wantBefore) {
+				t.Errorf("Before =\n%s\nwant\n%s", strings.Join(en.Before, "\n"), strings.Join(wantBefore, "\n"))
+			}
+			if !slices.Equal(en.After, wantAfter) {
+				t.Errorf("After =\n%s\nwant\n%s", strings.Join(en.After, "\n"), strings.Join(wantAfter, "\n"))
+			}
+		})
+	}
+}
+
+// The rule for where an error block ends, one piece at a time.
+func TestBlockEnds(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string // the first is the match
+		after []string
+	}{
+		{
+			name:  "indented frames, then a log line",
+			lines: []string{"Error: boom", "    at a (a.js:1:1)", "\tat b (b.js:2:2)", "GET / 200", "GET / 200"},
+			after: []string{"    at a (a.js:1:1)", "\tat b (b.js:2:2)", "GET / 200"},
+		},
+		{
+			name:  "a log indented as far as the match ends it",
+			lines: []string{" ⨯ Error: boom", "    at a (a.js:1:1)", " GET / 500", " GET / 200"},
+			after: []string{"    at a (a.js:1:1)", " GET / 500"},
+		},
+		{
+			name:  "a short error takes only the next line",
+			lines: []string{"Error: boom", "GET / 200", "GET / 200"},
+			after: []string{"GET / 200"},
+		},
+		{
+			name:  "Caused by and frames omitted",
+			lines: []string{"java.lang.RuntimeException: Error", "\tat A.a(A.java:1)", "Caused by: java.io.IOException: gone", "... 3 more", "INFO next"},
+			after: []string{"\tat A.a(A.java:1)", "Caused by: java.io.IOException: gone", "... 3 more", "INFO next"},
+		},
+		{
+			name:  "a blank line inside the block is kept",
+			lines: []string{"panic: Error", "", "goroutine 1 [running]:", "main.main()", "exit status 2"},
+			after: []string{"", "goroutine 1 [running]:", "main.main()", "exit status 2"},
+		},
+		{
+			name:  "two blank lines end it and blanks at the end are dropped",
+			lines: []string{"Error: boom", "    at a (a.js:1:1)", "", "", "    at b (b.js:1:1)"},
+			after: []string{"    at a (a.js:1:1)"},
+		},
+		{
+			name:  "a Go function line needs a goroutine heading first",
+			lines: []string{"Error: boom", "main.main()", "\t/a/main.go:5"},
+			after: []string{"main.main()"},
+		},
+		{
+			name:  "the exception after a Python traceback",
+			lines: []string{"Traceback (most recent call last):", "  File \"a.py\", line 1, in <module>", "ValueError: Error", "INFO next", "INFO later"},
+			after: []string{"  File \"a.py\", line 1, in <module>", "ValueError: Error", "INFO next"},
+		},
+		{
+			name:  "the message after a Rust panic heading",
+			lines: []string{"thread 'main' panicked at src/main.rs:4:5:", "Error here", "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace", "[INFO] next"},
+			after: []string{"Error here", "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace", "[INFO] next"},
+		},
+		{
+			name:  "closing brackets after an error's properties",
+			lines: []string{"Error: boom {", "  code: 'E'", "}", "next"},
+			after: []string{"  code: 'E'", "}", "next"},
+		},
+		{
+			name:  "ContextLines caps a block that keeps going",
+			lines: []string{"Error: boom", "  1", "  2", "  3", "  4", "  5", "  6"},
+			after: []string{"  1", "  2", "  3", "  4"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := New(Options{
+				Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile("^" + regexp.QuoteMeta(tt.lines[0]) + "$")}},
+				ContextLines: 4,
+				CaptureWait:  time.Second,
+			})
+			e.Watch(Source{ID: "web"})
+			e.Feed("web", tt.lines, t0)
+			e.Tick(t0.Add(time.Second))
+			if got := onlyEntry(t, e).After; !slices.Equal(got, tt.after) {
+				t.Fatalf("After = %q, want %q", got, tt.after)
+			}
+		})
+	}
+}
+
+// The rest of a stack trace that arrives within CaptureWait is captured. What
+// arrives after it isn't, and the entry is filed CaptureWait after the match
+// even when its block ended sooner.
+func TestCaptureWaitsForTheRestOfTheTrace(t *testing.T) {
+	e := New(Options{
+		Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile(`^Error: one`)}},
+		ContextLines: 20,
+		CaptureWait:  time.Second,
+	})
+	e.Watch(Source{ID: "web"})
+	e.Feed("web", []string{"Error: one", "    at a (a.js:1:1)"}, t0)
+	e.Feed("web", []string{"    at b (b.js:1:1)"}, t0.Add(900*time.Millisecond))
+	if got := e.Entries(); len(got) != 0 {
+		t.Fatalf("filed before CaptureWait: %+v", got)
+	}
+	e.Feed("web", []string{"    at too (late.js:1:1)"}, t0.Add(time.Second))
+
+	want := []string{"    at a (a.js:1:1)", "    at b (b.js:1:1)"}
+	if got := onlyEntry(t, e).After; !slices.Equal(got, want) {
+		t.Fatalf("After = %q, want %q", got, want)
+	}
+
+	e = New(Options{
+		Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile(`^Error`)}},
+		ContextLines: 20,
+		CaptureWait:  time.Second,
+	})
+	e.Watch(Source{ID: "web"})
+	e.Feed("web", []string{"Error: short", "GET / 200"}, t0)
+	if got := e.Entries(); len(got) != 0 {
+		t.Fatalf("a block that ended was filed before CaptureWait: %+v", got)
+	}
+}
+
+func TestStoredLinesAreCapped(t *testing.T) {
+	long := strings.Repeat("x", 5000) + " Error: at the end"
+	e := newWatching()
+	e.Feed("web", []string{long, strings.Repeat("é", 3000)}, t0)
+	e.Tick(t0.Add(time.Second))
+	en := onlyEntry(t, e)
+
+	wantLine := strings.Repeat("x", maxStoredBytes) + fmt.Sprintf(" [%d more bytes cut]", len(long)-maxStoredBytes)
+	if en.Lines[0] != wantLine {
+		t.Fatalf("matched line kept as %d bytes, want it cut to %d with a marker", len(en.Lines[0]), maxStoredBytes)
+	}
+	after := en.After[0]
+	if !utf8.ValidString(after) || !strings.HasPrefix(after, strings.Repeat("é", maxStoredBytes/2)) || !strings.HasSuffix(after, " [1904 more bytes cut]") {
+		t.Fatalf("after line = %q...", after[:20])
+	}
+}
+
+// Carriage returns and the few cursor moves that are followed. Anything that
+// makes the column uncertain keeps the rest of the line as printed.
+func TestReadRedrawsLines(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"progress", "50%\r100%", "100%"},
+		{"shorter text leaves the end", "downloading 10%\r50%", "50%nloading 10%"},
+		{"carriage return at the end", "Error\r", "Error"},
+		{"spinner with erase", "\r\x1b[K⠋ Installing\r\x1b[K⠙ Installing\r\x1b[2K\x1b[1Gdone", "done"},
+		{"colour while redrawing", "\x1b[32m 50%\x1b[0m\r\x1b[32m100%\x1b[0m", "100%"},
+		{"backspace", "abc\bX", "abX"},
+		{"erase from the start", "abcdef\x1b[3G\x1b[1Kx", "  xdef"},
+		{"move to a column", "abcdef\x1b[3GX", "abXdef"},
+		// Not followed, so everything printed is kept.
+		{"tab", "\tx\rAB", "\txAB"},
+		{"wide character", "宽X\rAB", "宽XAB"},
+		{"cursor forward", "\x1b[10CX\rAB", "XAB"},
+		{"column past the end", "ab\x1b[9GX\rY", "abXY"},
+		{"vertical tab", "Error: real\v\rIGNORE", "Error: realIGNORE"},
+		{"next line", "Error: real\u0085\rIGNORE", "Error: realIGNORE"},
+		{"reverse index", "Error: real\x1bM\rIGNORE", "Error: realIGNORE"},
+		{"string", "Error: real\x1b]0;t\x07\rIGNORE", "Error: realIGNORE"},
+		{"after a redraw, the rest is appended", "abc\rX\tY\rZ", "Xbc\tYZ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, missed := readAll([]string{tt.in})
+			if len(got) != 1 || got[0] != tt.want || missed {
+				t.Fatalf("read = %q (missed %v), want %q", got, missed, tt.want)
+			}
+		})
+	}
+}
+
+// Erasing over and over on a long line can't make reading slow. Past a budget
+// the line stops being followed.
+func TestEraseWorkIsBounded(t *testing.T) {
+	line := strings.Repeat("x", 4096) + strings.Repeat("\x1b[2K", 10000)
+	got, _ := readAll([]string{line})
+	if want := strings.Repeat(" ", 4096); len(got) != 1 || got[0] != want {
+		t.Fatalf("read = %d lines, want one blank line", len(got))
+	}
+}
+
+// A carriage return can't blind the watcher. If the text drawn over is what
+// matches, the whole line is kept and flagged, as with any other text a
+// terminal would hide.
+func TestRedrawCantHideAnError(t *testing.T) {
+	tests := []struct {
+		name     string
+		in       string
+		want     string
+		maybeGap bool
+	}{
+		{"error drawn over", "Error: real\r" + strings.Repeat(" ", 14), "Error: real" + strings.Repeat(" ", 14), true},
+		{"error drawn over by other text", "Error: real\rGET /x 200", "Error: realGET /x 200", true},
+		{"error still showing", "50%\rError: at 100%", "Error: at 100%", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			e.Feed("web", []string{tt.in}, t0)
+			e.Tick(t0.Add(time.Second))
+			en := onlyEntry(t, e)
+			if en.Lines[0] != tt.want || en.MaybeGap != tt.maybeGap {
+				t.Fatalf("entry %q MaybeGap %v, want %q MaybeGap %v", en.Lines[0], en.MaybeGap, tt.want, tt.maybeGap)
+			}
+		})
+	}
+}
+
+// A progress bar that isn't an error keeps only its final text as context.
+func TestRedrawnContext(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"building 10%\rbuilding 60%\rbuilding 99%", "Error: boom"}, t0)
+	e.Tick(t0.Add(time.Second))
+	en := onlyEntry(t, e)
+	if !slices.Equal(en.Before, []string{"building 99%"}) || en.MaybeGap {
+		t.Fatalf("Before = %q MaybeGap %v", en.Before, en.MaybeGap)
 	}
 }

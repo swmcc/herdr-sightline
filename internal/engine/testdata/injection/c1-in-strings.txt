@@ -1,0 +1,16 @@
+# UTF-8 C1 controls inside a control string. xterm ends the string on any of
+# them, ST (U+009C) and CSI (U+009B) included. herdr 0.9.1 ignores UTF-8 C1
+# controls, so it may keep hiding. Sightline keeps hiding too, and flags what
+# it shows meanwhile, so nothing either terminal hides reaches a message
+# unflagged. Found by FuzzInjection.
+# hidden: HIDDEN
+# caught: Error: after
+@ feed
+A\eXHIDDEN sos\u009cHIDDEN after a C1 ST Error: x\e\\B
+A\e]0;HIDDEN\u009bmHIDDEN after a C1 CSI Error: y\aB
+A\ePHIDDEN\u0085HIDDEN after a NEL Error: z\e\\B
+A\u009dHIDDEN\u009cHIDDEN c1 st after a c1 osc
+HIDDEN Error: still hidden on the next line\aB
+@ wait 2s
+@ feed
+Error: after

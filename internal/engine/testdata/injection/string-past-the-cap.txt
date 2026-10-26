@@ -1,0 +1,14 @@
+# An OSC that never closes. Sightline gives up on it after 100 hidden line ends,
+# so it can't be blinded for ever, and shows what follows. A terminal is still
+# hiding all of it, so every line shown from then on must come flagged, even
+# once the string closes and later errors use those lines as context.
+# hidden: SMUGGLED
+# caught: Error: second
+@ feed
+GET / 200
+A\e]0;HIDDEN opens
+@ repeat 101 x{n}
+SMUGGLED instructions shown after the cap but hidden by the terminal
+\aError: first
+Error: second
+Error: third

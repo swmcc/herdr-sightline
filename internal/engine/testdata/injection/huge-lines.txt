@@ -1,0 +1,15 @@
+# Very long lines. The message caps each line at 500 characters and says how
+# many of the line as printed were cut, even when the window had already cut
+# it at 4 KiB. The whole message stays under 16 KiB.
+# caught: [99506 more characters cut]
+# caught: [19506 more characters cut]
+# caught: Error: escapes
+@ feed
+{{100000|A}} Error
+Error {{20000|😀}}
+{{3000|`}} Error: backticks
+{{20000|\e[0m}}Error: escapes
+Error: huge context follows
+{{6000|é}}
+{{6000|\u200b}}
+{{5000|~}}

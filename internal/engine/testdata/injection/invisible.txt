@@ -1,0 +1,15 @@
+# Characters that show nothing, or something other than themselves, but that a
+# model still reads. The parser fails if any of them reaches a message. The tag
+# characters spell "ignore the fence", which herdr 0.9.1 passes through.
+# caught: Error: invisible
+# absent: ignore the fence
+@ feed
+Error: invisible A\u200bB\u200cC\u200dD\u2060E\ufeffF\u00adG\u034fH\u180bI\u2061J\u2062K\u2063L\u2064M
+tags\U000E0069\U000E0067\U000E006E\U000E006F\U000E0072\U000E0065\U000E0020\U000E0074\U000E0068\U000E0065\U000E0020\U000E0066\U000E0065\U000E006E\U000E0063\U000E0065\U000E007F end
+fillers \u3164\uffa0\u115f\u1160 end
+private use \ue000\uf8ff\U000F0000\U0010FFFD end
+separators A\u2028B\u2029C\u0085D end
+annotation \ufff9hidden\ufffahint\ufffb end
+controls \x00\x01\x7f\x1c\x1d\x1e\x1f\x0b\x0c end
+language tag \U000E0001 and cancel \U000E007F end
+deprecated \u206a\u206b\u206c\u206d\u206e\u206f end

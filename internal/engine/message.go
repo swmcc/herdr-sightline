@@ -30,7 +30,7 @@ const (
 	maxCommandRunes    = 48       // longest command shown
 	maxClosingRunes    = 200      // longest closing line shown
 	maxMessageBytes    = 16 << 10 // longest whole message, in bytes
-	linePrefix         = "| "     // starts every line of output, "|" alone if it's empty
+	outputPrefix       = "| "     // starts every line of output, "|" alone if it's empty
 	aboutPrefix        = "|# "    // starts the pane's name and command, which output can never do
 )
 
@@ -225,9 +225,9 @@ func joinAnd(parts []string) string {
 // prefixed marks one line for the inside of the block.
 func prefixed(s string) string {
 	if s == "" {
-		return strings.TrimSpace(linePrefix)
+		return strings.TrimSpace(outputPrefix)
 	}
-	return linePrefix + s
+	return outputPrefix + s
 }
 
 // paneName names the pane in the header, the one place outside the block that

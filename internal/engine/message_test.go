@@ -256,8 +256,8 @@ func parseMessage(t *testing.T, msg string) parsed {
 			end = i
 			break
 		}
-		if lines[i] != "|" && !strings.HasPrefix(lines[i], linePrefix) && !strings.HasPrefix(lines[i], aboutPrefix) {
-			t.Fatalf("line %d inside the block %q doesn't start with %q", i, lines[i], linePrefix)
+		if lines[i] != "|" && !strings.HasPrefix(lines[i], outputPrefix) && !strings.HasPrefix(lines[i], aboutPrefix) {
+			t.Fatalf("line %d inside the block %q doesn't start with %q", i, lines[i], outputPrefix)
 		}
 	}
 	if end < 0 {
@@ -532,7 +532,7 @@ func TestMessageCapLeavesOutContextFirst(t *testing.T) {
 			p := parseMessage(t, renderMessage(en, Options{}, limit))
 			var got []string
 			for _, l := range p.body {
-				got = append(got, strings.TrimSuffix(strings.TrimPrefix(l, linePrefix), pad))
+				got = append(got, strings.TrimSuffix(strings.TrimPrefix(l, outputPrefix), pad))
 			}
 			if !slices.Equal(got, tt.want) {
 				t.Fatalf("kept %q, want %q", got, tt.want)
@@ -632,7 +632,7 @@ func TestMessageCapHoldsForHugeInput(t *testing.T) {
 			if len(p.header) != 4 || !strings.HasSuffix(p.header[2], tt.note) {
 				t.Fatalf("the cap isn't shown: %q", p.header)
 			}
-			if !slices.Contains(p.body, linePrefix+"Error: boom") {
+			if !slices.Contains(p.body, outputPrefix+"Error: boom") {
 				t.Fatal("the error line was left out")
 			}
 			if len(msg) < maxMessageBytes*3/4 {

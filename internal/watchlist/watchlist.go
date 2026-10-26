@@ -17,13 +17,15 @@
 // versions can add to it. A version above 1 is refused rather than half read.
 //
 // Writes replace the file in one rename, so the feed never sees half of one.
-// Add and Remove read, change and write, so two of them at the same moment can
-// lose one change. They only run on a keypress, so that's an accepted risk.
+// Add, Remove and Replace read, change and write, so two of them at the same
+// moment can lose one change. They only run on a keypress or when a pane moves,
+// so that's an accepted risk.
 //
-// The feed only ever reads the file. A watched pane that closes drops out of
-// the feed but stays in the file, and the feed remembers not to watch it again.
-// herdr says closed pane ids aren't reused. A pane that moves to another
-// workspace gets a new id, and the feed follows it without changing the file.
+// A watched pane that closes drops out of the feed but stays in the file, and
+// the feed remembers not to watch it again. herdr says closed pane ids aren't
+// reused. A pane that moves to another workspace gets a new id. The feed
+// follows it and puts the new id in the file with Replace, which is the only
+// time the feed writes it, so unwatch finds the pane where it is now.
 package watchlist
 
 import (
@@ -219,6 +221,30 @@ func Remove(dir, pane string) (bool, error) {
 		return false, nil
 	}
 	return true, Write(dir, slices.Delete(panes, i, i+1))
+}
+
+// Replace puts to in place of from on the list in dir, keeping its place, and
+// reports whether from was there. If to is already listed, from is just taken
+// off. A list without from is left as it is, so a pane watched only with the
+// feed's --watch flag never ends up in the file.
+func Replace(dir, from, to string) (bool, error) {
+	if !ValidPaneID(to) {
+		return false, fmt.Errorf("following %q: not a pane id", to)
+	}
+	panes, err := readForChange(dir)
+	if err != nil {
+		return false, err
+	}
+	i := slices.Index(panes, from)
+	if i < 0 {
+		return false, nil
+	}
+	if slices.Contains(panes, to) {
+		panes = slices.Delete(panes, i, i+1)
+	} else {
+		panes[i] = to
+	}
+	return true, Write(dir, panes)
 }
 
 // readForChange reads the list for Add or Remove. Bad ids alone don't stop a

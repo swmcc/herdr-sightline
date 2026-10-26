@@ -67,6 +67,10 @@ func TestAddAndRemove(t *testing.T) {
 		{"add another", func() (bool, error) { return watchlist.Add(dir, "w1:p4") }, true, []string{"w1:p3", "w1:p4"}},
 		{"remove one", func() (bool, error) { return watchlist.Remove(dir, "w1:p3") }, true, []string{"w1:p4"}},
 		{"remove one that isn't there", func() (bool, error) { return watchlist.Remove(dir, "w1:p9") }, false, []string{"w1:p4"}},
+		{"add a third", func() (bool, error) { return watchlist.Add(dir, "w1:p5") }, true, []string{"w1:p4", "w1:p5"}},
+		{"replace keeps the place", func() (bool, error) { return watchlist.Replace(dir, "w1:p4", "w2:p1") }, true, []string{"w2:p1", "w1:p5"}},
+		{"replace one that isn't there", func() (bool, error) { return watchlist.Replace(dir, "w1:p4", "w2:p2") }, false, []string{"w2:p1", "w1:p5"}},
+		{"replace onto one already listed", func() (bool, error) { return watchlist.Replace(dir, "w2:p1", "w1:p5") }, true, []string{"w1:p5"}},
 	}
 	for _, s := range steps {
 		changed, err := s.do()
@@ -86,6 +90,9 @@ func TestAddAndRemove(t *testing.T) {
 	}
 	if _, err := watchlist.Add(dir, "not a pane"); err == nil {
 		t.Error("Add took an id with a space in it")
+	}
+	if _, err := watchlist.Replace(dir, "w1:p5", "not a pane"); err == nil {
+		t.Error("Replace took an id with a space in it")
 	}
 }
 

@@ -17,6 +17,8 @@
 //     output may have been missed and [Engine.Unsure] says a read couldn't tell
 //     what was new. Both come before the lines from the same read. After a
 //     reconnect, call Gap rather than Unwatch and Watch.
+//   - [Engine.Rename] says a source now goes by another id, as a pane does
+//     when it moves. Its entries and their fix check go with it.
 //   - [Engine.Tick] moves the capture wait and the settle period on, so call it
 //     regularly even when nothing is printed.
 //   - [Engine.Entries] is what the feed shows, newest first.

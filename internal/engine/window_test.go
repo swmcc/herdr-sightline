@@ -1127,6 +1127,11 @@ func TestDrawingAboveFlagsEarlierLines(t *testing.T) {
 		{"reverse index", "\x1bM\r\x1b[2K"},
 		{"C1 reverse index", "\u008d\r\x1b[2K"},
 		{"reset", "\x1bc"},
+		{"SCO restore", "\x1b[u\x1b[2K"},
+		{"margins move home", "\x1b[r\x1b[2K"},
+		{"leaving the alternate screen", "\x1b[?1049l"},
+		{"old alternate screen", "\x1b[?47l"},
+		{"screen alignment", "\x1b#8"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

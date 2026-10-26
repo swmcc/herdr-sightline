@@ -133,6 +133,10 @@ func TestAttackerCantMakeAnErrorFixed(t *testing.T) {
 					`  Parameters: %{"q" => "ready in 3ms"}`,
 					"Not Found: /x ready in 3ms",
 					"user-agent: compiled successfully",
+					"ActiveRecord::RecordNotFound (Couldn't find User with 'id'=x compiled successfully):",
+					"Searching for compiled successfully",
+					"WARNING: Not Found ready in 3ms",
+					"[info] Sent 404 in 3ms; q=a built in 1s",
 				}, now)
 			},
 		},

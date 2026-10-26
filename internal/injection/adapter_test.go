@@ -133,9 +133,9 @@ func TestReconnectCallsGap(t *testing.T) {
 		t.Run(rc.name, func(t *testing.T) {
 			e := engine.New(options(t))
 			e.Watch(engine.Source{ID: paneID})
-			// A scroll region lasts beyond its line, so redraws can't be trusted
+			// Insert mode lasts beyond its line, so redraws can't be trusted
 			// until the terminal is reset.
-			e.Feed(paneID, []string{"\x1b[1;10r", "Error: dropped mid trace", "    at first (a.js:1:1)"}, start)
+			e.Feed(paneID, []string{"\x1b[4h", "Error: dropped mid trace", "    at first (a.js:1:1)"}, start)
 			rc.reconnect(e, start.Add(100*time.Millisecond))
 			e.Feed(paneID, []string{"    at second (a.js:2:2)", "Error: real\rok"}, start.Add(200*time.Millisecond))
 			e.Tick(start.Add(time.Minute))

@@ -19,3 +19,15 @@ DRAWNOVER reverse index
 @ feed
 DRAWNOVER cleared
 \e[2J\e[HError: boom
+@ wait 2s
+@ feed
+\e[sDRAWNOVER SCO save
+\e[u\e[2KError: boom
+@ wait 2s
+@ feed
+\e[?1049hDRAWNOVER alternate screen
+\e[?1049lError: boom
+@ wait 2s
+@ feed
+DRAWNOVER screen alignment
+\e#8Error: boom

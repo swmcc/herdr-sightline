@@ -89,10 +89,16 @@ install command again.
 ## Which agent gets the error
 
 By default, the most recently active agent **in the same tab** as the watched pane.
-That's almost always the one that just changed the code. Active means the agent
-last started working. If no agent in the tab has been seen starting work, the one
-whose status changed most recently in herdr wins. If there's no agent in the tab at
-all, Sightline asks rather than guessing. It never quietly picks one from another tab.
+That's almost always the one that just changed the code. An agent counts as active
+when it starts working. Sightline asks rather than guessing when:
+
+- there's no agent in the tab at all
+- every agent in the tab is blocked, which usually means a permission dialog
+- more than one agent could be the one and none has started work since Sightline
+  started
+
+A blocked agent is never picked by default. Sightline never quietly picks an agent
+from another tab.
 
 Press `t` on an entry to pick a different agent. To pin a pane to an agent:
 
@@ -103,11 +109,13 @@ pane_title = "web"
 agent = "claude"
 ```
 
-`pane_title` is the pane's label or its terminal title, exactly. `agent` is matched,
-ignoring case, against the agent's herdr name (`herdr agent rename`), then the label
-on its pane, then its kind, such as `claude` or `codex`. If several agents fit, the
-one in the same tab wins, then the most recently active. If the pinned agent isn't
-running, Sightline falls back to the tab and says so.
+`pane_title` must match the pane's label exactly. A pane with no label is matched on
+its terminal title instead. `agent` is matched, ignoring case, against the agent's herdr name (`herdr
+agent rename`), then the label on its pane, then its kind, such as `claude` or
+`codex`. A herdr name is unique, so it can pin an agent in another tab. A label or
+kind only counts in the watched pane's tab. If it only fits an agent somewhere
+else, Sightline asks. If the pinned agent isn't running at all, Sightline falls
+back to the tab and says so.
 
 ## What the agent receives
 

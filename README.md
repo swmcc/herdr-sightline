@@ -232,7 +232,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Prove an output subscription works from a plugin pane ([#1](https://github.com/swmcc/herdr-sightline/issues/1))
 - [x] Plugin manifest and project skeleton ([#2](https://github.com/swmcc/herdr-sightline/issues/2))
 - [ ] Keep the engine free of herdr ([#3](https://github.com/swmcc/herdr-sightline/issues/3))
-- [ ] herdr socket client ([#4](https://github.com/swmcc/herdr-sightline/issues/4))
+- [x] herdr socket client ([#4](https://github.com/swmcc/herdr-sightline/issues/4))
 - [ ] Watch and unwatch a pane ([#5](https://github.com/swmcc/herdr-sightline/issues/5))
 - [ ] Built-in error patterns with real fixtures ([#6](https://github.com/swmcc/herdr-sightline/issues/6))
 - [ ] Group repeats and calm crash loops ([#7](https://github.com/swmcc/herdr-sightline/issues/7))

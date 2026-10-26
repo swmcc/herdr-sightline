@@ -573,9 +573,14 @@ func (m *Model) event(ev herdr.Event, global bool) {
 // paneMoved follows a pane to its new id. herdr gives a pane a new id when it
 // moves to another workspace, but it's the same terminal, so the engine renames
 // the source rather than starting again: its entries, captures in progress and
-// any fix check under way carry on under the new id (but see the race below). The old id's loop stops
-// before the new one starts, and its messages fail fromCurrentLoop from then
-// on, so nothing more reaches the engine under the old id. The watch list file
+// any fix check under way carry on under the new id (but see the race below).
+// The old id's loop stops before the new one starts, and its messages fail
+// fromCurrentLoop from then on, so nothing more reaches the engine under the
+// old id.
+//
+// Only source ids are renamed. The engine knows an agent by its pane id at
+// the send, which the wait in awaiting keeps whichever way that pane moves, so
+// a pane that is both watched and an agent is followed once on each side. The watch list file
 // is rewritten to the new id too, so unwatch works on the pane where it is now.
 func (m *Model) paneMoved(from, to string) {
 	if from == "" || to == "" || from == to {

@@ -2,6 +2,7 @@ package herdr
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -15,6 +16,9 @@ import (
 // be more than a pane can print between two reads, or the diff loses its place
 // and reports a gap.
 const DefaultWatchLines = 300
+
+// MinWatchLines is the fewest lines a PaneWatcher will ask for.
+const MinWatchLines = 3
 
 // DefaultSettleReads is how many reads in a row the last line has to stay the
 // same before a PaneWatcher treats it as finished. See PaneWatcher.
@@ -57,21 +61,27 @@ type Delta struct {
 	// oldest first.
 	Lines []string
 	// Gap means the previous snapshot couldn't be found in this one, because
-	// the screen was cleared or more was printed than the read covers. Lines
-	// then holds every complete line in the new snapshot and some output may
-	// have been missed.
+	// the screen was cleared, more was printed than the read covers or a line
+	// above the last one was rewritten (a progress bar or status line). Some
+	// output may have been missed.
+	//
+	// Lines then holds the new snapshot's complete lines, less any it starts
+	// with that the previous snapshot also started with when both start at the
+	// same place in the pane's history. They can still include
+	// lines that were reported before, so on a gap they must not be counted as
+	// repeats or as an error coming back.
 	Gap bool
 	// Initial marks the first read of a pane. Lines holds whatever was already
 	// there, last line included unless it's blank, which the caller may want to
 	// treat as history rather than news.
 	Initial bool
-	// Ambiguous means the window has slid and the end of the previous snapshot
-	// matches more than one place in this one. That happens when a pane keeps
-	// printing the same block of lines, such as a crash loop with no
-	// timestamps. Lines then holds the fewest new lines that fit, possibly none,
-	// so a repeat of the same output can go unseen. A caller that cares (the fix
-	// check) should treat it as "can't tell" and look for other signs, such as
-	// a scroll event.
+	// Ambiguous means the end of the previous snapshot matches more than one
+	// place in this one, or only matched somewhere too short to trust. That
+	// happens when a pane keeps printing the same lines, such as a crash loop
+	// with no timestamps. Lines then holds the fewest new lines that fit,
+	// possibly none, so a repeat of the same output can go unseen. A caller
+	// that cares (the fix check) should treat it as "can't tell" and look for
+	// other signs, such as a scroll event (#45).
 	Ambiguous bool
 }
 
@@ -82,8 +92,15 @@ type Delta struct {
 // an exact prefix of it, or something was cleared. When curr is truncated the
 // window has slid, so the diff looks for the longest run at the start of curr
 // that matches the end of prev. Sliding pins the run to the start of curr, so
-// repeated lines only confuse it when the window repeats as a whole. Then
-// Ambiguous is set.
+// repeated lines only confuse it when the window repeats, and then Ambiguous
+// is set.
+//
+// Snapshots alone have a blind spot. If the new snapshot is identical to the
+// old one, nothing was printed or a whole window of identical output was: the
+// screen cleared and the same text printed again, or a crash loop whose block
+// is at least as long as the window. The two can't be told apart, and
+// flagging every unchanged read would fire on every idle poll. So no lines
+// never proves no output. #45 is about using scroll events to close the gap.
 func DiffSnapshots(prev, curr Snapshot) Delta {
 	old := prev.complete()
 	now := curr.complete()
@@ -92,7 +109,7 @@ func DiffSnapshots(prev, curr Snapshot) Delta {
 		if !prev.Truncated && hasPrefix(now, old) {
 			return Delta{Lines: now[len(old):]}
 		}
-		return Delta{Lines: now, Gap: true}
+		return gap(prev, curr, old, now, false)
 	}
 
 	// If prev held the whole history, its first line has since scrolled out of
@@ -101,31 +118,56 @@ func DiffSnapshots(prev, curr Snapshot) Delta {
 	if !prev.Truncated {
 		limit--
 	}
-	runs := overlaps(old, now, limit)
-	if len(runs) == 0 {
-		return Delta{Lines: now, Gap: true}
+	best, others := overlaps(old, now, limit)
+	if best == 0 {
+		return gap(prev, curr, old, now, others)
 	}
-	return Delta{Lines: now[runs[0]:], Ambiguous: len(runs) > 1}
+	return Delta{Lines: now[best:], Ambiguous: others}
 }
 
-// overlaps returns the values of m up to limit, largest first, where the first
-// m lines of now are the last m lines of old and the run is good enough to
-// trust. It stops at two, which is enough to know the match is ambiguous.
+// gap builds a Gap delta. When both snapshots start at the same place (both
+// whole history, or both truncated), lines they both start with were seen last
+// time, so they're left out to avoid sending the whole window again every time
+// a status line changes. When one is truncated and the other isn't, they can't
+// start at the same place and any shared start is a coincidence.
+func gap(prev, curr Snapshot, old, now []string, ambiguous bool) Delta {
+	n := 0
+	if prev.Truncated == curr.Truncated {
+		for n < len(old) && n < len(now) && old[n] == now[n] {
+			n++
+		}
+	}
+	return Delta{Lines: now[n:], Gap: true, Ambiguous: ambiguous}
+}
+
+// overlaps looks for runs where the first m lines of now are the last m lines
+// of old, with m up to limit. best is the largest run good enough to trust, or
+// 0 if there's none. others reports whether any other run matched too, trusted
+// or not, which makes the match ambiguous.
 //
 // All of old matching (only allowed when prev was truncated) is always trusted.
 // Otherwise a run of one line, or of nothing but blank lines, could easily be a
-// coincidence after a clear.
-func overlaps(old, now []string, limit int) []int {
-	var runs []int
-	for m := min(limit, len(now)); m > 0 && len(runs) < 2; m-- {
-		if m < len(old) && (m < 2 || !slices.ContainsFunc(now[:m], notBlank)) {
+// coincidence after a clear, so it isn't trusted. A run of nothing but blank
+// lines doesn't count as another match either, since blank lines are
+// everywhere and would make almost every diff ambiguous.
+func overlaps(old, now []string, limit int) (best int, others bool) {
+	for m := min(limit, len(now)); m > 0; m-- {
+		blank := !slices.ContainsFunc(now[:m], notBlank)
+		if best != 0 && blank {
 			continue
 		}
-		if slices.Equal(now[:m], old[len(old)-m:]) {
-			runs = append(runs, m)
+		if !slices.Equal(now[:m], old[len(old)-m:]) {
+			continue
+		}
+		trusted := m == len(old) || (m >= 2 && !blank)
+		switch {
+		case best == 0 && trusted:
+			best = m
+		case !blank:
+			return best, true
 		}
 	}
-	return runs
+	return best, false
 }
 
 func notBlank(s string) bool { return strings.TrimSpace(s) != "" }
@@ -157,7 +199,9 @@ type PaneWatcher struct {
 	reader PaneReader
 	paneID string
 
-	// Lines is how many lines each read asks for.
+	// Lines is how many lines each read asks for. Anything below
+	// MinWatchLines is raised to it, because the diff needs at least two
+	// complete lines to find its place, plus the last line.
 	Lines int
 	// SettleReads is how many reads in a row the last line has to stay the same
 	// before it's reported without a line after it. Zero means never.
@@ -186,8 +230,16 @@ func (w *PaneWatcher) PaneID() string { return w.paneID }
 
 // Poll reads the pane once and returns what it printed since the last Poll.
 // If the pane has closed, the error satisfies IsPaneNotFound.
+//
+// If the read is bigger than the client will accept (ErrTooLarge), Poll
+// reports a Gap with no lines rather than an error, and keeps diffing against
+// the last read it could use. Otherwise a pane full of very long lines would
+// fail every poll for ever. Lowering Lines makes the reads smaller.
 func (w *PaneWatcher) Poll(ctx context.Context) (Delta, error) {
-	read, err := w.reader.ReadPane(ctx, w.paneID, w.Lines)
+	read, err := w.reader.ReadPane(ctx, w.paneID, max(w.Lines, MinWatchLines))
+	if errors.Is(err, ErrTooLarge) {
+		return Delta{Gap: true}, nil
+	}
 	if err != nil {
 		return Delta{}, fmt.Errorf("watching pane %s: %w", w.paneID, err)
 	}

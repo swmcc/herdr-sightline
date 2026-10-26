@@ -143,11 +143,58 @@ func TestDiffSnapshots(t *testing.T) {
 			wantGap: true,
 		},
 		{
-			name:    "a single matching line isn't trusted",
-			prev:    snap("build\nok\n$ \nlater", true),
-			curr:    snap("$ \nsomething\nelse\nnow", true),
-			want:    []string{"$ ", "something", "else"},
+			name:          "a single matching line isn't trusted",
+			prev:          snap("build\nok\n$ \nlater", true),
+			curr:          snap("$ \nsomething\nelse\nnow", true),
+			want:          []string{"$ ", "something", "else"},
+			wantGap:       true,
+			wantAmbiguous: true,
+		},
+		{
+			// The true overlap is one line (E), which is too short to trust. The
+			// two line run E,E matches by chance and drops the first new E, so
+			// it's flagged.
+			name:          "a chance two line match near overflow is ambiguous",
+			prev:          snap("a\nb\nc\nE\nE\nE", true),
+			curr:          snap("E\nE\nX\nY\nZ\nW", true),
+			want:          []string{"X", "Y", "Z"},
+			wantAmbiguous: true,
+		},
+		{
+			name:    "a rewritten status line doesn't resend the lines above it",
+			prev:    snap("a\nb\nstatus 1\nc", false),
+			curr:    snap("a\nb\nstatus 2\nc\nd", false),
+			want:    []string{"status 2", "c"},
 			wantGap: true,
+		},
+		{
+			name:    "a rewritten line in a full window doesn't resend the lines above it",
+			prev:    snap(numbered(1, 5)+"\n50%\n"+numbered(6, 10), true),
+			curr:    snap(numbered(1, 5)+"\n90%\n"+numbered(6, 10), true),
+			want:    append([]string{"90%"}, numberedLines(6, 9)...),
+			wantGap: true,
+		},
+		// Blind spots: an unchanged snapshot can hide a whole window of
+		// identical output, and nothing in the snapshots can tell it from
+		// nothing being printed. These pin today's behaviour (no lines, no gap,
+		// not ambiguous) until #45 brings in scroll events to catch them.
+		{
+			name: "blind spot: clear and the same text printed again",
+			prev: snap("a\nb\n$ ", false),
+			curr: snap("a\nb\n$ ", false),
+		},
+		{
+			name: "blind spot: a crash loop whose block is the whole window",
+			prev: snap("e1\ne2\ne3\ne4\ne5\ne6", true),
+			curr: snap("e1\ne2\ne3\ne4\ne5\ne6", true),
+		},
+		{
+			// Unlike the two above, a window that repeats within itself is at
+			// least flagged.
+			name:          "blind spot: a window that shifts by its own period",
+			prev:          snap("H\nE\nH\nE\nH\nE", true),
+			curr:          snap("H\nE\nH\nE\nH\nE", true),
+			wantAmbiguous: true,
 		},
 		{
 			name:    "a run of blank lines isn't trusted",
@@ -348,5 +395,56 @@ func TestPaneWatcherLinesAreTheCallers(t *testing.T) {
 	got := w.next(snap("a\nb\nc\n$ ", false))
 	if !slices.Equal(got.Lines, []string{"c"}) {
 		t.Errorf("lines = %q, want the diff unaffected by the caller's edit", got.Lines)
+	}
+}
+
+func TestPaneWatcherOversizedRead(t *testing.T) {
+	reader := &scriptedReader{
+		reads: []PaneRead{{Text: "a\nb\n$ "}},
+		err:   fmt.Errorf("herdr pane.read: reading reply: %w", ErrTooLarge),
+	}
+	w := NewPaneWatcher(reader, "w1:p1")
+	ctx := context.Background()
+	if _, err := w.Poll(ctx); err != nil {
+		t.Fatalf("first poll: %v", err)
+	}
+
+	d, err := w.Poll(ctx)
+	if err != nil {
+		t.Fatalf("oversized poll: err = %v, want a gap instead", err)
+	}
+	if !d.Gap || d.Lines != nil {
+		t.Errorf("oversized poll = %+v, want a gap with no lines", d)
+	}
+
+	reader.reads = []PaneRead{{Text: "a\nb\n$ \nc\n$ "}}
+	if d, err := w.Poll(ctx); err != nil || !slices.Equal(d.Lines, []string{"c"}) {
+		t.Errorf("poll after = %+v, %v, want it to diff against the last good read", d, err)
+	}
+}
+
+func TestPaneWatcherLinesHasAFloor(t *testing.T) {
+	tests := []struct {
+		lines int
+		want  int
+	}{
+		{lines: -5, want: MinWatchLines},
+		{lines: 0, want: MinWatchLines},
+		{lines: 1, want: MinWatchLines},
+		{lines: MinWatchLines, want: MinWatchLines},
+		{lines: 50, want: 50},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprint(tt.lines), func(t *testing.T) {
+			reader := &scriptedReader{reads: []PaneRead{{Text: "a"}}}
+			w := NewPaneWatcher(reader, "w1:p1")
+			w.Lines = tt.lines
+			if _, err := w.Poll(context.Background()); err != nil {
+				t.Fatalf("Poll: %v", err)
+			}
+			if !slices.Equal(reader.asked, []int{tt.want}) {
+				t.Errorf("asked for %v lines, want %d", reader.asked, tt.want)
+			}
+		})
 	}
 }

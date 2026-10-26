@@ -18,10 +18,14 @@ import (
 // test wait.
 const failsafe = 5 * time.Second
 
-func newClient(t *testing.T, srv *herdrtest.Server) *herdr.Client {
+func newClient(t *testing.T, srv *herdrtest.Server, opts ...herdr.Option) *herdr.Client {
 	t.Helper()
-	return herdr.NewClient(herdr.UnixDialer(srv.Path), herdr.WithBackoff(time.Millisecond, 5*time.Millisecond))
+	opts = append([]herdr.Option{herdr.WithBackoff(time.Millisecond, 5*time.Millisecond)}, opts...)
+	return herdr.NewClient(herdr.UnixDialer(srv.Path), opts...)
 }
+
+// silence is a handler for a server that takes the request and never answers.
+func silence(herdrtest.Request) (any, *herdrtest.ErrorBody) { return herdrtest.Raw(""), nil }
 
 func nextRequest(t *testing.T, srv *herdrtest.Server) herdrtest.Request {
 	t.Helper()
@@ -226,6 +230,9 @@ func TestCallFailures(t *testing.T) {
 			if !strings.Contains(err.Error(), tt.wantText) {
 				t.Errorf("err = %q, want it to contain %q", err, tt.wantText)
 			}
+			if n := strings.Count(err.Error(), "pane.read"); n != 1 {
+				t.Errorf("err = %q names the method %d times, want once", err, n)
+			}
 		})
 	}
 }
@@ -256,5 +263,55 @@ func TestCallCancelled(t *testing.T) {
 		}
 	case <-time.After(failsafe):
 		t.Fatal("ListPanes didn't return after cancel")
+	}
+}
+
+func TestCallTimesOut(t *testing.T) {
+	srv := herdrtest.New(t)
+	srv.Handle("pane.list", silence)
+	c := newClient(t, srv, herdr.WithTimeout(50*time.Millisecond))
+
+	_, err := c.ListPanes(context.Background())
+	if !errors.Is(err, herdr.ErrTimeout) {
+		t.Fatalf("err = %v, want ErrTimeout", err)
+	}
+	if !strings.Contains(err.Error(), "pane.list") {
+		t.Errorf("err = %q, want it to name the method", err)
+	}
+}
+
+func TestCallReplyTooLarge(t *testing.T) {
+	srv := herdrtest.New(t)
+	srv.Handle("pane.read", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		return herdrtest.Raw(`{"id":"x","result":{"type":"pane_read","read":{"text":"` +
+			strings.Repeat("x", herdr.MaxReplyBytes) + `"}}}` + "\n"), nil
+	})
+	c := newClient(t, srv)
+
+	_, err := c.ReadPane(context.Background(), "w1:p1", 300)
+	if !errors.Is(err, herdr.ErrTooLarge) {
+		t.Errorf("err = %v, want ErrTooLarge", err)
+	}
+}
+
+func TestOptionsIgnoreNonsense(t *testing.T) {
+	srv := herdrtest.New(t)
+	srv.Handle("ping", reply(map[string]any{"type": "pong", "version": "0.9.1", "protocol": 22}))
+	// A zero timeout would fail every call at once and a zero backoff would
+	// spin, so the first is ignored and the second raised.
+	c := newClient(t, srv, herdr.WithTimeout(0), herdr.WithBackoff(0, 0))
+	if _, err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, err := c.Subscribe(ctx, herdr.PaneClosed())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	nextSubscriber(t, srv).Drop()
+	if ev := nextEvent(t, events); ev.Kind != herdr.EventReconnected {
+		t.Errorf("event = %+v, want reconnected", ev)
 	}
 }

@@ -83,14 +83,19 @@ type Model struct {
 	picked  map[engine.EntryID]herdr.Target // agents chosen with t
 	sending map[engine.EntryID]bool         // a check or send is in flight
 	armed   engine.EntryID                  // enter was pressed once on an entry that needs a second
-	// armedTarget is the agent that first press was for.
-	armedTarget string
+	// armedTarget is the agent that first press was for, and armedAt when it
+	// was pressed. A confirm lasts confirmFor.
+	armedTarget herdr.Target
+	armedAt     time.Time
 	// maybeSent are entries whose send failed in a way that may still have
 	// delivered it, with who to.
 	maybeSent map[engine.EntryID]string
 
 	entries  []engine.Entry // what the list shows, newest first
 	selected engine.EntryID
+	// selectionLost says the selected entry went without the person doing
+	// anything, so nothing is selected until they choose again.
+	selectionLost bool
 
 	mode       mode
 	viewID     engine.EntryID
@@ -244,30 +249,34 @@ func (m *Model) fromCurrentLoop(pane string, gen uint64) bool {
 // refresh copies the entries out of the engine and keeps the selection on the
 // same entry where it can.
 func (m *Model) refresh() {
-	last := max(m.cursor(), 0)
 	m.entries = m.entries[:0]
 	for _, en := range m.engine.Entries() {
 		if en.State != engine.StateDismissed {
 			m.entries = append(m.entries, en)
 		}
 	}
-	// If the selected entry went (dismissed, or dropped by the cap), select
-	// the one now in its place rather than jumping to the newest, so a flood of
-	// new errors can't put one under the cursor just before enter.
-	if m.cursor() < 0 {
-		m.selected = ""
-		if len(m.entries) > 0 {
-			m.selected = m.entries[min(last, len(m.entries)-1)].ID
-		}
+	// Enter only ever acts on an entry the person chose. If the selected one
+	// went without them doing anything (dropped by the cap, which a flood of
+	// errors can force), nothing is selected until they press j or k. Moving
+	// the cursor for them could put someone else's entry under the next enter.
+	switch {
+	case m.selected != "" && m.cursor() < 0:
+		m.selected, m.selectionLost = "", true
+		m.status = "The selected entry was dropped to keep the feed short. Press j or k to choose another."
+	case m.selected == "" && !m.selectionLost && len(m.entries) > 0:
+		// The first entry in an empty feed, before anything was chosen.
+		m.selected = m.entries[0].ID
 	}
+	// The same goes for the view and the picker. They stay open, so an enter
+	// meant for them can't fall through to the list (see viewKey and pickKey).
 	if m.mode == modeView {
 		if _, ok := m.entry(m.viewID); !ok {
-			m.mode = modeList
+			m.status = "This entry was dropped, so enter won't send it. Press esc to go back."
 		}
 	}
 	if m.mode == modePick {
 		if _, ok := m.entry(m.pickID); !ok {
-			m.mode = modeList
+			m.status = "This entry was dropped, so there's nothing to pick for. Press esc to go back."
 		}
 	}
 }
@@ -550,6 +559,19 @@ func (m *Model) targetFor(en engine.Entry) (herdr.Target, string) {
 	return c.Target, ""
 }
 
+// pinNote says when an entry's agent was chosen by a pin matching the watched
+// pane's terminal title. The pane sets that title itself, so it's worth seeing.
+func (m *Model) pinNote(en engine.Entry) string {
+	if _, ok := m.picked[en.ID]; ok || !m.synced {
+		return ""
+	}
+	c := m.tracker.Choose(m.resolve(string(en.Source.ID)), m.cfg.Pins)
+	if c.Chosen() && c.Rule == herdr.ChosenByPin && c.PinField == herdr.PinByTerminalTitle {
+		return " (pinned by terminal title)"
+	}
+	return ""
+}
+
 // key handles a keypress for whichever mode the feed is in.
 func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 	if k.String() == "ctrl+c" {
@@ -568,19 +590,30 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 	return m.listKey(k)
 }
 
+// move selects the entry after or before the one at i. With nothing selected
+// it selects the newest.
+func (m *Model) move(i int, down bool) {
+	if len(m.entries) == 0 {
+		return
+	}
+	m.selectionLost = false
+	switch {
+	case i < 0:
+		m.selected = m.entries[0].ID
+	case down && i+1 < len(m.entries):
+		m.selected = m.entries[i+1].ID
+	case !down && i > 0:
+		m.selected = m.entries[i-1].ID
+	}
+}
+
 func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 	i := m.cursor()
 	switch k.String() {
 	case "q":
 		return tea.Quit
-	case "j", "down":
-		if i >= 0 && i+1 < len(m.entries) {
-			m.selected = m.entries[i+1].ID
-		}
-	case "k", "up":
-		if i > 0 {
-			m.selected = m.entries[i-1].ID
-		}
+	case "j", "down", "k", "up":
+		m.move(i, k.String() == "j" || k.String() == "down")
 	case "enter":
 		if i >= 0 {
 			return m.send(m.entries[i].ID, "", false)
@@ -589,6 +622,15 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 		if i >= 0 {
 			m.engine.Dismiss(m.entries[i].ID)
 			m.status = "Dismissed."
+			// The person dismissed it, so moving on to the next one is theirs.
+			switch {
+			case i+1 < len(m.entries):
+				m.selected = m.entries[i+1].ID
+			case i > 0:
+				m.selected = m.entries[i-1].ID
+			default:
+				m.selected = ""
+			}
 		}
 	case "n":
 		// #14 replaces this with a suggested ignore rule.
@@ -665,6 +707,10 @@ func (m *Model) pickKey(k tea.KeyMsg) {
 	case "k", "up":
 		m.pickCursor = max(m.pickCursor-1, 0)
 	case "enter":
+		if _, ok := m.entry(m.pickID); !ok {
+			m.status = "This entry was dropped, so there's nothing to pick for. Press esc to go back."
+			return
+		}
 		t := m.pickList[m.pickCursor]
 		m.picked[m.pickID] = t
 		m.mode = modeList
@@ -698,7 +744,7 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 		return nil
 	}
 	target, ask := m.targetFor(en)
-	if fromView && (text != viewed || target.PaneID != m.viewTarget.PaneID) {
+	if fromView && (text != viewed || !sameAgent(target, m.viewTarget)) {
 		// The view promised these bytes to this agent. If either changed (a
 		// pane can change its own title, and a pin can follow it), show the
 		// new version rather than send something that wasn't on screen.
@@ -718,8 +764,9 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 	// A confirm is for one entry going to one agent. If a sync changed the
 	// target between the two presses (a pane can retitle itself to match a
 	// pin), the second press asks again, naming the new agent.
-	if confirm := m.needsConfirm(en, target); confirm != "" && (m.armed != id || m.armedTarget != target.PaneID) {
-		m.armed, m.armedTarget = id, target.PaneID
+	confirmed := m.armed == id && sameAgent(m.armedTarget, target) && m.now().Sub(m.armedAt) <= confirmFor
+	if confirm := m.needsConfirm(en, target); confirm != "" && !confirmed {
+		m.armed, m.armedTarget, m.armedAt = id, target, m.now()
 		m.status = fmt.Sprintf("%s Press enter again to send it to %s.", confirm, label)
 		return nil
 	}
@@ -727,6 +774,16 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 	m.sending[id] = true
 	m.status = fmt.Sprintf("Checking %s before sending...", label)
 	return checkTarget(m.ctx, m.client, m.now, id, target, text)
+}
+
+// confirmFor is how long a first enter stays good for. A confirm left lying
+// around for minutes isn't a decision about what's on screen now.
+const confirmFor = 10 * time.Second
+
+// sameAgent reports whether two targets are the same agent: the same pane, the
+// same kind and the same name. A different agent can start in the same pane.
+func sameAgent(a, b herdr.Target) bool {
+	return a.PaneID == b.PaneID && a.Kind == b.Kind && a.Name == b.Name
 }
 
 // needsConfirm says why a send needs a second enter, or "" if it doesn't.
@@ -754,6 +811,9 @@ type checkedMsg struct {
 	found    bool
 	seq      uint64
 	seqKnown bool
+	// nameClash is the pane of another agent whose herdr name is the target's
+	// pane id, if there is one.
+	nameClash string
 	// checkedAt is when the check began, just before the send. Agent statuses
 	// asked for before it say nothing about this send.
 	checkedAt time.Time
@@ -776,11 +836,17 @@ func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time
 				msg.pane, msg.found = p, true
 			}
 		}
-		if agents, err := client.ListAgents(ctx); err == nil {
-			for _, a := range agents {
-				if a.PaneID == target.PaneID {
-					msg.seq, msg.seqKnown = a.StateChangeSeq, true
-				}
+		agents, err := client.ListAgents(ctx)
+		if err != nil {
+			msg.err = err
+			return msg
+		}
+		for _, a := range agents {
+			if a.PaneID == target.PaneID {
+				msg.seq, msg.seqKnown = a.StateChangeSeq, true
+			}
+			if a.Name == target.PaneID && a.PaneID != target.PaneID {
+				msg.nameClash = a.PaneID
 			}
 		}
 		return msg
@@ -809,9 +875,18 @@ func (m *Model) checked(msg checkedMsg) tea.Cmd {
 		msg.target.Kind == "" && p.Agent != "":
 		delete(m.picked, msg.id)
 		return refuse(fmt.Sprintf("its pane now runs %s instead", clean(p.Agent)))
+	case msg.nameClash != "":
+		// agent.prompt's target can be a pane id or an agent's herdr name, and
+		// herdr's schema doesn't say which wins when they collide. An agent
+		// renamed to look like this pane's id could then take the prompt.
+		return refuse(fmt.Sprintf("the agent in %s is named %s, the same as this pane's id, so herdr might send it there", msg.nameClash, msg.target.PaneID))
 	case p.AgentStatus == herdr.AgentBlocked:
 		return refuse(blockedNote)
 	}
+	// A permission dialog can still open between this check and the prompt.
+	// The gap is one round trip, and herdr narrows it further by refusing
+	// agent.prompt itself (agent_blocked) when the agent is blocked as the
+	// prompt arrives.
 	return prompt(m.ctx, m.client, msg)
 }
 

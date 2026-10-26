@@ -254,8 +254,10 @@ func TestConfirmIsForOneAgent(t *testing.T) {
 	}
 }
 
-func TestFloodDoesntMoveTheCursorToTheNewest(t *testing.T) {
-	h := newHarness(t)
+// flood selects the oldest of 20 entries, runs open (a key such as v or t,
+// or nothing), then prints distinct errors until the engine drops the oldest.
+func flood(t *testing.T, h *harness, open string) {
+	t.Helper()
 	h.sync()
 	h.update(watchListMsg{panes: []string{webPane}})
 	feed := func(i int) {
@@ -267,15 +269,147 @@ func TestFloodDoesntMoveTheCursorToTheNewest(t *testing.T) {
 	for i := range 20 {
 		feed(i)
 	}
-	// Select the oldest, then flood until it's dropped.
 	h.model.selected = h.model.entries[len(h.model.entries)-1].ID
+	if open != "" {
+		h.press(open)
+	}
 	for i := 20; i < 400 && h.model.engine.Dropped() == 0; i++ {
 		feed(i)
 	}
 	if h.model.engine.Dropped() == 0 {
 		t.Fatal("the flood dropped nothing")
 	}
-	if h.model.selected == h.model.entries[0].ID {
-		t.Error("dropping the selected entry put the newest, the attacker's, under the cursor")
+}
+
+func TestFloodLeavesNothingUnderTheNextEnter(t *testing.T) {
+	tests := []struct {
+		name     string
+		open     string
+		wantMode mode
+	}{
+		{name: "list", wantMode: modeList},
+		{name: "view", open: "v", wantMode: modeView},
+		{name: "picker", open: "t", wantMode: modePick},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			flood(t, h, tt.open)
+			if h.model.mode != tt.wantMode {
+				t.Errorf("mode = %v, want %v: the flood closed what was open", h.model.mode, tt.wantMode)
+			}
+			if !strings.Contains(h.model.status, "dropped") {
+				t.Errorf("status = %q, want it to say the entry was dropped", h.model.status)
+			}
+			h.run(h.press("enter"))
+			if n := len(h.herdr.promptCalls()); n != 0 {
+				t.Errorf("one enter after the flood sent %d prompt(s)", n)
+			}
+			if tt.wantMode == modeList && h.model.selected != "" {
+				t.Errorf("selected %s for the person after the flood", h.model.selected)
+			}
+		})
+	}
+}
+
+func TestAnotherAgentInTheSamePaneUnderTheView(t *testing.T) {
+	h := newHarness(t)
+	var mu sync.Mutex
+	kind := "claude"
+	list := func() []map[string]any {
+		mu.Lock()
+		defer mu.Unlock()
+		return []map[string]any{{"pane_id": agentPane, "workspace_id": "w1", "tab_id": "w1:t2", "agent": kind, "agent_status": "idle", "state_change_seq": 1}}
+	}
+	h.herdr.srv.Handle("pane.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		panes := append(list(), map[string]any{"pane_id": webPane, "workspace_id": "w1", "tab_id": "w1:t2", "label": "web"})
+		return map[string]any{"type": "pane_list", "panes": panes}, nil
+	})
+	h.herdr.srv.Handle("agent.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		return map[string]any{"type": "agent_list", "agents": list()}, nil
+	})
+	h.catchError()
+	h.press("v")
+	mu.Lock()
+	kind = "codex"
+	mu.Unlock()
+	h.sync()
+	h.run(h.press("enter"))
+	if n := len(h.herdr.promptCalls()); n != 0 {
+		t.Errorf("the view said claude and enter sent to codex in the same pane")
+	}
+}
+
+// Only a key, or the result of a check or send a key started, returns a
+// command. Nothing the loops send can start a send, whatever state the feed
+// is in, even with a confirm waiting.
+func TestOnlyKeysStartSends(t *testing.T) {
+	h, setTitle := titleFlip(t)
+	h.catchError()
+	setTitle("billing worker")
+	h.press("enter") // a confirm waits for the agent in the other tab
+	moved := &herdr.Pane{ID: "w1:p7", WorkspaceID: "w1", TabID: "w1:t2", Agent: "claude"}
+	msgs := []any{
+		tickMsg{},
+		h.loops.snapshot(),
+		eventMsg{ev: herdr.Event{Kind: herdr.EventAgentStatusChanged, PaneID: otherAgent, AgentStatus: herdr.AgentIdle, Agent: "claude"}},
+		eventMsg{ev: herdr.Event{Kind: herdr.EventReconnected}, global: true},
+		eventMsg{ev: herdr.Event{Kind: herdr.EventOther, Name: "pane.agent_detected", PaneID: "w1:p5"}, global: true},
+		eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w1:p7", PreviousPaneID: agentPane, Pane: moved}, global: true},
+		eventsDownMsg{what: "pane events"},
+		eventsUpMsg{},
+		watchListMsg{panes: []string{webPane, agentPane, "w1:p7"}},
+		configMsg{update: config.Update{Config: config.Default()}},
+		deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{"\r\x1b[201~\n", "TypeError: x"}}},
+	}
+	for _, msg := range msgs {
+		if cmd := h.update(msg); cmd != nil {
+			t.Errorf("%T returned a command", msg)
+		}
+	}
+	if n := len(h.herdr.promptCalls()); n != 0 {
+		t.Errorf("%d prompts with no key", n)
+	}
+}
+
+func TestConfirmExpires(t *testing.T) {
+	h, setTitle := titleFlip(t)
+	h.catchError()
+	setTitle("billing worker")
+	h.run(h.press("enter"))
+	h.clock.Advance(confirmFor + time.Second)
+	h.run(h.press("enter"))
+	if n := len(h.herdr.promptCalls()); n != 0 {
+		t.Errorf("a confirm from %s ago still sent", confirmFor+time.Second)
+	}
+	if !strings.Contains(h.model.status, "another tab") {
+		t.Errorf("status = %q, want it to ask again", h.model.status)
+	}
+}
+
+func TestTerminalTitlePinIsShown(t *testing.T) {
+	h, setTitle := titleFlip(t)
+	h.catchError()
+	setTitle("billing worker")
+	if !strings.Contains(h.model.View(), "(pinned by terminal title)") {
+		t.Errorf("the entry doesn't say its agent came from the terminal title:\n%s", h.model.View())
+	}
+}
+
+func TestAnAgentNamedLikeThePaneIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.herdr.srv.Handle("agent.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		return map[string]any{"type": "agent_list", "agents": []map[string]any{
+			{"pane_id": agentPane, "workspace_id": "w1", "tab_id": "w1:t2", "agent": "claude", "agent_status": "idle", "state_change_seq": 1},
+			{"pane_id": otherAgent, "workspace_id": "w1", "tab_id": "w1:t3", "agent": "claude", "name": agentPane, "agent_status": "idle", "state_change_seq": 1},
+		}}, nil
+	})
+	h.catchError()
+	h.run(h.press("enter"))
+	if n := len(h.herdr.promptCalls()); n != 0 {
+		t.Errorf("sent while another agent was named %s", agentPane)
+	}
+	if !strings.Contains(h.model.status, "named") {
+		t.Errorf("status = %q, want it to explain the name", h.model.status)
 	}
 }

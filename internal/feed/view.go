@@ -314,7 +314,7 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 	if ask != "" {
 		return prefix + "? asking: " + ask, "[t] pick agent   [d] dismiss"
 	}
-	who = prefix + "→ " + clean(t.Label)
+	who = prefix + "→ " + clean(t.Label) + m.pinNote(en)
 	if t.Status == herdr.AgentBlocked {
 		who += " (waiting on a prompt, won't send)"
 	}

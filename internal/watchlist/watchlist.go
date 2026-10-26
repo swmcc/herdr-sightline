@@ -96,7 +96,14 @@ func Read(dir string) ([]string, error) {
 // left out, err is a file that couldn't be used at all.
 func read(dir string) (panes []string, bad, err error) {
 	path := Path(dir)
-	f, err := os.Open(path)
+	// Opening a FIFO for reading blocks until something writes to it, which
+	// would hang the feed's list loop where it can't see its context. So the
+	// path is checked first, then opened without blocking (openFlags) and
+	// checked again through the open file, as internal/config does.
+	if info, err := os.Stat(path); err == nil && !info.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("reading watch list: %s isn't a regular file", path)
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|openFlags, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil, nil
 	}

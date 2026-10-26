@@ -181,11 +181,11 @@ to come back:
 - A compile, build, restart or test run finishing, like `compiled successfully`,
   `ready in 312 ms`, `Tests: 4 passed` or `* Listening on`. Request logs don't
   count. They only show the server is up.
-- If the error came with a request (`GET /notices 500`), that same request again.
-  A recompile doesn't prove a request bug is gone.
+- If the error came with a request (`GET /notices 500`), that same request again,
+  without a 5xx. A recompile doesn't prove a request bug is gone.
 
-If Sightline may have missed output from the pane during the settle period, it
-says `? unverified` whatever else it saw.
+If Sightline may have missed output from the pane during the settle period, or
+the pane stops being watched, it says `? unverified` whatever else it saw.
 
 ## Configuration
 

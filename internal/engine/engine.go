@@ -106,6 +106,8 @@ func (e *Engine) Unwatch(id SourceID) {
 	}
 	e.fileAll(s)
 	delete(e.sources, id)
+	// Nothing more will be read, so nothing can prove a fix on id.
+	e.uncertainRead(id, time.Time{}, false)
 }
 
 // Feed hands the engine new lines from a source, in the order they were printed.
@@ -121,6 +123,10 @@ func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {
 	s.capture.read(lines, func(line string) {
 		e.sawLine(id, e.observe(s, line, now), now)
 	})
+	if s.capture.tookHidden() {
+		// Swallowed output could have hidden the error coming back.
+		e.uncertainRead(id, now, false)
+	}
 	e.finishCaptures(now)
 }
 

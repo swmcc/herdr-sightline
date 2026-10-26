@@ -409,7 +409,9 @@ func (e *Engine) repeatOf(key groupKey, f found) *record {
 // that's still failing after a send. Dropping either would throw away the answer
 // to "did the fix work?", which is the point of Sightline. Only a keypress can
 // make an entry sent, so output can't fill the feed with them. If every entry
-// left is being checked, the feed goes over the cap rather than drop one.
+// left is being checked, the feed goes over the cap rather than drop one. It's
+// only trimmed when a new entry arrives, so it can stay over the cap after those
+// checks finish, until the next new error. That's bounded by keypresses too.
 //
 // The entry just added is never dropped either, so a new error always reaches
 // the feed. It's the newest, so it would be last in its group anyway.
@@ -435,8 +437,8 @@ func dropOrder(r *record) int {
 
 // trim drops entries until there are no more than MaxEntries, keeping just.
 //
-// Finding the next entry to drop is one walk over the entries, so it costs at
-// most MaxEntries steps for each new entry and nothing for a repeat.
+// Finding the next entry to drop is one walk over the entries, so it's about
+// one walk for each new entry and nothing for a repeat.
 func (e *Engine) trim(just *record) {
 	for len(e.records) > e.opts.MaxEntries {
 		i := e.nextToDrop(just)

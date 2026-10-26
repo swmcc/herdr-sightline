@@ -51,6 +51,10 @@ type await struct {
 	// kind is the kind of agent the last send went to, such as claude. If
 	// another kind turns up in the pane, the agent that was sent to has gone.
 	kind string
+	// terminal is the pane's terminal id at the last send. It stays the same
+	// when the pane moves, so a snapshot can follow a move whose event was
+	// lost.
+	terminal string
 	// missing says the last snapshot taken since the send had no such agent
 	// in the pane. Only a second one in a row ends the wait, because a
 	// snapshot can overtake the event saying the pane moved.
@@ -397,11 +401,11 @@ func (m *Model) snapshot(msg snapshotMsg) {
 	}
 	for _, p := range msg.snap.Panes {
 		if (p.Agent != "" || p.DisplayAgent != "") && !inAgents[p.ID] {
-			m.agentStatus(p.ID, p.AgentStatus, 0, false, msg.snap.Taken, now)
+			m.agentStatus(p.ID, p.Agent, p.AgentStatus, 0, false, msg.snap.Taken, now)
 		}
 	}
 	for _, a := range msg.snap.Agents {
-		m.agentStatus(a.PaneID, a.Status, a.StateChangeSeq, true, msg.snap.Taken, now)
+		m.agentStatus(a.PaneID, a.Agent, a.Status, a.StateChangeSeq, true, msg.snap.Taken, now)
 	}
 	m.checkAgentsThere(msg.snap)
 	for _, pane := range m.watching {
@@ -416,10 +420,12 @@ func (m *Model) snapshot(msg snapshotMsg) {
 // the engine when it has finished: idle or done after being seen working, or
 // after its state change counter moved on since the send. seen is when herdr
 // was asked. Anything asked before the last send says nothing about it, so a
-// slow snapshot can't finish a send it never saw.
-func (m *Model) agentStatus(pane string, status herdr.AgentStatus, seq uint64, haveSeq bool, seen, now time.Time) {
+// slow snapshot can't finish a send it never saw. kind is the kind of agent
+// the status is for, if known. Another kind's status says nothing about the
+// agent that was sent to, which has gone (see checkAgentsThere).
+func (m *Model) agentStatus(pane, kind string, status herdr.AgentStatus, seq uint64, haveSeq bool, seen, now time.Time) {
 	a, ok := m.awaiting[pane]
-	if !ok || seen.Before(a.since) {
+	if !ok || seen.Before(a.since) || (kind != "" && a.kind != "" && kind != a.kind) {
 		return
 	}
 	switch status {
@@ -442,9 +448,13 @@ func (m *Model) agentStatus(pane string, status herdr.AgentStatus, seq uint64, h
 // agent or runs a different kind. This catches what the events missed.
 func (m *Model) checkAgentsThere(snap herdr.AgentSnapshot) {
 	kinds := map[string]string{}
+	byTerminal := map[string]string{}
 	for _, p := range snap.Panes {
 		if p.Agent != "" || p.DisplayAgent != "" {
 			kinds[p.ID] = p.Agent
+		}
+		if p.TerminalID != "" {
+			byTerminal[p.TerminalID] = p.ID
 		}
 	}
 	// agent.list is the newer of the two.
@@ -453,8 +463,14 @@ func (m *Model) checkAgentsThere(snap herdr.AgentSnapshot) {
 			kinds[a.PaneID] = a.Agent
 		}
 	}
+	var moves [][2]string
 	for pane, a := range m.awaiting {
 		if snap.Taken.Before(a.since) {
+			continue
+		}
+		if to, ok := byTerminal[a.terminal]; ok && a.terminal != "" && to != pane {
+			// The pane moved and the event saying so hasn't come, or was lost.
+			moves = append(moves, [2]string{pane, to})
 			continue
 		}
 		kind, ok := kinds[pane]
@@ -467,6 +483,14 @@ func (m *Model) checkAgentsThere(snap herdr.AgentSnapshot) {
 			continue
 		}
 		a.missing = true
+	}
+	for _, mv := range moves {
+		from, to := mv[0], mv[1]
+		if _, taken := m.awaiting[to]; taken {
+			continue
+		}
+		m.awaiting[to] = m.awaiting[from]
+		delete(m.awaiting, from)
 	}
 }
 
@@ -515,7 +539,7 @@ func (m *Model) event(ev herdr.Event, global bool) {
 			// Another kind of agent has taken the pane over.
 			m.agentGone(ev.PaneID)
 		default:
-			m.agentStatus(ev.PaneID, ev.AgentStatus, 0, false, now, now)
+			m.agentStatus(ev.PaneID, ev.Agent, ev.AgentStatus, 0, false, now, now)
 		}
 	case herdr.EventPaneClosed:
 		m.dropPane(ev.PaneID, "closed")
@@ -1055,23 +1079,26 @@ func (m *Model) sent(sm sentMsg) {
 	}
 	delete(m.maybeSent, msg.id)
 	pane := msg.target.PaneID
-	if a, ok := m.awaiting[pane]; ok && a.kind != msg.target.Kind {
+	// The engine knows the agent by its pane id at the send. The wait is kept
+	// under its id now, in case the pane moved while the prompt was in flight.
+	current := m.resolve(pane)
+	if a, ok := m.awaiting[current]; ok && a.kind != msg.target.Kind {
 		// A different agent now runs in the pane, so the one that was sent
 		// errors before has gone without finishing.
-		m.endWait(pane)
+		m.endWait(current)
 	}
 	m.engine.MarkSent(msg.id, pane, m.now())
 	m.labels[pane] = msg.target.Label
-	a, ok := m.awaiting[pane]
+	a, ok := m.awaiting[current]
 	if !ok {
 		a = &await{}
-		m.awaiting[pane] = a
+		m.awaiting[current] = a
 	}
 	if !slices.Contains(a.keys, pane) {
 		a.keys = append(a.keys, pane)
 	}
 	a.seq, a.seqKnown, a.sawWorking, a.since = msg.seq, msg.seqKnown, false, msg.checkedAt
-	a.kind, a.missing = msg.target.Kind, false
+	a.kind, a.terminal, a.missing = msg.target.Kind, msg.pane.TerminalID, false
 	m.status = fmt.Sprintf("Sent to %s.", label)
 }
 

@@ -112,7 +112,7 @@ func (e *Engine) agentFinished(agent string, now time.Time) {
 
 // NoteAgentGone is the Note on an entry whose agent went away before it
 // finished.
-const NoteAgentGone = "the agent exited before finishing"
+const NoteAgentGone = "the agent went away before finishing"
 
 // agentGone ends the wait for every entry sent to agent that it hasn't
 // finished. An entry whose settle period has started carries on, as its

@@ -280,6 +280,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyWatchList()
 	case configMsg:
 		m.reloadConfig(msg.update)
+	case moveSaveFailedMsg:
+		m.status = fmt.Sprintf("%s moved and is still watched, but the watch list couldn't be updated, so unwatch won't find it: %v", m.paneName(msg.pane), msg.err)
 	case checkedMsg:
 		cmd = m.checked(msg)
 	case sentMsg:
@@ -350,16 +352,20 @@ func (m *Model) delta(msg deltaMsg) {
 	}
 	delete(m.paneErrs, msg.pane)
 	d := msg.delta
-	// The first read is what was on screen before watching started. Treating
-	// it as news would turn old errors into fresh alerts, so it's skipped.
-	if d.Initial {
-		return
-	}
 	// One time for the whole read. The fix check discounts a gap's replayed
 	// lines by matching the time of the Gap call to the Feed call, so they
 	// must be the same instant. Unsure goes before the read's lines are fed.
 	id := engine.SourceID(msg.pane)
 	now := m.now()
+	// The first read is what was on screen before watching started. Treating
+	// it as news would turn old errors into fresh alerts, so it's skipped. For
+	// a pane followed after a move, anything printed since the old id's last
+	// read is in it unseen, so it's a gap. For a pane watched afresh nothing is
+	// settling on it, so the gap costs nothing.
+	if d.Initial {
+		m.engine.Gap(id, now)
+		return
+	}
 	if d.Gap {
 		m.engine.Gap(id, now)
 	}
@@ -564,7 +570,13 @@ func (m *Model) event(ev herdr.Event, global bool) {
 	}
 }
 
-// paneMoved follows a pane to its new id.
+// paneMoved follows a pane to its new id. herdr gives a pane a new id when it
+// moves to another workspace, but it's the same terminal, so the engine renames
+// the source rather than starting again: its entries, captures in progress and
+// any fix check under way carry on under the new id. The old id's loop stops
+// before the new one starts, and its messages fail fromCurrentLoop from then
+// on, so nothing more reaches the engine under the old id. The watch list file
+// is rewritten to the new id too, so unwatch works on the pane where it is now.
 func (m *Model) paneMoved(from, to string) {
 	if from == "" || to == "" || from == to {
 		return
@@ -580,17 +592,30 @@ func (m *Model) paneMoved(from, to string) {
 			m.picked[id] = t
 		}
 	}
+	if m.loops != nil {
+		m.loops.noteMove(from, to)
+		// The new id has no title until the next snapshot.
+		m.loops.requestSync()
+	}
 	// A read of the old id can lose the race with this event and find the pane
 	// gone first. Then it was dropped as closed, but it only moved.
-	if m.isWatching(from) || m.gone[from] {
-		delete(m.gone, from)
-		if m.isWatching(from) {
-			m.stopWatching(from)
+	following := m.isWatching(from) || m.gone[from]
+	delete(m.gone, from)
+	if m.isWatching(from) {
+		if m.loops != nil {
+			m.loops.unwatchPane(from)
 		}
+		delete(m.paneErrs, from)
+		m.watching = slices.DeleteFunc(m.watching, func(p string) bool { return p == from })
+	}
+	// Entries follow even a pane that was unwatched, so the message names the
+	// pane where it is now.
+	m.engine.Rename(engine.SourceID(from), engine.SourceID(to))
+	if following {
 		m.status = ""
 		m.applyWatchList()
-		// Output printed while the pane moved can't be seen by the new watcher,
-		// whose first read is skipped.
+		// Output printed while the pane moved can't be seen by the new watcher.
+		// delta marks a gap again at its first read, which covers the rest.
 		m.engine.Gap(engine.SourceID(to), m.now())
 	}
 }

@@ -22,7 +22,8 @@ import (
 // only the Bubble Tea update loop touches them. Everything that waits on herdr,
 // the clock or a file runs in a loop below. Each loop owns its own state (a pane
 // loop owns its PaneWatcher) and reports back by sending a message to the
-// model. None of them shares memory with the model.
+// model. None of them shares memory with the model, except the queue of pane
+// moves the model hands the watch list loop to write (see noteMove).
 //
 // Every loop runs under one root context and is counted in one WaitGroup.
 // Quitting the feed cancels the root, and Run waits for the group, so nothing
@@ -89,7 +90,17 @@ type loops struct {
 	gen    uint64                        // numbers each pane loop started
 	agents map[string]context.CancelFunc // agent pane id to its status loop
 	resync chan struct{}                 // asks the sync loop for a snapshot now
+
+	// moves are pane moves waiting for the watch list loop to write them to
+	// the file, oldest first. The model adds to them and the loop takes them,
+	// so they're the one thing here behind a lock. moved wakes the loop.
+	movesMu sync.Mutex
+	moves   []paneMove
+	moved   chan struct{}
 }
+
+// paneMove is a pane that moved from one id to another.
+type paneMove struct{ from, to string }
 
 func newLoops(ctx context.Context, f *faults, client *herdr.Client, send func(tea.Msg), now func() time.Time, every Timings) *loops {
 	return &loops{
@@ -102,6 +113,7 @@ func newLoops(ctx context.Context, f *faults, client *herdr.Client, send func(te
 		panes:  map[string]paneLoop{},
 		agents: map[string]context.CancelFunc{},
 		resync: make(chan struct{}, 1),
+		moved:  make(chan struct{}, 1),
 	}
 }
 
@@ -270,6 +282,27 @@ func (l *loops) snapshot() snapshotMsg {
 	return snapshotMsg{snap: snap}
 }
 
+// noteMove asks the watch list loop to put to in place of from in the file. It
+// never blocks, because the loop may be waiting on the model to take a message.
+func (l *loops) noteMove(from, to string) {
+	l.movesMu.Lock()
+	l.moves = append(l.moves, paneMove{from, to})
+	l.movesMu.Unlock()
+	select {
+	case l.moved <- struct{}{}:
+	default:
+	}
+}
+
+// takeMoves empties the queue noteMove fills.
+func (l *loops) takeMoves() []paneMove {
+	l.movesMu.Lock()
+	defer l.movesMu.Unlock()
+	moves := l.moves
+	l.moves = nil
+	return moves
+}
+
 // watchListMsg is the watch list, sent when it changes and once at the start.
 type watchListMsg struct {
 	panes []string
@@ -301,8 +334,32 @@ func (l *loops) runWatchList(dir string, extra []string) {
 		case <-l.ctx.Done():
 			return
 		case <-t.C:
+		case <-l.moved:
+			l.saveMoves(dir)
 		}
 	}
+}
+
+// saveMoves writes waiting pane moves to the watch list file, in the order
+// they happened, so a pane that moves twice ends up under its last id. The
+// model already follows each move, so a write that fails only means unwatch
+// won't find the pane by its new id. That's reported and not retried.
+func (l *loops) saveMoves(dir string) {
+	for _, mv := range l.takeMoves() {
+		if dir == "" {
+			continue
+		}
+		if _, err := watchlist.Replace(dir, mv.from, mv.to); err != nil {
+			l.deliver(l.ctx, moveSaveFailedMsg{pane: mv.to, err: err})
+		}
+	}
+}
+
+// moveSaveFailedMsg says a moved pane's new id couldn't be written to the
+// watch list file.
+type moveSaveFailedMsg struct {
+	pane string
+	err  error
 }
 
 func sameList(a, b watchListMsg) bool {

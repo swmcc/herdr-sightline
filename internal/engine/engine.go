@@ -178,6 +178,70 @@ func (e *Engine) Unwatch(id SourceID) {
 	e.uncertainRead(id, time.Time{}, false)
 }
 
+// Rename tells the engine a source now goes by another id. herdr gives a pane a
+// new id when it moves to another workspace, but it's the same terminal, so the
+// source carries on: its window, captures in progress and scrubber state move
+// across, and so do its entries, their place in the grouping index and any fix
+// check under way. An entry sent before the move can then still be judged on
+// output that arrives under the new id. Entry ids don't change, and a rename on
+// its own isn't a gap. If output may have been missed while the source moved,
+// call Gap as well.
+//
+// It works whether or not from is watched now, so entries left behind by a
+// source that was unwatched (say a read found the pane gone just before the
+// move was reported) still follow it.
+//
+// If to is already known, because it's watched or an entry has it, nothing is
+// moved. herdr doesn't reuse pane ids, so that shouldn't happen, and merging two
+// sources' state could tie one pane's errors to another's output. Instead from
+// is unwatched, as Unwatch does, so its settling entries end unverified rather
+// than wait on output that will never come. Rename reports whether it moved
+// anything, which is false then. Renaming a source to its own id does nothing.
+func (e *Engine) Rename(from, to SourceID) bool {
+	if from == to {
+		return false
+	}
+	if e.known(to) {
+		e.Unwatch(from)
+		return false
+	}
+	if s, ok := e.sources[from]; ok {
+		delete(e.sources, from)
+		s.info.ID = to
+		e.sources[to] = s
+	}
+	for _, r := range e.records {
+		if r.entry.Source.ID == from {
+			r.entry.Source.ID = to
+		}
+	}
+	// Collected first, so the loop never meets a key it has just added.
+	var moved []groupKey
+	for k := range e.groups.newest {
+		if k.source == from {
+			moved = append(moved, k)
+		}
+	}
+	for _, k := range moved {
+		e.groups.newest[groupKey{to, k.fingerprint}] = e.groups.newest[k]
+		delete(e.groups.newest, k)
+	}
+	return true
+}
+
+// known reports whether id is watched or named by any entry.
+func (e *Engine) known(id SourceID) bool {
+	if _, ok := e.sources[id]; ok {
+		return true
+	}
+	for _, r := range e.records {
+		if r.entry.Source.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
 // Feed hands the engine new lines from a source, in the order they were printed.
 // Lines from a source that isn't watched are ignored.
 func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {

@@ -7,6 +7,7 @@ import (
 	"io"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 	"github.com/swmcc/herdr-sightline/internal/engine"
 	"github.com/swmcc/herdr-sightline/internal/herdr"
 	"github.com/swmcc/herdr-sightline/internal/herdr/herdrtest"
+	"github.com/swmcc/herdr-sightline/internal/watchlist"
 )
 
 // The panes in the fake herdr: a watched dev server and an agent beside it in
@@ -877,6 +879,103 @@ func TestPaneMoveIsFollowed(t *testing.T) {
 	h.update(watchListMsg{panes: []string{webPane}})
 	if got := h.model.watching; len(got) != 1 || got[0] != "w2:p1" {
 		t.Errorf("after the list reloaded, watching %v", got)
+	}
+}
+
+// An entry sent before its pane moved is judged on what the pane prints under
+// its new id (#56), and the old id's loop can't reach the engine any more.
+func TestPaneMoveCarriesTheEntry(t *testing.T) {
+	tests := []struct {
+		name string
+		// settling moves the pane after the agent finished rather than before.
+		settling bool
+		after    []string
+		want     engine.State
+	}{
+		{name: "sent, moved, then a recompile is fixed", after: []string{" GET /notices 200", "✓ Compiled /notices in 312ms"}, want: engine.StateFixed},
+		{name: "sent, moved, then the error is still failing", after: []string{"TypeError: Cannot read properties of undefined (reading 'map')", "    at NoticeList (app/notices/page.tsx:14:22)"}, want: engine.StateStillFailing},
+		// Output printed while the pane moved went unseen, so a fix can't be
+		// proved. It's a gap, as it would be after a reconnect.
+		{name: "moved while settling is unverified", settling: true, after: []string{" GET /notices 200", "✓ Compiled /notices in 312ms"}, want: engine.StateUnverified},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			first := h.catchError()
+			h.run(h.press("enter"))
+			finish := func() {
+				h.herdr.setStatus(agentPane, herdr.AgentWorking)
+				h.sync()
+				h.clock.Advance(5 * time.Second)
+				h.herdr.setStatus(agentPane, herdr.AgentIdle)
+				h.sync()
+			}
+			if tt.settling {
+				finish()
+			}
+
+			const newID = "w2:p1"
+			oldGen := h.gen(webPane)
+			h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: newID, PreviousPaneID: webPane}})
+			if _, ok := h.loops.panes[webPane]; ok {
+				t.Fatal("the old id's loop is still running")
+			}
+			// A read the old loop made before it stopped arrives late.
+			h.update(deltaMsg{pane: webPane, gen: oldGen, delta: herdr.Delta{Lines: []string{"✓ Compiled /notices in 312ms"}}})
+			h.update(deltaMsg{pane: newID, gen: h.gen(newID), delta: herdr.Delta{Initial: true, Lines: []string{"ready"}}})
+			if !tt.settling {
+				finish()
+			}
+
+			h.clock.Advance(2 * time.Second)
+			h.update(deltaMsg{pane: newID, gen: h.gen(newID), delta: herdr.Delta{Lines: tt.after}})
+			h.clock.Advance(time.Duration(config.DefaultSettleSeconds)*time.Second + 2*captureWait)
+			h.update(tickMsg{})
+
+			if len(h.model.entries) != 1 {
+				t.Fatalf("got %d entries, want 1: %+v", len(h.model.entries), h.model.entries)
+			}
+			en := h.model.entries[0]
+			if en.ID != first.ID || en.Source.ID != newID {
+				t.Fatalf("entry %s from %s, want %s from %s", en.ID, en.Source.ID, first.ID, newID)
+			}
+			if en.State != tt.want {
+				t.Errorf("state = %v, want %v", en.State, tt.want)
+			}
+			msg, err := h.model.engine.Message(en.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(msg, "pane "+newID+".") {
+				t.Errorf("the message doesn't name the pane by its new id:\n%s", msg)
+			}
+		})
+	}
+}
+
+// Following a move rewrites the watch list file to the new id, so unwatch on
+// the moved pane finds it.
+func TestPaneMoveUpdatesTheWatchList(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := watchlist.Add(dir, webPane); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t)
+	h.sync()
+	h.update(watchListMsg{panes: []string{webPane}})
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p1", PreviousPaneID: webPane}})
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w3:p1", PreviousPaneID: "w2:p1"}})
+	h.loops.saveMoves(dir)
+	got, err := watchlist.Read(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"w3:p1"}) {
+		t.Fatalf("watch list = %q, want the pane's id after both moves", got)
+	}
+	h.update(watchListMsg{panes: got})
+	if !slices.Equal(h.model.watching, []string{"w3:p1"}) {
+		t.Fatalf("watching %v after the list was rewritten", h.model.watching)
 	}
 }
 

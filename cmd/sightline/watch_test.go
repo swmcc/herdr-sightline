@@ -248,7 +248,7 @@ func TestWatch(t *testing.T) {
 			wantFeeds: []string{term("w1:p9")},
 		},
 		{
-			name:      "with a feed open old ids stay, as it follows moved panes by them",
+			name:      "with a feed open old ids stay, as it may be about to rewrite them",
 			list:      []string{"w1:p7"},
 			feeds:     []string{term("w1:p9")},
 			wantOut:   "The feed is already open in w1:p9.",
@@ -395,6 +395,7 @@ func TestUnwatch(t *testing.T) {
 		name     string
 		env      map[string]string
 		list     []string
+		moves    [][2]string // pane moves the feed followed, from and to
 		wantCode int
 		wantOut  string
 		wantErr  string
@@ -403,6 +404,7 @@ func TestUnwatch(t *testing.T) {
 		{name: "removes the pane", list: []string{"w1:p1", "w1:p2"}, wantOut: "Stopped watching w1:p1.", wantList: []string{"w1:p2"}},
 		{name: "a pane that wasn't watched", list: []string{"w1:p2"}, wantOut: "w1:p1 wasn't being watched.", wantList: []string{"w1:p2"}},
 		{name: "no list at all", wantOut: "w1:p1 wasn't being watched."},
+		{name: "a pane that moved, by its new id", list: []string{"w4:p7", "w1:p2"}, moves: [][2]string{{"w4:p7", "w1:p1"}}, wantOut: "Stopped watching w1:p1.", wantList: []string{"w1:p2"}},
 		{name: "no focused pane", env: map[string]string{"HERDR_PANE_ID": ""}, wantCode: 1, wantErr: "which pane is focused"},
 		{name: "no state dir", env: map[string]string{watchlist.StateDirEnv: ""}, wantCode: 1, wantErr: "HERDR_PLUGIN_STATE_DIR is not set"},
 	}
@@ -410,6 +412,12 @@ func TestUnwatch(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			writeList(t, dir, tt.list)
+			// The feed puts a moved pane's new id in the list as it follows it.
+			for _, mv := range tt.moves {
+				if _, err := watchlist.Replace(dir, mv[0], mv[1]); err != nil {
+					t.Fatal(err)
+				}
+			}
 			env := map[string]string{"HERDR_PANE_ID": "w1:p1", watchlist.StateDirEnv: dir}
 			for k, v := range tt.env {
 				env[k] = v

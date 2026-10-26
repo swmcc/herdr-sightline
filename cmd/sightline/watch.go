@@ -96,8 +96,9 @@ func watchPane(ctx context.Context, client *herdr.Client, stateDir, pane, plugin
 		}
 	}
 	// With no feed open the list is only ids waiting for the next feed, so the
-	// ones for closed panes can go. With a feed open they stay, because the feed
-	// follows a pane that moved by its old id.
+	// ones for closed panes can go. With a feed open they stay. A pane that has
+	// just moved is still listed by its old id until the feed rewrites it, and
+	// pruning in between would stop the feed following it.
 	if len(feeds) == 0 {
 		if err := pruneWatchList(stateDir, alive); err != nil {
 			return "", err

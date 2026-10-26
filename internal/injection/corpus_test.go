@@ -67,7 +67,10 @@ type corpusCase struct {
 	steps                         []step
 }
 
-var macro = regexp.MustCompile(`\{\{(\d+)\|(.*?)\}\}`)
+var (
+	macro   = regexp.MustCompile(`\{\{(\d+)\|(.*?)\}\}`)
+	metaKey = regexp.MustCompile(`^[a-z]+$`) // "# hidden: x" is a key, "# Note: x" a comment
+)
 
 // unescape reads one line of the corpus. See the comment on corpusDir.
 func unescape(s string) (string, error) {
@@ -182,7 +185,7 @@ func loadCase(t *testing.T, path string) corpusCase {
 	for _, l := range lines {
 		if !inScript && !strings.HasPrefix(l, "@") {
 			key, value, ok := strings.Cut(strings.TrimPrefix(l, "# "), ": ")
-			if !strings.HasPrefix(l, "# ") || !ok {
+			if !strings.HasPrefix(l, "# ") || !ok || !metaKey.MatchString(key) {
 				continue
 			}
 			switch key {
@@ -200,6 +203,9 @@ func loadCase(t *testing.T, path string) corpusCase {
 				c.caught = append(c.caught, must(value))
 			case "shown":
 				c.shown = append(c.shown, must(value))
+			default:
+				// A misspelt key would quietly turn its check off.
+				t.Fatalf("%s: unknown key %q", path, key)
 			}
 			continue
 		}
@@ -212,14 +218,20 @@ func loadCase(t *testing.T, path string) corpusCase {
 			case "gap":
 				c.steps = append(c.steps, step{kind: "gap"})
 			case "wait":
+				if len(fields) < 2 {
+					t.Fatalf("%s: wait needs a duration", path)
+				}
 				d, err := time.ParseDuration(fields[1])
 				if err != nil {
 					t.Fatalf("%s: %v", path, err)
 				}
 				c.steps = append(c.steps, step{kind: "wait", wait: d})
 			case "repeat":
+				if len(fields) < 3 {
+					t.Fatalf("%s: bad repeat %q", path, l)
+				}
 				n, err := strconv.Atoi(fields[1])
-				if err != nil || len(fields) < 3 || len(c.steps) == 0 || c.steps[len(c.steps)-1].kind != "feed" {
+				if err != nil || len(c.steps) == 0 || c.steps[len(c.steps)-1].kind != "feed" {
 					t.Fatalf("%s: bad repeat %q", path, l)
 				}
 				st := &c.steps[len(c.steps)-1]
@@ -236,6 +248,9 @@ func loadCase(t *testing.T, path string) corpusCase {
 		}
 		st := &c.steps[len(c.steps)-1]
 		st.lines = append(st.lines, must(l))
+	}
+	if len(c.hidden)+len(c.absent)+len(c.caught)+len(c.shown) == 0 {
+		t.Fatalf("%s: no hidden, absent, caught or shown, so only the format is checked", path)
 	}
 	if len(c.steps) == 0 {
 		t.Fatalf("%s: no script", path)

@@ -1,0 +1,16 @@
+# "@path" in a prompt makes Claude Code read that file, and "@server:resource"
+# fetches an MCP resource. Every "@" from the pane reaches the agent as a
+# fullwidth "＠" instead, which the parser checks. The lines still read the
+# same to a person.
+# title: web@admin
+# command: npx @babel/core
+# caught: ＠~/.ssh/id_ed25519
+# caught: ＠babel/core
+# caught: me＠example.com
+# absent: @
+@ feed
+Error: Cannot find module '@babel/core'
+    at Module._resolveFilename (@~/.ssh/id_ed25519)
+    see @/etc/passwd and @server:resource and @github:repos/swmcc/x
+    mail me@example.com or @@ or @
+\x1b[31m@\x1b[0m~/.aws/credentials and @\u200b/etc/shadow

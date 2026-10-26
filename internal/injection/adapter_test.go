@@ -115,8 +115,8 @@ func TestReadPaneIsValidUTF8(t *testing.T) {
 // feed owns the reconnect, so this is the engine side of that contract. With Gap
 // the error being captured when the connection dropped is flagged, and the
 // modes that stop redraws being followed are kept. Unwatch files it straight
-// away as if it were complete, and forgets the modes, so a carriage return is
-// followed as if the screen were simple.
+// away as if it were complete. It also forgets the modes, which this test
+// doesn't check because unhide catches the decoy either way.
 func TestReconnectCallsGap(t *testing.T) {
 	reconnects := []struct {
 		name      string
@@ -156,9 +156,9 @@ func TestReconnectCallsGap(t *testing.T) {
 				t.Fatal("the error after the reconnect wasn't caught")
 			}
 			// With the mode kept, the line isn't redrawn at all: both texts are
-			// kept as printed. Without it, the redraw is followed and flagged.
-			if rc.wantGap && redrawn.Lines[0] != "Error: realok" {
-				t.Fatalf("after Gap the line = %q, want it kept as printed", redrawn.Lines[0])
+			// kept as printed, and nothing was drawn over to flag.
+			if rc.wantGap && (redrawn.Lines[0] != "Error: realok" || redrawn.MaybeGap) {
+				t.Fatalf("after Gap the line = %q MaybeGap %v, want it kept as printed and unflagged", redrawn.Lines[0], redrawn.MaybeGap)
 			}
 		})
 	}

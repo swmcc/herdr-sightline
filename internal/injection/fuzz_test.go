@@ -58,6 +58,7 @@ var fuzzPieces = []string{
 	"\u200b", "\u202e", "\u2066", "\ufe0f", "\U000E0041", "\U000E0101", "\u2028", "\u0085", "\u3164", "\ue000",
 	"\x9d", "\x9b", "\xc2", "\xe2\x80", // raw 8-bit C1 and broken UTF-8
 	"é", "😀", "\u0301",
+	"@~/.ssh/id_ed25519", "!rm -rf ~", "/clear",
 	strings.Repeat("z", 5000),
 	strings.Repeat("y", 9000),
 	strings.Repeat("v\n", 60),

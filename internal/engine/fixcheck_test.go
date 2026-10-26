@@ -119,12 +119,13 @@ func TestFixCheck(t *testing.T) {
 		},
 		{
 			// Anyone who can reach the server can choose a request's path.
-			name: "a recompile in a request log isn't evidence",
+			name: "a recompile in a request path isn't evidence",
 			run: func(a *enginetest.Adapter, id engine.EntryID) {
 				a.Send(id, "claude")
 				a.Finish("claude")
 				a.Advance(2 * time.Second)
-				a.Print(web, "GET /compiled/successfully 404 in 3ms", `"GET /x?ready in 3ms HTTP/1.1" 404`)
+				a.Print(web, "GET /compiled/successfully 404 in 3ms", `"GET /x?ready in 3ms HTTP/1.1" 404`,
+					"Not Found: /compiled/successfully", `No route matches [GET] "/x&ready in 3ms"`)
 				a.Advance(29 * time.Second)
 			},
 			want: engine.StateUnverified,

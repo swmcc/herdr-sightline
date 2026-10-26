@@ -76,9 +76,10 @@ func fingerprint(f found) string {
 
 var (
 	// linePrefix is what a multiplexer puts in front of every line: docker
-	// compose's "web-1  | " or the "    | " of a Python exception group. It's the
-	// same on every line, so it's taken off before anything else is matched.
-	linePrefix = regexp.MustCompile(`^\s*(?:[\w.\-]+\s+)?\| ?`)
+	// compose's "web-1  | ", foreman's "10:41:03 web.1  | " or the "    | " of
+	// a Python exception group. It's the same on every line, so it's taken off
+	// before anything else is matched.
+	linePrefix = regexp.MustCompile(`^\s*(?:\d{1,2}:\d{2}:\d{2}\s+)?(?:[\w.\-]+\s+)?\| ?`)
 	// pythonTraceback starts a Python traceback. Python prints the innermost frame
 	// last and the exception after it, so a traceback is read differently.
 	pythonTraceback = regexp.MustCompile(`Traceback \(most recent call last\):\s*$`)

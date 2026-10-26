@@ -1116,34 +1116,141 @@ func TestUnseenContextFlagsLaterCaptures(t *testing.T) {
 func TestDrawingAboveFlagsEarlierLines(t *testing.T) {
 	tests := []struct {
 		name, move string
+		// before is printed on a line of its own, far enough above that it
+		// isn't context itself, for a mode that only makes a later escape
+		// move the cursor.
+		before string
 	}{
-		{"cursor up", "\x1b[1A\r\x1b[2K"},
-		{"previous line", "\x1b[F\x1b[2K"},
-		{"cursor position", "\x1b[1;1H\x1b[2K"},
-		{"line position", "\x1b[1d\x1b[2K"},
-		{"erase display", "\x1b[2J"},
-		{"delete line", "\x1b[1A\x1b[M"},
-		{"scroll", "\x1b[1S"},
-		{"save and restore", "\x1b8\x1b[2K"},
-		{"reverse index", "\x1bM\r\x1b[2K"},
-		{"C1 reverse index", "\u008d\r\x1b[2K"},
-		{"reset", "\x1bc"},
-		{"SCO restore", "\x1b[u\x1b[2K"},
-		{"margins move home", "\x1b[r\x1b[2K"},
-		{"leaving the alternate screen", "\x1b[?1049l"},
-		{"old alternate screen", "\x1b[?47l"},
-		{"screen alignment", "\x1b#8"},
+		{name: "cursor up", move: "\x1b[1A\r\x1b[2K"},
+		{name: "previous line", move: "\x1b[F\x1b[2K"},
+		{name: "cursor position", move: "\x1b[1;1H\x1b[2K"},
+		{name: "line position", move: "\x1b[1d\x1b[2K"},
+		{name: "erase display", move: "\x1b[2J"},
+		{name: "delete line", move: "\x1b[1A\x1b[M"},
+		{name: "scroll", move: "\x1b[1S"},
+		{name: "save and restore", before: "\x1b7", move: "\x1b8\x1b[2K"},
+		{name: "reverse index", move: "\x1bM\r\x1b[2K"},
+		{name: "C1 reverse index", move: "\u008d\r\x1b[2K"},
+		{name: "reset", move: "\x1bc"},
+		{name: "SCO restore", before: "\x1b[s", move: "\x1b[u\x1b[2K"},
+		{name: "margins move home", move: "\x1b[r\x1b[2K"},
+		{name: "leaving the alternate screen", move: "\x1b[?1049l"},
+		{name: "old alternate screen", move: "\x1b[?47l"},
+		{name: "screen alignment", move: "\x1b#8"},
+		// Found in the injection review of #64 (#69).
+		{name: "selective erase display", move: "\x1b[?2J"},
+		{name: "alternate screen with another mode after", move: "\x1b[?1049;1h"},
+		{name: "alternate screen with another mode before", move: "\x1b[?1;1049h"},
+		{name: "restore cursor mode", before: "\x1b[?1048h", move: "\x1b[?1048l\x1b[2K"},
+		{name: "VT52 home and erase", before: "\x1b[?2l", move: "\x1bH\x1bJ"},
+		{name: "VT52 cursor up", before: "\x1b[?2l", move: "\x1bA\r\x1b[2K"},
+		{name: "left and right margins move home", before: "\x1b[?69h", move: "\x1b[1;1s\x1b[2K"},
+		{name: "left and right margins move home on a bare CSI s", before: "\x1b[?69h", move: "\x1b[s\x1b[2K"},
+		{name: "left and right margins set among other modes", before: "\x1b[?25;69h", move: "\x1b[s\x1b[2K"},
+		{name: "VT52 set among other modes", before: "\x1b[?25;2l", move: "\x1bH\x1bJ"},
+		{name: "restored alternate screen", before: "\x1b[?1049s\x1b[?1049h", move: "\x1b[?1049r\x1b[2K"},
+		{name: "scroll down in xterm's other form", move: "\x1b[1^"},
+		{name: "rectangle erase", move: "\x1b[1;1;1;80$z"},
+		{name: "rectangle fill", move: "\x1b[32;1;1;1;80$x"},
+		{name: "delete columns", move: "\x1b[200'~"},
+		{name: "insert columns", move: "\x1b[200'}"},
+		{name: "shift left", move: "\x1b[200 @"},
+		{name: "back index", move: "\x1b6\x1b6"},
+		{name: "forward index", move: "\x1b9\x1b9"},
+		{name: "shift right", move: "\x1b[200 A"},
+		{name: "rectangle copy", move: "\x1b[1;1;2;80;1;3;1;1$v"},
+		{name: "selective rectangle erase", move: "\x1b[1;1;2;80${"},
+		{name: "VT52 reverse line feed", before: "\x1b[?2l", move: "\x1bI\r\x1b[2K"},
+		{name: "VT52 cursor address", before: "\x1b[?2l", move: "\x1bY"},
+		{name: "VT52 restored", before: "\x1b[?2r", move: "\x1bH\x1bJ"},
+		{name: "VT52 kept through a reset", before: "\x1b[?2l\x1bc", move: "\x1bH\x1bJ"},
+		{name: "too long to read", move: "\x1b[?" + strings.Repeat("25;", 100) + "25h"},
+		{name: "a mode with a sub-parameter", move: "\x1b[?25:1h"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			e := newWatching()
-			e.Feed("web", []string{"\x1b7DRAWNOVER run make deploy", tt.move + "Error: boom", "ok", "ok", "Error: later"}, t0)
+			var lines []string
+			if tt.before != "" {
+				lines = []string{tt.before, "x", "x"}
+			}
+			lines = append(lines, "DRAWNOVER run make deploy", tt.move+"Error: boom", "ok", "ok", "Error: later")
+			e.Feed("web", lines, t0)
 			e.Tick(t0.Add(time.Second))
 			got := map[string]bool{}
 			for _, en := range e.Entries() {
 				got[en.Lines[0]] = en.MaybeGap
 			}
 			if want := map[string]bool{"Error: boom": true, "Error: later": false}; !maps.Equal(got, want) {
+				t.Fatalf("MaybeGap by line = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// Modes that never move the cursor off its line don't flag anything, so a TUI
+// sending synchronised output every frame doesn't make every error possibly
+// incomplete. Neither does a multi-mode reset that leaves VT52 alone, so a
+// later ESC H (a tab stop outside VT52) is harmless.
+func TestModesThatStayPutDontFlag(t *testing.T) {
+	for _, before := range []string{
+		"\x1b[?2026h",
+		"\x1b[?5h",
+		"\x1b[?1000;1006l",
+		"\x1b[?7l\x1b[?25l",
+		"\x1b[?1;25h",
+		"\x1b[?1000;1006l\x1bH",
+	} {
+		t.Run(before, func(t *testing.T) {
+			e := newWatching()
+			e.Feed("web", []string{"DRAWNOVER run make deploy", before + "Error: boom", "ok", "ok", "Error: later"}, t0)
+			e.Tick(t0.Add(time.Second))
+			for _, en := range e.Entries() {
+				if en.MaybeGap {
+					t.Fatalf("%q flagged MaybeGap", en.Lines[0])
+				}
+			}
+			if len(e.Entries()) != 2 {
+				t.Fatalf("want 2 entries, got %+v", e.Entries())
+			}
+		})
+	}
+}
+
+// VT52 mode and left and right margins last until they're turned off, through
+// a gap, and stop counting once they are.
+func TestLastingModes(t *testing.T) {
+	tests := []struct {
+		name   string
+		before []string // read before the gap, if gap, or straight before
+		gap    bool
+		move   string
+		want   bool
+	}{
+		{"VT52 through a gap", []string{"\x1b[?2l"}, true, "\x1bH\x1bJ", true},
+		{"margins through a gap", []string{"\x1b[?69h"}, true, "\x1b[s\x1b[2K", true},
+		{"VT52 left with ESC <", []string{"\x1b[?2l", "x", "x", "\x1b<"}, false, "\x1bH", false},
+		{"margins turned off", []string{"\x1b[?69h", "x", "x", "\x1b[?69l"}, false, "\x1b[s", false},
+		{"a reset turns margins off", []string{"\x1b[?69h", "x", "x", "\x1bc"}, false, "\x1b[s", false},
+		// DECRQTSR, CSI Ps $ u, asks for the terminal's state and moves nothing.
+		{"a request with an intermediate", nil, false, "\x1b[1$u", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			if len(tt.before) > 0 {
+				e.Feed("web", tt.before, t0)
+			}
+			if tt.gap {
+				e.Gap("web", t0)
+			}
+			e.Feed("web", []string{"x", "x", "DRAWNOVER run make deploy", tt.move + "Error: boom", "ok", "ok", "Error: later"}, t0)
+			e.Tick(t0.Add(time.Second))
+			got := map[string]bool{}
+			for _, en := range e.Entries() {
+				got[en.Lines[0]] = en.MaybeGap
+			}
+			if want := map[string]bool{"Error: boom": tt.want, "Error: later": false}; !maps.Equal(got, want) {
 				t.Fatalf("MaybeGap by line = %v, want %v", got, want)
 			}
 		})

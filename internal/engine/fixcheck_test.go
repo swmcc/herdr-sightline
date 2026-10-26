@@ -348,7 +348,7 @@ func TestFixCheck(t *testing.T) {
 				a.Send(id, "claude")
 				a.Finish("claude")
 				a.Advance(time.Second)
-				a.Print(web, `Started GET "/notices?page=2" for 127.0.0.1`, "Completed 200 OK in 12ms")
+				a.Print(web, `Started GET "/notices" for 127.0.0.1`, "Completed 200 OK in 12ms")
 				a.Advance(30 * time.Second)
 			},
 			want: engine.StateFixed,
@@ -374,6 +374,47 @@ func TestFixCheck(t *testing.T) {
 				a.Finish("claude")
 				a.Advance(time.Second)
 				a.Print(web, "GET /health 200 in 1ms", "POST /notices 200 in 3ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			// Rails logs the 500 before the exception, and the 500 is what
+			// matches.
+			name:  "a request that ended with a 5xx is the trigger",
+			setup: []string{`Started GET "/notices" for 127.0.0.1`, "Completed 500 Internal Server Error in 5ms"},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name:  "a request that ended with a 5xx is fixed by it ending well",
+			setup: []string{`Started GET "/notices" for 127.0.0.1`, "Completed 500 Internal Server Error in 5ms"},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, `Started GET "/notices" for 127.0.0.1`, "Completed 200 OK in 3ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			// A query can put a request's words in the log anywhere on a
+			// line, but only a line in a request's own form is one.
+			name:  "a request error isn't fixed by the request logged in a parameter",
+			setup: []string{"GET /notices 500 in 30ms", boom},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, `  Parameters: {"q"=>"GET /notices 200"}`, "Not Found: /x GET /notices 200",
+					`Started GET "/x?q=GET+/notices+200" for 127.0.0.1`)
 				a.Advance(30 * time.Second)
 			},
 			want: engine.StateUnverified,

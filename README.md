@@ -237,7 +237,14 @@ also dismisses any new entries it matches, but never one you've sent. A new
 already under way. If the file has a mistake in it, the feed shows the error and
 carries on with the last good version.
 
-Press `n` on any entry to add an ignore rule for it without editing the file.
+Press `n` on any entry to add an ignore rule for it without editing the file. The
+feed suggests a regex from the error line, with the parts that change between runs
+(numbers, ids, hex, quoted values and paths) made general. Change it as you like.
+It shows whether the rule compiles and still matches the line, and won't save one
+that matches an empty line or ordinary output. Nothing is written until you press
+`enter`. The rule goes at the end of `sightline.toml` as a new `[[ignore]]` table
+and the rest of the file is left exactly as it was. It applies when the feed reloads
+the file a moment later. Press `u` within 30 seconds to take it back out.
 
 ## Safety
 
@@ -342,7 +349,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Follow a watched pane's entries when it moves ([#56](https://github.com/swmcc/herdr-sightline/issues/56))
 - [x] End the wait when the agent an error was sent to exits ([#57](https://github.com/swmcc/herdr-sightline/issues/57))
 - [x] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
-- [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
+- [x] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
 - [x] Apply config changes without reopening the feed ([#58](https://github.com/swmcc/herdr-sightline/issues/58))
 - [x] Recover from a panic in the feed cleanly ([#59](https://github.com/swmcc/herdr-sightline/issues/59))
 - [x] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))

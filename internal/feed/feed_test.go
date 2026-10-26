@@ -568,9 +568,10 @@ func TestListKeys(t *testing.T) {
 		t.Error("k moved past the first entry")
 	}
 
+	// With no config directory there's nowhere to save a rule (see ignore_test.go).
 	h.press("n")
-	if !strings.Contains(h.model.status, "#14") {
-		t.Errorf("n status = %q, want it to point at #14", h.model.status)
+	if !strings.Contains(h.model.status, "no config directory") || h.model.mode != modeList {
+		t.Errorf("n status = %q in mode %v, want it to say there's nowhere to save", h.model.status, h.model.mode)
 	}
 	if len(h.model.entries) != 2 {
 		t.Error("n changed the entries")

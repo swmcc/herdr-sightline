@@ -215,7 +215,7 @@ func TestCleanLine(t *testing.T) {
 }
 
 // readAll runs batches of lines through one capturer, as successive Feed calls.
-func readAll(batches ...[]string) (lines []string, overflowed bool) {
+func readAll(batches ...[]string) (lines []string, missed bool) {
 	c := newCapturer(0)
 	for _, b := range batches {
 		c.read(b, func(l string) { lines = append(lines, l) })
@@ -237,31 +237,43 @@ func TestReadKeepsEscapeStateAcrossLines(t *testing.T) {
 		name    string
 		batches [][]string
 		want    []string
+		missed  bool // a line end was hidden, so a gap is flagged
 	}{
 		{
 			name:    "DCS spanning lines in one string",
 			batches: [][]string{{"\x1bPignored\nError: hidden instructions\n\x1b\\"}},
 			want:    []string{""},
+			missed:  true,
 		},
 		{
 			name:    "DCS spanning lines as separate elements",
 			batches: [][]string{{"\x1bPignored", "Error: hidden instructions", "\x1b\\"}},
 			want:    []string{""},
+			missed:  true,
 		},
 		{
 			name:    "DCS split across Feed calls",
 			batches: [][]string{{"ok", "\x1bPq#0;2;0;0;0"}, {"Error: hidden"}, {"#1~~@@\x1b\\Error: real"}},
 			want:    []string{"ok", "Error: real"},
+			missed:  true,
 		},
 		{
 			name:    "OSC spanning lines ended by BEL",
 			batches: [][]string{{"\x1b]0;one", "Error: hidden\x07shown"}},
 			want:    []string{"shown"},
+			missed:  true,
 		},
 		{
-			name:    "text before a string stays with the text after it",
+			name:    "text either side of a hidden line end stays apart",
 			batches: [][]string{{"before \x1b_payload", "more payload\x1b\\after"}},
-			want:    []string{"before after"},
+			want:    []string{"before ", "after"},
+			missed:  true,
+		},
+		{
+			name:    "halves of an error either side of a string aren't joined",
+			batches: [][]string{{"Err\x1b]0;", "x", "\x07or: forged"}},
+			want:    []string{"Err", "or: forged"},
+			missed:  true,
 		},
 		{
 			name:    "CSI split across Feed calls",
@@ -276,9 +288,9 @@ func TestReadKeepsEscapeStateAcrossLines(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, overflowed := readAll(tt.batches...)
-			if !slices.Equal(got, tt.want) || overflowed {
-				t.Fatalf("read = %q (overflowed %v), want %q", got, overflowed, tt.want)
+			got, missed := readAll(tt.batches...)
+			if !slices.Equal(got, tt.want) || missed != tt.missed {
+				t.Fatalf("read = %q (missed %v), want %q (missed %v)", got, missed, tt.want, tt.missed)
 			}
 		})
 	}
@@ -330,15 +342,33 @@ func TestReopeningStringsStillHitsTheCap(t *testing.T) {
 	}
 }
 
+// Printing one visible character between strings resets the cap, so the cap
+// alone can't catch this. Hiding a line end flags a gap, so the next error seen
+// says output may be missing.
+func TestReopeningAroundOneCharacterIsAGap(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"GET /\x1b]x 404"}, t0)
+	for range 50 {
+		e.Feed("web", repeatLine("healthy", 90), t0)
+		e.Feed("web", []string{"Error: real failure", "GET /\x1b\\.\x1b]x 404"}, t0)
+	}
+	e.Feed("web", []string{"\x1b\\", "Error: after"}, t0)
+	e.Tick(t0.Add(time.Second))
+	en := onlyEntry(t, e)
+	if en.Lines[0] != "Error: after" || !en.MaybeGap {
+		t.Fatalf("entry = %q MaybeGap %v, want the error after flagged", en.Lines, en.MaybeGap)
+	}
+}
+
 // When a string is abandoned part way through a line, the rest of that line is
 // dropped, because a terminal would still be hiding it.
 func TestAbandonedStringDropsTheRestOfTheLine(t *testing.T) {
-	got, overflowed := readAll([]string{
+	got, missed := readAll([]string{
 		"shown \x1b]0;" + strings.Repeat("A", maxHiddenBytes) + "Error: HIDDEN PAYLOAD\x07",
 		"next",
 	})
-	if want := []string{"shown ", "next"}; !slices.Equal(got, want) || !overflowed {
-		t.Fatalf("read = %q (overflowed %v), want %q", got, overflowed, want)
+	if want := []string{"shown ", "next"}; !slices.Equal(got, want) || !missed {
+		t.Fatalf("read = %q (missed %v), want %q", got, missed, want)
 	}
 }
 

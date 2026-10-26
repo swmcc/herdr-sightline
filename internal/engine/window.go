@@ -36,13 +36,13 @@ func newCapturer(contextLines int) capturer {
 func (c *capturer) read(lines []string, use func(line string)) {
 	for _, l := range lines {
 		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
-		c.scrub.write(l+"\n", use, c.swallowedTooMuch)
+		c.scrub.write(l+"\n", use, c.hidLines)
 	}
 }
 
-// swallowedTooMuch is called when the scrubber gives up on a control string that
-// never ended. Whatever it swallowed is lost, which is a gap.
-func (c *capturer) swallowedTooMuch() {
+// hidLines is called when the scrubber may have hidden whole lines, inside a
+// control string or by giving up on one. Either way it's a gap.
+func (c *capturer) hidLines() {
 	c.gap()
 	c.missed = true
 }
@@ -229,16 +229,17 @@ type scrubber struct {
 }
 
 // write runs text through the scrubber. emit gets each complete, clean line.
-// overflow is called if control strings hide more than the cap, at which point
-// the scrubber abandons the string, drops the rest of that line and carries on,
-// so output that never closes a string can't blind the watcher for ever.
-func (s *scrubber) write(text string, emit func(string), overflow func()) {
+// hid is called whenever lines may have gone missing: each time a control string
+// swallows a line end, and when control strings hide more than the cap. At the
+// cap the scrubber abandons the string, drops the rest of that line and carries
+// on, so output that never closes a string can't blind the watcher for ever.
+func (s *scrubber) write(text string, emit func(string), hid func()) {
 	for _, r := range text {
-		s.step(r, emit, overflow)
+		s.step(r, emit, hid)
 	}
 }
 
-func (s *scrubber) step(r rune, emit func(string), overflow func()) {
+func (s *scrubber) step(r rune, emit func(string), hid func()) {
 	if s.anywhere(r) {
 		return
 	}
@@ -295,7 +296,7 @@ func (s *scrubber) step(r rune, emit func(string), overflow func()) {
 		case r == ctrlESC:
 			s.state = scrubStringEsc
 		default:
-			s.swallow(r, emit, overflow)
+			s.swallow(r, emit, hid)
 		}
 
 	case scrubStringEsc:
@@ -306,7 +307,7 @@ func (s *scrubber) step(r rune, emit func(string), overflow func()) {
 		// ESC followed by anything else cancels the string and starts a new
 		// escape, as it does in a terminal.
 		s.state = scrubEsc
-		s.step(r, emit, overflow)
+		s.step(r, emit, hid)
 
 	case scrubDropLine:
 		if r == '\n' {
@@ -360,19 +361,26 @@ func (s *scrubber) control(r rune, emit func(string)) {
 
 // swallow drops r as part of a control string, until control strings have hidden
 // too much in a row.
-func (s *scrubber) swallow(r rune, emit func(string), overflow func()) {
+func (s *scrubber) swallow(r rune, emit func(string), hid func()) {
 	s.hiddenBytes += utf8.RuneLen(r)
 	if r == '\n' {
 		s.hiddenLines++
+		// Visible text either side of a hidden line end stays on separate lines,
+		// so the two halves can't be joined into something that matches.
+		if s.line.Len() > 0 {
+			s.endLine(emit)
+		}
+		// Healthy output almost never hides a line end. When it happens, lines
+		// may be missing, which is a gap, cap or no cap.
+		hid()
 	}
 	if s.hiddenBytes <= maxHiddenBytes && s.hiddenLines <= maxHiddenLines {
 		return
 	}
 	s.hiddenBytes, s.hiddenLines = 0, 0
-	overflow()
+	hid()
 	if r == '\n' {
 		s.state = scrubText
-		s.endLine(emit)
 		return
 	}
 	s.state = scrubDropLine

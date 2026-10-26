@@ -979,6 +979,38 @@ func TestPaneMoveUpdatesTheWatchList(t *testing.T) {
 	}
 }
 
+// A watched pane that moves while a send is in flight is sent once, waited on
+// once and judged on its new id.
+func TestPaneMoveDuringASend(t *testing.T) {
+	h := newHarness(t)
+	first := h.catchError()
+	cmd := h.press("enter")
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p1", PreviousPaneID: webPane}})
+	h.update(deltaMsg{pane: "w2:p1", gen: h.gen("w2:p1"), delta: herdr.Delta{Initial: true}})
+	h.run(cmd)
+	if got := len(h.herdr.promptCalls()); got != 1 {
+		t.Fatalf("got %d prompts, want 1", got)
+	}
+	if len(h.model.awaiting) != 1 {
+		t.Fatalf("waiting on %d agents, want 1", len(h.model.awaiting))
+	}
+	h.herdr.setStatus(agentPane, herdr.AgentWorking)
+	h.sync()
+	h.clock.Advance(5 * time.Second)
+	h.herdr.setStatus(agentPane, herdr.AgentIdle)
+	h.sync()
+	h.clock.Advance(2 * time.Second)
+	h.update(deltaMsg{pane: "w2:p1", gen: h.gen("w2:p1"), delta: herdr.Delta{Lines: []string{" GET /notices 200", "✓ Compiled /notices in 312ms"}}})
+	h.clock.Advance(time.Duration(config.DefaultSettleSeconds)*time.Second + 2*captureWait)
+	h.update(tickMsg{})
+	if len(h.model.entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(h.model.entries))
+	}
+	if en := h.model.entries[0]; en.ID != first.ID || en.Source.ID != "w2:p1" || en.State != engine.StateFixed {
+		t.Fatalf("entry %s from %s is %v, want %s from w2:p1 fixed", en.ID, en.Source.ID, en.State, first.ID)
+	}
+}
+
 // An error caught after a move, before a snapshot has seen the new id, still
 // shows the pane's label.
 func TestPaneMoveKeepsTheTitle(t *testing.T) {

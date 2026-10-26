@@ -30,7 +30,8 @@ const (
 	maxCommandRunes    = 48       // longest command shown
 	maxClosingRunes    = 200      // longest closing line shown
 	maxMessageBytes    = 16 << 10 // longest whole message, in bytes
-	linePrefix         = "| "     // starts every line inside the block, "|" alone if it's empty
+	linePrefix         = "| "     // starts every line of output, "|" alone if it's empty
+	aboutPrefix        = "|# "    // starts the pane's name and command, which output can never do
 )
 
 // The only characters a pane title or command may keep. They're inside the
@@ -94,11 +95,11 @@ func newDraft(en Entry, opts Options) *draft {
 	}
 	if title := label(en.Source.Title, titleChars, maxTitleRunes); title != "" {
 		d.named = true
-		d.about += prefixed("pane name: "+title) + "\n"
+		d.about += aboutPrefix + "pane name: " + title + "\n"
 	}
 	if cmd := label(en.Source.Command, commandChars, maxCommandRunes); cmd != "" {
 		d.commanded = true
-		d.about += prefixed("running: "+cmd) + "\n"
+		d.about += aboutPrefix + "running: " + cmd + "\n"
 	}
 	if d.about != "" {
 		d.about += prefixed("") + "\n"

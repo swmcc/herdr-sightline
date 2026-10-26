@@ -121,7 +121,7 @@ func TestRepeatRefreshesTheSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(msg, "\n| running: npm run dev\n") {
+	if !strings.Contains(msg, "\n|# running: npm run dev\n") {
 		t.Fatalf("message still names the old command:\n%s", msg)
 	}
 }

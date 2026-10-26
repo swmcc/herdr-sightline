@@ -70,7 +70,8 @@ func TestDropOrder(t *testing.T) {
 		state State
 		ago   time.Duration // LastSeen, before t0
 	}
-	// Nine fillers that are never dropped make room for one more before the cap.
+	// Fillers that are never dropped bring the feed up to the cap, so the entry
+	// just caught goes one over.
 	tests := []struct {
 		name     string
 		existing []existing // filed in this order after the fillers

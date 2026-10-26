@@ -3,12 +3,19 @@ LDFLAGS := -X main.version=$(VERSION)
 
 .DEFAULT_GOAL := build
 
-.PHONY: setup build test check link unlink hooks clean
+.PHONY: setup tools build test check link unlink hooks clean
+
+# Pinned so `make check` and CI run the same versions. CI installs them with `make tools`.
+STATICCHECK_VERSION := v0.8.2
+GOVULNCHECK_VERSION := v1.9.0
 
 # One time setup: the tools `make check` needs, plus the git hooks.
-setup: hooks
-	go install honnef.co/go/tools/cmd/staticcheck@latest
-	go install golang.org/x/vuln/cmd/govulncheck@latest
+setup: tools hooks
+
+# The tools `make check` needs, built with the toolchain go.mod pins.
+tools:
+	go install honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION)
+	go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
 
 # Build bin/sightline, the binary herdr calls.
 build:

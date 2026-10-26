@@ -13,26 +13,45 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: test
-    runs-on: ubuntu-latest
+  # The same checks as `make check`, on both platforms the plugin supports.
+  checks:
+    name: checks (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      - name: Prose
-        run: .claude/scripts/check-prose.sh
+      # Pinned in the Makefile so this matches what `make check` runs locally.
+      - name: Tools
+        run: make tools
 
-      - name: Install script
+      - name: Check
+        run: make check
+
+  # Branch protection requires a check called exactly `test`. A matrix job reports
+  # one check per platform with the platform in its name, so this job gathers them
+  # into one. It runs even when a platform fails, because a skipped required check
+  # counts as passing.
+  test:
+    name: test
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every platform passed
+        env:
+          RESULT: ${{ needs.checks.result }}
         run: |
-          shellcheck -s sh scripts/*.sh
-          sh scripts/install_test.sh
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test -race ./...
+          if [ "$RESULT" != "success" ]; then
+            echo "::error::The checks finished with \"$RESULT\"."
+            exit 1
+          fi

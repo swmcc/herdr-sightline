@@ -936,9 +936,19 @@ type sentMsg struct {
 
 // prompt makes exactly one agent.prompt call with the message taken at the
 // keypress. It's never retried: a timeout may still have been delivered.
+//
+// A panic here may come after herdr typed the prompt, so it comes back as an
+// uncertain send and the entry is flagged as maybe sent. The guard in Run then
+// stops the feed with an error that says so.
 func prompt(ctx context.Context, client *herdr.Client, msg checkedMsg) tea.Cmd {
-	return func() tea.Msg {
+	return func() (sent tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				sent = sentMsg{checked: msg, promptErr: newPanicError("sending the prompt", r)}
+			}
+		}()
 		err := client.Prompt(ctx, msg.target.PaneID, msg.text)
+		panicPoint(ctx, "after prompt")
 		return sentMsg{checked: msg, promptErr: err}
 	}
 }

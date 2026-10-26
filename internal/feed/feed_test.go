@@ -171,7 +171,7 @@ func newHarness(t *testing.T) *harness {
 	ctx, cancel := context.WithCancel(context.Background())
 	client := f.client()
 	m := newModel(ctx, client, clk.Now, feedPane, config.Update{Config: config.Default()})
-	l := newLoops(ctx, client, func(tea.Msg) {}, clk.Now, Timings{Poll: time.Hour, Sync: time.Hour})
+	l := newLoops(ctx, &faults{ctx: ctx, cancel: cancel}, client, func(tea.Msg) {}, clk.Now, Timings{Poll: time.Hour, Sync: time.Hour})
 	m.loops = l
 	m.width, m.height = 120, 40
 	h := &harness{t: t, herdr: f, clock: clk, model: m, loops: l, cancel: cancel}

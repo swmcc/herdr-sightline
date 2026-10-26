@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -130,6 +131,14 @@ func feed(args []string, getenv func(string) string, stdin io.Reader, stdout, st
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
+		if errors.Is(err, tea.ErrInterrupted) {
+			// Someone sent SIGINT on purpose, so don't hold the pane open.
+			return 1
+		}
+		// Stay open, as when herdr can't be reached. The error may be the only
+		// record that a prompt might have reached an agent.
+		fmt.Fprint(stderr, "\nPress enter to close.\n")
+		_, _ = bufio.NewReader(stdin).ReadString('\n')
 		return 1
 	}
 	return 0

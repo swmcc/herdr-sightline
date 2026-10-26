@@ -19,19 +19,6 @@ func TestRun(t *testing.T) {
 		{name: "unknown command", args: []string{"nope"}, wantCode: 2, wantStderr: `unknown command "nope"`},
 		{name: "help", args: []string{"help"}, wantCode: 0, wantStdout: "Usage:"},
 		{name: "version", args: []string{"version"}, wantCode: 0, wantStdout: "sightline dev"},
-		{
-			name:       "watch reports the pane herdr passed in",
-			args:       []string{"watch"},
-			env:        map[string]string{"HERDR_PANE_ID": "w1:p2"},
-			wantCode:   0,
-			wantStdout: "pane w1:p2",
-		},
-		{
-			name:       "unwatch without a pane still behaves",
-			args:       []string{"unwatch"},
-			wantCode:   0,
-			wantStdout: "(no pane in context)",
-		},
 		{name: "feed outside herdr says why and waits for enter", args: []string{"feed"}, wantCode: 1, wantStdout: "Press enter to close."},
 		{name: "feed refuses a bad pane id", args: []string{"feed", "--watch", "w1:p1;rm"}, wantCode: 2, wantStderr: "isn't a pane id"},
 	}

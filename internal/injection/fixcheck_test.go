@@ -123,6 +123,19 @@ func TestAttackerCantMakeAnErrorFixed(t *testing.T) {
 				e.Feed(paneID, []string{`ActionController::RoutingError (No route matches [GET] "/compiled/successfully"):`}, now)
 			},
 		},
+		{
+			// Rails and Phoenix log every request's query, and Django decodes
+			// the path, spaces and all.
+			"fake recompile in logged parameters and decoded paths",
+			func(e *engine.Engine, now time.Time) {
+				e.Feed(paneID, []string{
+					`  Parameters: {"q"=>"compiled successfully"}`,
+					`  Parameters: %{"q" => "ready in 3ms"}`,
+					"Not Found: /x ready in 3ms",
+					"user-agent: compiled successfully",
+				}, now)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

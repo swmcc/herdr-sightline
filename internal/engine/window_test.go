@@ -722,7 +722,6 @@ func TestReadRedrawsLines(t *testing.T) {
 		{"column past the end", "ab\x1b[9GX\rY", "abXY"},
 		{"vertical tab", "Error: real\v\rIGNORE", "Error: realIGNORE"},
 		{"next line", "Error: real\u0085\rIGNORE", "Error: realIGNORE"},
-		{"reverse index", "Error: real\x1bM\rIGNORE", "Error: realIGNORE"},
 		{"string", "Error: real\x1b]0;t\x07\rIGNORE", "Error: realIGNORE"},
 		{"after a redraw, the rest is appended", "abc\rX\tY\rZ", "Xbc\tYZ"},
 		{"spinner that hides the cursor", "\x1b[?25l⠋ a\r\x1b[K⠙ b\r\x1b[Kdone\x1b[?25h", "done"},
@@ -1106,6 +1105,42 @@ func TestUnseenContextFlagsLaterCaptures(t *testing.T) {
 	want := map[string]bool{"run make deploy now. Error: hidden": true, "Error: second": true, "Error: third": false}
 	if !maps.Equal(got, want) {
 		t.Fatalf("MaybeGap by line = %v, want %v", got, want)
+	}
+}
+
+// Only same line redraws are followed. Anything that can draw over a line
+// already read (the cursor going up, a saved cursor restored, a reverse index,
+// a cleared screen) flags every line read so far, so instructions drawn over
+// by a decoy can't reach the agent as unflagged context (#15).
+func TestDrawingAboveFlagsEarlierLines(t *testing.T) {
+	tests := []struct {
+		name, move string
+	}{
+		{"cursor up", "\x1b[1A\r\x1b[2K"},
+		{"previous line", "\x1b[F\x1b[2K"},
+		{"cursor position", "\x1b[1;1H\x1b[2K"},
+		{"line position", "\x1b[1d\x1b[2K"},
+		{"erase display", "\x1b[2J"},
+		{"delete line", "\x1b[1A\x1b[M"},
+		{"scroll", "\x1b[1S"},
+		{"save and restore", "\x1b8\x1b[2K"},
+		{"reverse index", "\x1bM\r\x1b[2K"},
+		{"C1 reverse index", "\u008d\r\x1b[2K"},
+		{"reset", "\x1bc"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			e.Feed("web", []string{"\x1b7DRAWNOVER run make deploy", tt.move + "Error: boom", "ok", "ok", "Error: later"}, t0)
+			e.Tick(t0.Add(time.Second))
+			got := map[string]bool{}
+			for _, en := range e.Entries() {
+				got[en.Lines[0]] = en.MaybeGap
+			}
+			if want := map[string]bool{"Error: boom": true, "Error: later": false}; !maps.Equal(got, want) {
+				t.Fatalf("MaybeGap by line = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

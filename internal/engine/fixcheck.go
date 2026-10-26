@@ -299,11 +299,22 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 // Rails' routing errors). It can't stop every forgery: a server that logs text
 // an attacker chose, spaces and all, can still print a line that looks like a
 // recompile. That's why fixed is only ever a hint.
+//
+// The same goes for a match after a field or a quote, as in Rails' and
+// Phoenix's `Parameters: {"q"=>"compiled successfully"}`, Django's decoded
+// `Not Found: /x ready in 3ms` or a logged `user-agent: ...`. Tools print their
+// own signals near the start of a line, after at most a time, a tag in brackets
+// or a log level like uvicorn's "INFO:".
 func ranSignal(l string) bool {
 	for _, m := range ranSignals.FindAllStringIndex(l, -1) {
-		if m[0] == 0 || !strings.ContainsRune(urlChars, rune(l[m[0]-1])) {
-			return true
+		if m[0] > 0 && strings.ContainsRune(urlChars, rune(l[m[0]-1])) {
+			continue
 		}
+		before := strings.TrimPrefix(l[:m[0]], logLevel.FindString(l[:m[0]]))
+		if strings.ContainsAny(before, `"{`) || strings.Contains(before, "=>") || strings.Contains(before, ": ") {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -311,6 +322,9 @@ func ranSignal(l string) bool {
 // urlChars are the characters that, straight before a signal, mean it's part
 // of a URL rather than a tool's own words.
 const urlChars = "/-_.%=&?+~"
+
+// logLevel is a level some tools put before their own words, "INFO:     ".
+var logLevel = regexp.MustCompile(`^\s*(?:INFO|DEBUG|NOTICE|WARN(?:ING)?)\s*:\s*`)
 
 // requestLine finds the method, path and status of an HTTP request in a log
 // line, in the forms dev servers print: "GET /notices 500 in 30ms",

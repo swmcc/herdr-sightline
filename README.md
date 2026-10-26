@@ -251,7 +251,7 @@ Sightline:
 - labels everything it sends as output from another pane, to be treated as data
 - keeps everything from the pane, its name included, inside a block where every line is marked, so none of it can pass for Sightline's own words
 - caps how much it sends
-- shows every `@` from the pane as a fullwidth `＠`, so the agent can't take pane text for a file mention like `@~/.ssh/id_ed25519`
+- shows every `@` from the pane as a fullwidth `＠`, so the agent can't take pane text for a file mention like `@~/.ssh/id_ed25519` (the message says when it has done this)
 - always starts the message with "Sightline", so it can never begin with a `!` or `/` that an agent's prompt might run as a command
 - shows you exactly what will be sent before you send it (`v` to view)
 
@@ -259,11 +259,12 @@ What that protects against, and what it doesn't:
 
 - **It can** keep pane text inside a clearly labelled data block that the pane can't
   close or forge. It strips escape codes and invisible characters. It keeps out text
-  your terminal hid from you, or flags the error as possibly incomplete when it can't
-  be sure. It refuses to send without a keypress, and a request for a crafted path
-  can't make an error read as fixed.
+  hidden in escape codes or drawn over, or flags the error as possibly incomplete
+  when it can't be sure. It refuses to send without a keypress.
 - **It can't** stop a model from being persuaded by text it's shown. The label says
   "this is data", but a model can still choose to follow it. Read what you send.
+- **It can't** spot text drawn in colours you can't see, like black on black. That
+  reaches the message like any other text, so check `v` before you send.
 - **It can't** see what herdr's terminal hid. If a pane hides the error coming back
   (in a terminal title, say) then Sightline doesn't see it either. A server that logs
   text someone else chose can still print a line that looks like a recompile. So

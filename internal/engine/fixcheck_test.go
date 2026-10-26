@@ -352,6 +352,110 @@ func TestFixCheck(t *testing.T) {
 			want: engine.StateUnverified,
 		},
 		{
+			name:  "a request error in the Apache form is fixed by the same request again",
+			setup: []string{boom, `127.0.0.1 - - [01/Jan/2026:09:00:00 +0000] "GET /notices HTTP/1.1" 500 512`},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, `127.0.0.1 - - [01/Jan/2026:09:00:05 +0000] "GET /notices HTTP/1.1" 200 2048`)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name:  "the same request failing again isn't evidence",
+			setup: []string{"GET /notices 500 in 30ms", boom},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, "GET /notices 500 in 28ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			// A health check near the error has nothing to do with it, so its
+			// next poll mustn't count as the error's request running again.
+			name:  "a healthy request near the error isn't its trigger",
+			setup: []string{"GET /health 200 in 1ms", boom, "GET /health 200 in 1ms"},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(5 * time.Second)
+				a.Print(web, "GET /health 200 in 1ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name:  "with only healthy requests near it, a recompile fixes the error",
+			setup: []string{"GET /health 200 in 1ms", boom},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			// A control string can swallow lines, so the error may have come back
+			// out of sight.
+			name: "swallowed output during settle is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(5 * time.Second)
+				a.Print(web, "\x1bPhidden", boom, "\x1b\\")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "swallowed output while the agent works doesn't count",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Print(web, "\x1bPhidden", "more", "\x1b\\")
+				a.Advance(time.Second)
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			// The pane may have closed because the process crashed.
+			name: "unwatching during settle is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(time.Second)
+				a.Engine.Unwatch(web)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "gap and unsure for a source that isn't watched are ignored",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Run([]enginetest.Step{{Wait: time.Second, Source: "pane-9", Gap: true, Unsure: true}})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
 			name: "sending again after still failing starts afresh",
 			run: func(a *enginetest.Adapter, id engine.EntryID) {
 				a.Send(id, "claude")
@@ -545,7 +649,7 @@ func TestFixCheckTwoEntriesOneAgent(t *testing.T) {
 
 // The settle period runs up to but not including its end. A repeat matched at
 // the last moment inside it is still failing. One matched at the end is a new
-// entry, and the original is judged without it.
+// entry, filed before the original's verdict, so the original can't be fixed.
 func TestFixCheckRepeatAtTheBoundary(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -554,7 +658,7 @@ func TestFixCheckRepeatAtTheBoundary(t *testing.T) {
 		wantOriginal engine.State
 	}{
 		{"just inside", 30*time.Second - time.Nanosecond, 1, engine.StateStillFailing},
-		{"at the end", 30 * time.Second, 2, engine.StateFixed},
+		{"at the end", 30 * time.Second, 2, engine.StateUnverified},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

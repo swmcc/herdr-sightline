@@ -46,6 +46,17 @@ type capturer struct {
 	window   window
 	pending  []*capture
 	missed   bool // output was swallowed, so flag the next capture MaybeGap
+	// hid is set whenever output is swallowed, and cleared by the fix check
+	// after each Feed (see tookHidden). missed can't serve, as a new capture
+	// clears it.
+	hid bool
+}
+
+// tookHidden reports whether output was swallowed since it was last called.
+func (c *capturer) tookHidden() bool {
+	h := c.hid
+	c.hid = false
+	return h
 }
 
 func newCapturer(contextLines int) capturer {
@@ -61,7 +72,7 @@ func newCapturer(contextLines int) capturer {
 func (c *capturer) read(lines []string, use func(line string)) {
 	emit := func(line string) {
 		if c.diverged || c.shadow.hiding() {
-			c.missed = true
+			c.missed, c.hid = true, true
 			for _, p := range c.pending {
 				p.maybeGap = true
 			}
@@ -90,7 +101,7 @@ func noGap()             {}
 // control string or by giving up on one. Either way it's a gap.
 func (c *capturer) hidLines() {
 	c.gap()
-	c.missed = true
+	c.missed, c.hid = true, true
 }
 
 // gap flags captures in progress and empties the window, so lines from before a

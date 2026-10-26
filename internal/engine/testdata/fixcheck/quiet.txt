@@ -16,3 +16,7 @@ fail fast is off
 Finished in 0.05 seconds (0.03s async, 0.02s sync)
  RERUN  src/notices.test.ts x1
 Server is ready.
+webpack compiled with 1 error
+Failed to compile with 2 errors
+[watch] build finished with 2 errors
+Finished SyncNoticesJob (Job ID: 1) from Async(default) in 2.1s

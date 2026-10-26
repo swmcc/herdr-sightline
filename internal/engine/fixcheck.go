@@ -3,6 +3,7 @@ package engine
 import (
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,11 +30,12 @@ import (
 // within the first half of the settle period, so the error has had at least the
 // other half to come back. What it has to be depends on the error:
 //
-//   - If a request line ("GET /notices", `Started GET "/notices"`) sits near the
-//     error in its context, the error probably needed that request to happen.
-//     Recompiling proves nothing then, so the only evidence is the same method
-//     and path being requested again. This is the README's "the bug needs a
-//     request to trigger" case, and without the request it stays unverified.
+//   - If the error's context shows the request it came from (a request that
+//     failed, or one that had just started, see triggerOf), the error probably
+//     needed that request to happen. Recompiling proves nothing then, so the
+//     only evidence is the same method and path being requested again without
+//     a 5xx. This is the README's "the bug needs a request to trigger" case,
+//     and without the request it stays unverified.
 //   - Otherwise it's a line saying a compile, build, restart or test run
 //     finished or started over. See ranSignals. A compile that started but
 //     hasn't finished ("Compiling...") isn't enough.
@@ -42,7 +44,9 @@ import (
 //
 // A read that may have missed output (Gap) or can't say what's new (Unsure)
 // while an entry is settling makes that entry unverified, never fixed, because
-// the error may have come back unseen. A Gap read's lines may repeat lines from
+// the error may have come back unseen. So does output the scrubber swallowed
+// (a control string hiding lines) and the source being unwatched. The same goes
+// for the error coming back after the settle period but before the verdict. A Gap read's lines may repeat lines from
 // before, so a repeat found in them doesn't make an entry still failing either.
 // A repeat whose capture was only flagged MaybeGap still counts: its error line
 // was read fresh, it's just the context that may have a hole.
@@ -59,7 +63,11 @@ type fixState struct {
 	// or empty if it doesn't look like it came from a request.
 	trigger string
 	ran     bool // positive evidence that the changed code ran
-	unsure  bool // a Gap or Unsure read since the settle period started
+	unsure  bool // output may have gone unseen since the settle period started
+
+	// lateRepeat means the error came back after the settle period but before
+	// the verdict. It's a new entry, but it still rules out fixed.
+	lateRepeat bool
 
 	// gaps are the times of recent Gap reads during the settle period. A repeat
 	// matched at one of them came from lines that may be a replay. Only times
@@ -101,12 +109,12 @@ func (e *Engine) dismissed(r *record) {
 // sawLine is called for every clean line from a watched source, after detection
 // has seen it. It looks for evidence that the changed code ran.
 func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
-	l := unprefix(cut(line, maxScannedLine))
-	signal := ranSignals.MatchString(l)
-	request := requestKey(l)
-	if !signal && request == "" {
-		return
-	}
+	// The line is only looked at once an entry could use it, so most lines
+	// cost a walk over the entries and no matching.
+	read := false
+	var signal bool
+	var request string
+	var status int
 	for _, r := range e.records {
 		f := &r.fix
 		if !f.settling || f.ran || r.entry.Source.ID != src {
@@ -115,8 +123,15 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 		if !now.After(f.from) || now.After(f.from.Add(e.opts.Settle/2)) {
 			continue
 		}
+		if !read {
+			l := unprefix(cut(line, maxScannedLine))
+			signal = ranSignals.MatchString(l)
+			request, status = requestOf(l)
+			read = true
+		}
 		if f.trigger != "" {
-			f.ran = request == f.trigger
+			// A 5xx is the request failing again, not proof it's fixed.
+			f.ran = request == f.trigger && status < 500
 		} else {
 			f.ran = signal
 		}
@@ -144,8 +159,16 @@ func (e *Engine) uncertainRead(src SourceID, now time.Time, gap bool) {
 // pastSettle reports whether an error matched at matchedAt came too late to
 // count toward r's settle period. Grouping makes such a repeat a new entry. It's
 // decided by match time, so the outcome never depends on when Tick runs.
+//
+// It also notes the late repeat, as grouping only asks when the same error has
+// come back. An entry whose error came back before its verdict, even too late to
+// make it still failing, mustn't be called fixed.
 func (e *Engine) pastSettle(r *record, matchedAt time.Time) bool {
-	return r.entry.State == StateSent && r.fix.settling && !matchedAt.Before(r.fix.until)
+	past := r.entry.State == StateSent && r.fix.settling && !matchedAt.Before(r.fix.until)
+	if past {
+		r.fix.lateRepeat = true
+	}
+	return past
 }
 
 // recurred is called when an entry's error is seen again at matchedAt.
@@ -174,7 +197,7 @@ func (e *Engine) checkFixes(now time.Time) {
 		if !f.settling || now.Before(f.until.Add(e.opts.CaptureWait)) {
 			continue
 		}
-		if f.ran && !f.unsure {
+		if f.ran && !f.unsure && !f.lateRepeat {
 			r.entry.State = StateFixed
 		} else {
 			r.entry.State = StateUnverified
@@ -194,18 +217,18 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	// "✓ Compiled /notices in 312ms", "compiled with 1 warning".
 	`\bcompiled\b.*\bsuccessfully\b`,
 	`^\W*compiled \S+ in \d[\d.]*\s?m?s\b`,
-	`\bcompiled with \d+ (?:warnings?|errors?)\b`,
+	`\bcompiled with \d+ warnings?\b`,
 	// Vite and Next.js starting up: "ready in 312 ms", "✓ Ready in 1.2s".
 	`\bready in \d[\d.]*\s?m?s\b`,
 	// Vite reloading changed code: "[vite] hmr update /src/App.tsx".
 	`\[vite\] (?:hmr update|page reload)\b`,
 	// Builds: "built in 1.23s", "[watch] build finished", "rebuilt in 80ms".
 	`\b(?:re)?built in \d[\d.]*\s?m?s\b`,
-	`\bbuild finished\b`,
+	`\bbuild finished(?:,| in |\s*$)`, // not "build finished with 2 errors"
 	// tsc --watch: "Found 0 errors. Watching for file changes."
 	`\bfound \d+ errors?\b.*\bwatching for file changes\b`,
 	// cargo: "Finished `dev` profile [unoptimized] target(s) in 0.52s".
-	"^\\s*finished\\b.*\\bin \\d[\\d.]*s\\s*$",
+	"^\\s*finished\\s+\\S.*\\btarget\\(s\\) in \\d[\\d.]*s\\s*$",
 	// Phoenix: "Generated my_app app".
 	`^\s*generated \S+ app\s*$`,
 	// Servers restarting or back up.
@@ -227,32 +250,61 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	`^test result: (?:ok|failed)\. \d+ passed\b`,                            // cargo test
 }, "|"))
 
-// requestLine finds the method and path of an HTTP request in a log line, in the
-// forms dev servers print: "GET /notices 500 in 30ms", `Started GET "/notices"`,
-// `"GET /notices HTTP/1.1" 500`. The query string isn't part of it.
-var requestLine = regexp.MustCompile(`\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) "?(/[^\s"?#]*)`)
+// requestLine finds the method, path and status of an HTTP request in a log
+// line, in the forms dev servers print: "GET /notices 500 in 30ms",
+// `"GET /notices HTTP/1.1" 500`, or `Started GET "/notices"` with no status.
+// The query string isn't part of the path.
+var requestLine = regexp.MustCompile(`\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) "?(/[^\s"?#]*)[^\s"]*"?(?: HTTP/[\d.]+"?)?(?:\s+([1-5]\d\d)\b)?`)
 
-// requestKey is "GET /notices" for a request line, or empty.
-func requestKey(l string) string {
+// requestOf gives "GET /notices" and its status for a request line, with 0 when
+// the line shows no status. The key is empty if it isn't a request line.
+func requestOf(l string) (key string, status int) {
 	m := requestLine.FindStringSubmatch(l)
 	if m == nil {
-		return ""
+		return "", 0
 	}
-	return m[1] + " " + m[2]
+	if m[3] != "" {
+		status, _ = strconv.Atoi(m[3])
+	}
+	return m[1] + " " + m[2], status
 }
 
-// triggerOf is the request en's error seems to have needed: the nearest request
-// line before it, or failing that the first after it. Empty means the error
-// doesn't look like it came from a request.
+// triggerOf is the request en's error seems to have needed, or empty if it
+// doesn't look like it came from one. Dev servers log plenty of requests that
+// have nothing to do with an error (health checks, polling, favicons), so a
+// request only counts if it failed or is the one being handled when the error
+// struck:
+//
+//  1. the nearest request near the error with a 4xx or 5xx status, looking back
+//     through the lines before it and then on through the lines after it
+//  2. otherwise the nearest request before it that shows no status, which is a
+//     request starting (Rails' `Started GET "/notices"`, Phoenix's "GET /notices")
+//
+// A request with a 2xx or 3xx status is never the trigger.
 func triggerOf(en Entry) string {
+	type seen struct {
+		key    string
+		status int
+	}
+	var before, after []seen
 	for _, l := range slices.Backward(en.Before) {
-		if k := requestKey(unprefix(cut(l, maxScannedLine))); k != "" {
-			return k
+		if k, st := requestOf(unprefix(cut(l, maxScannedLine))); k != "" {
+			before = append(before, seen{k, st})
 		}
 	}
 	for _, l := range en.After {
-		if k := requestKey(unprefix(cut(l, maxScannedLine))); k != "" {
-			return k
+		if k, st := requestOf(unprefix(cut(l, maxScannedLine))); k != "" {
+			after = append(after, seen{k, st})
+		}
+	}
+	for _, r := range append(before, after...) {
+		if r.status >= 400 {
+			return r.key
+		}
+	}
+	for _, r := range before {
+		if r.status == 0 {
+			return r.key
 		}
 	}
 	return ""

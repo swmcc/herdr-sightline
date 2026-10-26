@@ -292,39 +292,34 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	`^test result: (?:ok|failed)\. \d+ passed\b`,                            // cargo test
 }, "|"))
 
-// ranSignal reports whether l says something ran. A match that starts inside a
-// URL's path or query ("/compiled/successfully", "?x=1&ready in 3ms") doesn't
-// count, because anyone who can reach the server chooses those, and servers
-// print them on lines that aren't request lines too (Django's "Not Found: /x",
-// Rails' routing errors). It can't stop every forgery: a server that logs text
-// an attacker chose, spaces and all, can still print a line that looks like a
-// recompile. That's why fixed is only ever a hint.
+// ranSignal reports whether l says something ran. The signals are tools' own
+// words, and tools print them at the start of a line, after at most a symbol,
+// a time, a tag in brackets, a log level like uvicorn's "INFO:", the tool's
+// name and version or (for Django's reloader) the file that changed. A match
+// after anything else doesn't count, because it could be text someone else
+// chose that the server logged: a path ("Not Found: /compiled/successfully"),
+// a query (`Parameters: {"q"=>"compiled successfully"}`), a record id
+// ("Couldn't find User with 'id'=x compiled successfully") or a search term.
 //
-// The same goes for a match after a field or a quote, as in Rails' and
-// Phoenix's `Parameters: {"q"=>"compiled successfully"}`, Django's decoded
-// `Not Found: /x ready in 3ms` or a logged `user-agent: ...`. Tools print their
-// own signals near the start of a line, after at most a time, a tag in brackets
-// or a log level like uvicorn's "INFO:".
+// It can't stop every forgery. A server that logs someone else's text at the
+// very start of a line can still print one that looks like a recompile.
+// That's why fixed is only ever a hint.
 func ranSignal(l string) bool {
 	for _, m := range ranSignals.FindAllStringIndex(l, -1) {
-		if m[0] > 0 && strings.ContainsRune(urlChars, rune(l[m[0]-1])) {
-			continue
+		if leadIn.MatchString(l[:m[0]]) {
+			return true
 		}
-		before := strings.TrimPrefix(l[:m[0]], logLevel.FindString(l[:m[0]]))
-		if strings.ContainsAny(before, `"{`) || strings.Contains(before, "=>") || strings.Contains(before, ": ") {
-			continue
-		}
-		return true
 	}
 	return false
 }
 
-// urlChars are the characters that, straight before a signal, mean it's part
-// of a URL rather than a tool's own words.
-const urlChars = "/-_.%=&?+~"
-
-// logLevel is a level some tools put before their own words, "INFO:     ".
-var logLevel = regexp.MustCompile(`^\s*(?:INFO|DEBUG|NOTICE|WARN(?:ING)?)\s*:\s*`)
+// leadIn is what may come before a signal on its line.
+var leadIn = regexp.MustCompile(`^\W*` +
+	`(?:\d{1,2}:\d{2}:\d{2}(?:\.\d+)?(?: ?[AaPp][Mm])?\s*(?:-\s*)?)?` + // 10:41:03 AM -
+	`(?:\[[\w .:-]*\]\s*)*` + // [vite] [watch] [info]
+	`(?:(?:INFO|DEBUG|NOTICE):\s*)?` + // uvicorn
+	`(?:(?:webpack|VITE)(?: v?\d\S*)?\s+)?` + // webpack 5.88.2, VITE v5.4.2
+	`(?:\S+\.py\s+)?$`) // Django: /app/views.py changed, reloading
 
 // requestLine finds the method, path and status of an HTTP request in a log
 // line, in the forms dev servers print: "GET /notices 500 in 30ms",

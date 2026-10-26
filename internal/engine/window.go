@@ -78,18 +78,28 @@ func newCapturer(contextLines int) capturer {
 func (c *capturer) read(lines []string, use func(line string)) {
 	emit := func(line string) {
 		c.unseen = c.diverged || c.shadow.hiding()
-		if c.scrub.drawnAbove {
-			// Lines already read may have been drawn over or cleared, so
-			// none of them can be trusted to be what a person saw.
-			c.scrub.drawnAbove = false
-			c.window.markUnseen()
-			c.unseen = true
-		}
 		if c.unseen {
 			c.missed, c.hid = true, true
 			for _, p := range c.pending {
 				p.maybeGap = true
 			}
+		}
+		if c.scrub.drawnAbove {
+			// Lines already read may have been drawn over or cleared, so
+			// none of them can be trusted to be what a person saw. Nothing
+			// was swallowed, though: every line was read, so the fix check
+			// isn't told (hid), or a watcher that clears the screen on every
+			// run could never be called fixed.
+			//
+			// This is best effort, for raw streams only. herdr hands over
+			// text it has already drawn, so none of it happens through herdr.
+			// A capture already filed isn't flagged after the fact.
+			c.scrub.drawnAbove = false
+			c.window.markUnseen()
+			for _, p := range c.pending {
+				p.maybeGap = true
+			}
+			c.unseen = true
 		}
 		c.diverged = false
 		use(line)
@@ -726,6 +736,7 @@ type scrubber struct {
 	// drawn over. Only same line redraws are followed, so the capturer treats
 	// every line read so far as possibly unseen.
 	drawnAbove bool
+	escInter   rune // the first intermediate byte of the current escape
 	screen     screen
 	// overwritten is every character of the line just emitted, in the order
 	// printed, when that's different from what a terminal shows. Otherwise it's
@@ -867,8 +878,11 @@ var harmlessModes = map[int]bool{1: true, 12: true, 25: true, 1004: true, 2004: 
 func (s *scrubber) csiFinal(r rune) {
 	setsMode := r == 'h' || r == 'l'
 	// Cursor up, to a line, to a position, erase in display, insert or
-	// delete lines and scrolling can all draw over lines already read.
-	if strings.ContainsRune("AFHfdJLMST", r) {
+	// delete lines, scrolling, margins (which move the cursor home), a
+	// restored cursor and the alternate screen can all draw over lines
+	// already read.
+	altScreen := s.csiPrivate && setsMode && s.csiPlain && (s.csiParam == 47 || s.csiParam == 1047 || s.csiParam == 1049)
+	if strings.ContainsRune("AFHfdJLMSTru", r) && !s.csiPrivate || altScreen {
 		s.drawnAbove = true
 	}
 	switch {
@@ -929,6 +943,7 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 			s.state = scrubString
 		case r >= 0x20 && r <= 0x2f:
 			s.state = scrubEscInter
+			s.escInter = r
 			// ESC ( to ESC / pick a character set and leave the cursor alone.
 			if r < '(' {
 				s.untrack()
@@ -958,6 +973,11 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 		case r < 0x20 || r == ctrlDEL:
 			s.control(r, emit, hid)
 		default:
+			// ESC # 8 fills the screen with E, and the rest of ESC # change
+			// how big a line is drawn.
+			if s.escInter == '#' {
+				s.drawnAbove = true
+			}
 			s.state = scrubText
 		}
 

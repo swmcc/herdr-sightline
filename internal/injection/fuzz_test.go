@@ -166,14 +166,14 @@ func FuzzInjection(f *testing.F) {
 		// Detection costs about 2s for each MiB in one line (every preset runs
 		// over all of it), so a few repeated big pieces make one input take a
 		// minute. That's a known cost, not what this target looks for, so
-		// inputs are kept small enough to still reach the 64 KiB hidden cap.
+		// inputs are kept just big enough to reach the 64 KiB hidden cap.
 		total := 0
 		for _, s := range steps {
 			for _, el := range s.elements {
 				total += len(el)
 			}
 		}
-		if total > 256<<10 {
+		if total > 80<<10 {
 			return
 		}
 		hidden := hiddenCanaries(steps, canaries)

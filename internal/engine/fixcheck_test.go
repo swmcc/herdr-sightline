@@ -118,6 +118,20 @@ func TestFixCheck(t *testing.T) {
 			want: engine.StateFixed,
 		},
 		{
+			// Vite and jest --watch clear the screen before each run. That
+			// draws over earlier lines but swallows nothing, so it mustn't
+			// stop a fix being called fixed.
+			name: "a recompile after a cleared screen is fixed",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(2 * time.Second)
+				a.Print(web, "\x1b[2J\x1b[3J\x1b[H"+recompile)
+				a.Advance(29 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
 			// Anyone who can reach the server can choose a request's path.
 			name: "a recompile in a request path isn't evidence",
 			run: func(a *enginetest.Adapter, id engine.EntryID) {

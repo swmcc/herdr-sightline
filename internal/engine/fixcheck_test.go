@@ -1,6 +1,9 @@
 package engine_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -8,13 +11,20 @@ import (
 	"github.com/swmcc/herdr-sightline/internal/engine/enginetest"
 )
 
-// These use options(): Settle 30s, CaptureWait 1s.
+const (
+	boom                      = "Error: boom"
+	recompile                 = "compiled successfully in 80 ms"
+	api       engine.SourceID = "pane-2"
+)
+
+// These use options(): Settle 30s, CaptureWait 1s. So evidence counts up to 15s
+// after the agent finishes and the verdict comes at 31s.
 func TestFixCheck(t *testing.T) {
-	const boom = "Error: boom"
 	tests := []struct {
-		name string
-		run  func(a *enginetest.Adapter, id engine.EntryID)
-		want engine.State
+		name  string
+		setup []string // printed before the error is sent, boom if empty
+		run   func(a *enginetest.Adapter, id engine.EntryID)
+		want  engine.State
 	}{
 		{
 			name: "same error during settle is still failing",
@@ -27,14 +37,29 @@ func TestFixCheck(t *testing.T) {
 			want: engine.StateStillFailing,
 		},
 		{
+			name: "same error after a recompile is still failing",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(10 * time.Second)
+				a.Print(web, boom)
+				a.Advance(time.Minute)
+			},
+			want: engine.StateStillFailing,
+		},
+		{
 			// The repeat matches at 29.5s but isn't filed until 30.5s. The verdict
-			// must wait for it rather than say unverified at 30s and then start a
+			// must wait for it rather than give one at 30s and then start a
 			// second entry.
 			name: "same error just before settle ends is still failing, not a new entry",
 			run: func(a *enginetest.Adapter, id engine.EntryID) {
 				a.Send(id, "claude")
 				a.Finish("claude")
-				a.Advance(29500 * time.Millisecond)
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(28500 * time.Millisecond)
 				a.Print(web, boom)
 				a.Advance(500 * time.Millisecond)
 				a.Advance(500 * time.Millisecond)
@@ -82,24 +107,475 @@ func TestFixCheck(t *testing.T) {
 			want: engine.StateUnverified,
 		},
 		{
-			name: "quiet settle period is unverified",
+			name: "a recompile after the agent finished is fixed",
 			run: func(a *enginetest.Adapter, id engine.EntryID) {
 				a.Send(id, "claude")
 				a.Finish("claude")
-				a.Print(web, "compiled successfully")
+				a.Advance(2 * time.Second)
+				a.Print(web, "GET /health 200", recompile, "GET /health 200")
+				a.Advance(29 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name: "no verdict before the capture wait after settle",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(2 * time.Second)
+				a.Print(web, recompile)
+				a.Advance(28500 * time.Millisecond)
+			},
+			want: engine.StateSent,
+		},
+		{
+			name: "a silent settle period is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
 				a.Advance(31 * time.Second)
 			},
 			want: engine.StateUnverified,
 		},
+		{
+			name: "only request logs is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				for range 10 {
+					a.Advance(time.Second)
+					a.Print(web, "GET /notices 200 in 12ms", "GET /health 200 in 1ms")
+				}
+				a.Advance(21 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			// It may have been printed before the agent's last edit.
+			name: "a recompile at the moment the agent finishes isn't evidence",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Print(web, recompile)
+				a.Advance(31 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "a recompile while the agent works isn't evidence",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(time.Second)
+				a.Finish("claude")
+				a.Advance(31 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "a recompile exactly half way through counts",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(15 * time.Second)
+				a.Print(web, recompile)
+				a.Advance(16 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			// The error hasn't had long enough to come back.
+			name: "a recompile late in the settle period isn't evidence",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(15*time.Second + time.Millisecond)
+				a.Print(web, recompile)
+				a.Advance(16 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "a recompile in another pane isn't evidence",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(api, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "a gap during settle is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Run([]enginetest.Step{{Wait: 5 * time.Second, Source: web, Gap: true}})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "an unsure read during settle is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Run([]enginetest.Step{{Wait: time.Second, Source: web, Unsure: true, Lines: []string{recompile}}})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			// Output from before the verdict may have been missed.
+			name: "a gap after settle but before the verdict is unverified",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Run([]enginetest.Step{{Wait: 29500 * time.Millisecond, Source: web, Gap: true}})
+				a.Advance(time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "a gap while the agent works doesn't count against the settle period",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Run([]enginetest.Step{{Wait: time.Second, Source: web, Gap: true}})
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name: "a gap in another pane doesn't count",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Run([]enginetest.Step{{Wait: time.Second, Source: api, Gap: true, Unsure: true}})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			// A Gap read's lines may be the old screen printed again.
+			name: "the same error in a gap read is unverified, not still failing",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Run([]enginetest.Step{{Wait: 5 * time.Second, Source: web, Gap: true, Lines: []string{boom}}})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			// The adapter reads often. Only the read the repeat came from matters.
+			name: "the same error in a gap read stays unverified through later gaps",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Run([]enginetest.Step{
+					{Wait: 5 * time.Second, Source: web, Gap: true, Lines: []string{boom}},
+					{Wait: 300 * time.Millisecond, Source: web, Gap: true},
+					{Wait: 300 * time.Millisecond, Source: web, Gap: true},
+				})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "the same error in an unsure read is still failing",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Run([]enginetest.Step{{Wait: 5 * time.Second, Source: web, Unsure: true, Lines: []string{boom}}})
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateStillFailing,
+		},
+		{
+			name:  "a request error isn't fixed by a recompile",
+			setup: []string{"GET /notices 500 in 30ms", boom},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name:  "a request error is fixed by the same request again",
+			setup: []string{`Started GET "/notices" for 127.0.0.1`, boom},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, `Started GET "/notices?page=2" for 127.0.0.1`, "Completed 200 OK in 12ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			// Next.js and Django log the request after the error.
+			name:  "a request logged after the error is the trigger",
+			setup: []string{boom, "GET /notices 500 in 30ms"},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, "GET /notices 200 in 12ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name:  "a request error isn't fixed by a different request",
+			setup: []string{"GET /notices 500 in 30ms", boom},
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, "GET /health 200 in 1ms", "POST /notices 200 in 3ms")
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "sending again after still failing starts afresh",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Print(web, boom)
+				a.Advance(2 * time.Second)
+				a.Send(id, "claude")
+				a.Advance(time.Minute) // working again
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(30 * time.Second)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name: "sending again during settle drops the evidence so far",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(time.Second)
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(31 * time.Second)
+			},
+			want: engine.StateUnverified,
+		},
+		{
+			name: "dismissing during settle stops the check",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Engine.Dismiss(id)
+				a.Advance(31 * time.Second)
+			},
+			want: engine.StateDismissed,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAdapter(t)
+			a.Watch(api, "api", "go run .")
+			setup := tt.setup
+			if len(setup) == 0 {
+				setup = []string{boom}
+			}
+			a.Print(web, setup...)
+			a.Advance(time.Second)
+			tt.run(a, only(t, a).ID)
+			if got := only(t, a).State; got != tt.want {
+				t.Fatalf("state = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// Each line in ran.txt is enough to call a fix fixed, and no line in quiet.txt
+// is.
+func TestFixCheckEvidence(t *testing.T) {
+	for _, tt := range []struct {
+		file string
+		want engine.State
+	}{
+		{"ran.txt", engine.StateFixed},
+		{"quiet.txt", engine.StateUnverified},
+	} {
+		for _, line := range fixtureLines(t, tt.file) {
+			t.Run(tt.file+"/"+line, func(t *testing.T) {
+				a := newAdapter(t)
+				a.Print(web, boom)
+				a.Advance(time.Second)
+				id := only(t, a).ID
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, line)
+				a.Advance(30 * time.Second)
+				if got := only(t, a).State; got != tt.want {
+					t.Fatalf("state = %v, want %v", got, tt.want)
+				}
+			})
+		}
+	}
+}
+
+func fixtureLines(t *testing.T, name string) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", "fixcheck", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// A repeat whose capture had a gap in it still counts, because its error line
+// was read fresh. The entry says the context may be incomplete.
+func TestFixCheckRepeatWithGapInCapture(t *testing.T) {
+	a := newAdapter(t)
+	a.Print(web, boom)
+	a.Advance(time.Second)
+	id := only(t, a).ID
+	a.Send(id, "claude")
+	a.Finish("claude")
+	a.Advance(5 * time.Second)
+	a.Print(web, boom)
+	a.Run([]enginetest.Step{{Wait: 500 * time.Millisecond, Source: web, Gap: true}})
+	a.Advance(time.Minute)
+
+	en := only(t, a)
+	if en.State != engine.StateStillFailing || !en.MaybeGap || en.Count != 2 {
+		t.Fatalf("entry = %v, MaybeGap %v, count %d, want still failing, true, 2", en.State, en.MaybeGap, en.Count)
+	}
+}
+
+// A different error during settle is a new entry. The original gets its own
+// verdict, judged only on its own error.
+func TestFixCheckDifferentError(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines []string
+		want  engine.State
+	}{
+		{"after a recompile the original is fixed", []string{recompile, "Error: something else"}, engine.StateFixed},
+		{"with nothing ran the original is unverified", []string{"Error: something else"}, engine.StateUnverified},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			a := newAdapter(t)
 			a.Print(web, boom)
 			a.Advance(time.Second)
-			tt.run(a, only(t, a).ID)
-			if got := only(t, a).State; got != tt.want {
-				t.Fatalf("state = %v, want %v", got, tt.want)
+			first := only(t, a).ID
+			a.Send(first, "claude")
+			a.Finish("claude")
+			a.Advance(time.Second)
+			a.Print(web, tt.lines...)
+			a.Advance(31 * time.Second)
+
+			entries := a.Engine.Entries()
+			if len(entries) != 2 {
+				t.Fatalf("want 2 entries, got %d: %+v", len(entries), entries)
+			}
+			if entries[0].State != engine.StateNew || entries[0].Lines[0] != "Error: something else" {
+				t.Fatalf("new entry = %v %q, want new", entries[0].State, entries[0].Lines)
+			}
+			if entries[1].ID != first || entries[1].State != tt.want {
+				t.Fatalf("original = %v, want %v", entries[1].State, tt.want)
+			}
+		})
+	}
+}
+
+// Two errors sent to one agent settle together when it finishes, and each gets
+// the verdict its own error earns.
+func TestFixCheckTwoEntriesOneAgent(t *testing.T) {
+	a := newAdapter(t)
+	a.Print(web, boom, "", "", "Error: other")
+	a.Advance(time.Second)
+	entries := a.Engine.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries, got %d: %+v", len(entries), entries)
+	}
+	other, first := entries[0].ID, entries[1].ID
+	a.Send(first, "claude")
+	a.Send(other, "claude")
+	a.Finish("claude")
+	a.Advance(time.Second)
+	a.Print(web, recompile)
+	a.Advance(5 * time.Second)
+	a.Print(web, boom)
+	a.Advance(time.Minute)
+
+	got := map[engine.EntryID]engine.State{}
+	for _, en := range a.Engine.Entries() {
+		got[en.ID] = en.State
+	}
+	if len(got) != 2 || got[first] != engine.StateStillFailing || got[other] != engine.StateFixed {
+		t.Fatalf("states = %v, want %s still failing and %s fixed", got, first, other)
+	}
+}
+
+// The settle period runs up to but not including its end. A repeat matched at
+// the last moment inside it is still failing. One matched at the end is a new
+// entry, and the original is judged without it.
+func TestFixCheckRepeatAtTheBoundary(t *testing.T) {
+	tests := []struct {
+		name         string
+		at           time.Duration // after the agent finished
+		wantEntries  int
+		wantOriginal engine.State
+	}{
+		{"just inside", 30*time.Second - time.Nanosecond, 1, engine.StateStillFailing},
+		{"at the end", 30 * time.Second, 2, engine.StateFixed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAdapter(t)
+			a.Print(web, boom)
+			a.Advance(time.Second)
+			first := only(t, a).ID
+			a.Send(first, "claude")
+			a.Finish("claude")
+			a.Advance(time.Second)
+			a.Print(web, recompile)
+			a.Run([]enginetest.Step{{Wait: tt.at - time.Second, Source: web, Lines: []string{boom}}})
+			a.Advance(time.Minute)
+
+			entries := a.Engine.Entries()
+			if len(entries) != tt.wantEntries {
+				t.Fatalf("want %d entries, got %d: %+v", tt.wantEntries, len(entries), entries)
+			}
+			original := entries[len(entries)-1]
+			if original.ID != first || original.State != tt.wantOriginal {
+				t.Fatalf("original = %v, want %v", original.State, tt.wantOriginal)
 			}
 		})
 	}

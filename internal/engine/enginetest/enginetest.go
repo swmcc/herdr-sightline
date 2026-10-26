@@ -22,6 +22,7 @@ type Step struct {
 	Source engine.SourceID
 	Lines  []string // printed by Source
 	Gap    bool     // output from Source may have been missed
+	Unsure bool     // the read from Source couldn't tell what was new
 }
 
 // Adapter drives an engine the way the herdr adapter would, from one goroutine.
@@ -60,6 +61,9 @@ func (a *Adapter) Run(script []Step) {
 		a.now = a.now.Add(s.Wait)
 		if s.Gap {
 			a.Engine.Gap(s.Source, a.now)
+		}
+		if s.Unsure {
+			a.Engine.Unsure(s.Source, a.now)
 		}
 		if len(s.Lines) > 0 {
 			a.Engine.Feed(s.Source, s.Lines, a.now)

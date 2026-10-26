@@ -126,7 +126,11 @@ func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {
 
 // Gap tells the engine output from id may have been missed, for example after a
 // reconnect or a cleared screen. Errors still being captured are flagged, because
-// their context may have a hole in it.
+// their context may have a hole in it. An entry settling on id can't be called
+// fixed (see fixcheck.go).
+//
+// Call it before feeding the lines from the same read, with the same now. Those
+// lines may repeat earlier ones, so an error in them isn't taken as coming back.
 func (e *Engine) Gap(id SourceID, now time.Time) {
 	s, ok := e.sources[id]
 	if !ok {
@@ -135,6 +139,19 @@ func (e *Engine) Gap(id SourceID, now time.Time) {
 	// Captures already due were complete before the gap.
 	e.Tick(now)
 	s.capture.lost()
+	e.uncertainRead(id, now, true)
+}
+
+// Unsure tells the engine a read from id couldn't say for certain what was new,
+// so output may have gone unseen. The adapter calls it for an Ambiguous read,
+// before feeding that read's lines. An entry settling on id can't be called
+// fixed (see fixcheck.go).
+func (e *Engine) Unsure(id SourceID, now time.Time) {
+	if _, ok := e.sources[id]; !ok {
+		return
+	}
+	e.Tick(now)
+	e.uncertainRead(id, now, false)
 }
 
 // Tick moves waits and timers on to now. The adapter calls it regularly, whether

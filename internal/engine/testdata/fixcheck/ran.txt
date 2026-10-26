@@ -1,0 +1,36 @@
+# Lines that prove something ran the code. One per line. Each must make a sent
+# entry fixed when it's the only thing printed in the settle period.
+ ✓ Compiled successfully
+webpack 5.88.2 compiled successfully in 1234 ms
+Compiled successfully!
+ ✓ Compiled /notices in 312ms
+webpack compiled with 1 warning
+  VITE v5.4.2  ready in 312 ms
+ ✓ Ready in 1.2s
+10:41:03 AM [vite] hmr update /src/App.tsx
+10:41:03 AM [vite] page reload src/main.ts
+✓ built in 1.23s
+[watch] build finished, watching for changes...
+10:41:03 AM - Found 0 errors. Watching for file changes.
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s
+Generated my_app app
+[nodemon] restarting due to changes...
+[nodemon] starting `node server.js`
+/app/notices/views.py changed, reloading.
+* Listening on http://127.0.0.1:3000
+Starting development server at http://127.0.0.1:8000/
+INFO:     Application startup complete.
+[info] Running MyAppWeb.Endpoint with Bandit 1.5.7 at 127.0.0.1:4000 (http)
+Tests:       1 failed, 3 passed, 4 total
+      Tests  4 passed (4)
+PASS src/notices.test.ts
+FAIL src/notices.test.ts
+ok  	github.com/swmcc/app/notices	0.123s
+FAIL	github.com/swmcc/app/notices	0.201s
+============================== 3 passed in 0.12s ===============================
+========================= 1 failed, 2 passed in 0.31s ==========================
+3 examples, 0 failures
+5 runs, 9 assertions, 0 failures, 0 errors, 0 skips
+1 doctest, 5 tests, 0 failures
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+web-1  | compiled successfully in 80 ms

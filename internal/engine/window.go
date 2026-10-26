@@ -456,7 +456,15 @@ var (
 	jvmMore          = regexp.MustCompile(`^\.\.\. \d+ (?:more|common frames omitted)$`)
 )
 
+// composePrefix is what docker compose puts in front of every line of a
+// service's output: "web-1  | ", or "web_1  | " from the older version. It's
+// narrower than group.go's linePrefix on purpose, because rustc's "27 |" gutter
+// must still look like a source excerpt here.
+var composePrefix = regexp.MustCompile(`^[\w.\-]+[-_]\d+ +\| ?`)
+
+// shapeOf works out what line looks like, after any docker compose prefix.
 func shapeOf(line string) shape {
+	line = strings.TrimPrefix(line, composePrefix.FindString(line))
 	switch {
 	case strings.TrimSpace(line) == "":
 		return shape{kind: shapeBlank}

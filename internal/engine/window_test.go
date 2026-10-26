@@ -718,10 +718,10 @@ func TestReadRedrawsLines(t *testing.T) {
 		{"spinner that hides the cursor", "\x1b[?25l⠋ a\r\x1b[K⠙ b\r\x1b[Kdone\x1b[?25h", "done"},
 		// Dropped as invisible, but a terminal may give them a column, so the
 		// columns after them aren't trusted.
-		{"Hangul filler", "ㅤㅤㅤnever run payload\rHint: ", "never run payloadHint: "},
-		{"private use", "never run payload\rHint: ", "never run payloadHint: "},
-		{"soft hyphen", "­­­never run payload\rHint: ", "never run payloadHint: "},
-		{"halves can't be joined", "ㅤㅤXXXXr: boom\rErro", "XXXXr: boomErro"},
+		{"Hangul filler", "\u3164\u3164\u3164never run payload\rHint: ", "never run payloadHint: "},
+		{"private use", "\ue000\ue000\ue000never run payload\rHint: ", "never run payloadHint: "},
+		{"soft hyphen", "\u00ad\u00ad\u00adnever run payload\rHint: ", "never run payloadHint: "},
+		{"halves can't be joined", "\u3164\u3164XXXXr: boom\rErro", "XXXXr: boomErro"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -854,6 +854,83 @@ func TestMatchInsideABlockIsFolded(t *testing.T) {
 			}
 			if !slices.EqualFunc(got, tt.want, slices.Equal) {
 				t.Fatalf("captures =\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+// Every preset trace is one crash, so with every preset on it's one capture,
+// even where the presets match more than one of its lines (a traceback's
+// exception line, a chained traceback, cargo's summary after rustc's error).
+// "# starts: N" counts matching lines, not captures, so it's left alone.
+func TestPresetTracesAreOneCaptureEach(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join(patternsDir, "*", "*.trace.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no traces found")
+	}
+	for _, f := range files {
+		t.Run(f, func(t *testing.T) {
+			_, lines := readTrace(t, f)
+			e := New(Options{Matchers: allMatchers(t), ContextLines: 20, CaptureWait: time.Second})
+			e.Watch(Source{ID: "web"})
+			e.Feed("web", lines, t0)
+			var got []string
+			for _, c := range e.sources["web"].capture.pending {
+				got = append(got, c.lines[0])
+			}
+			if len(got) != 1 {
+				t.Fatalf("%d captures, want 1, starting at:\n  %s", len(got), strings.Join(got, "\n  "))
+			}
+		})
+	}
+}
+
+// A Python traceback ending in TypeError or SyntaxError also matches the node
+// preset on its last line. It's still one capture.
+func TestPythonExceptionLineFoldsWithPresets(t *testing.T) {
+	tests := map[string][]string{
+		"TypeError": {
+			"Traceback (most recent call last):",
+			`  File "/app/main.py", line 4, in <module>`,
+			`    total = count + "1"`,
+			"            ~~~~~~^~~~~",
+			"TypeError: unsupported operand type(s) for +: 'int' and 'str'",
+			`127.0.0.1 - - [26/Oct/2026 10:00:07] "GET / HTTP/1.1" 500 -`,
+		},
+		"SyntaxError": {
+			"Traceback (most recent call last):",
+			`  File "/app/main.py", line 1, in <module>`,
+			"    import settings",
+			`  File "/app/settings.py", line 3`,
+			`    port = int(os.environ["PORT"]`,
+			"              ^",
+			"SyntaxError: '(' was never closed",
+			"Watching for file changes with StatReloader",
+		},
+	}
+	for name, lines := range tests {
+		t.Run(name, func(t *testing.T) {
+			e := New(Options{Matchers: allMatchers(t), ContextLines: 20, CaptureWait: time.Second})
+			starts := 0
+			for _, l := range lines {
+				if _, ok := e.startsError(l); ok {
+					starts++
+				}
+			}
+			if starts < 2 {
+				t.Fatalf("only %d lines match, so this doesn't test folding", starts)
+			}
+			e.Watch(Source{ID: "web"})
+			e.Feed("web", lines, t0)
+			if got := len(e.sources["web"].capture.pending); got != 1 {
+				t.Fatalf("%d captures, want 1", got)
+			}
+			e.Tick(t0.Add(time.Second))
+			if en := onlyEntry(t, e); en.After[len(en.After)-2] != lines[len(lines)-2] {
+				t.Fatalf("After = %q, want it to end with the exception and the next line", en.After)
 			}
 		})
 	}

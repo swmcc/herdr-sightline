@@ -14,9 +14,24 @@ import (
 	"github.com/swmcc/herdr-sightline/internal/watchlist"
 )
 
-// fakeHerdr is a herdr with the given panes open. plugin.pane.open opens newFeed
-// in the target pane's workspace, unless openErr is set.
-func fakeHerdr(t *testing.T, panes []herdr.Pane, newFeed string, openErr bool) *herdrtest.Server {
+// term is the terminal id the fake gives a pane that started out as pane.
+func term(pane string) string { return "term_" + strings.ReplaceAll(pane, ":", "_") }
+
+// pane is a fake pane that has never moved.
+func pane(id string) herdr.Pane {
+	ws, _, _ := strings.Cut(id, ":")
+	return herdr.Pane{ID: id, TerminalID: term(id), WorkspaceID: ws}
+}
+
+// fakeOptions says how the fake herdr behaves.
+type fakeOptions struct {
+	panes     []herdr.Pane
+	newFeed   string // the pane plugin.pane.open opens
+	openErr   bool
+	focusFail bool
+}
+
+func fakeHerdr(t *testing.T, o fakeOptions) *herdrtest.Server {
 	t.Helper()
 	s := herdrtest.New(t)
 	s.Handle("ping", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
@@ -24,28 +39,32 @@ func fakeHerdr(t *testing.T, panes []herdr.Pane, newFeed string, openErr bool) *
 	})
 	s.Handle("pane.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
 		list := []map[string]any{}
-		for _, p := range panes {
-			list = append(list, map[string]any{"pane_id": p.ID, "workspace_id": p.WorkspaceID, "tab_id": p.WorkspaceID + ":t1"})
+		for _, p := range o.panes {
+			list = append(list, map[string]any{"pane_id": p.ID, "terminal_id": p.TerminalID, "workspace_id": p.WorkspaceID})
 		}
 		return map[string]any{"type": "pane_list", "panes": list}, nil
 	})
-	s.Handle("plugin.pane.open", func(req herdrtest.Request) (any, *herdrtest.ErrorBody) {
-		if openErr {
+	s.Handle("plugin.pane.open", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		if o.openErr {
 			return nil, &herdrtest.ErrorBody{Code: "ui_busy", Message: "settings are open"}
 		}
+		p := pane(o.newFeed)
 		return map[string]any{"type": "plugin_pane_opened", "plugin_pane": map[string]any{
 			"plugin_id": "swmcc.sightline", "entrypoint": "feed",
-			"pane": map[string]any{"pane_id": newFeed, "workspace_id": "w1"},
+			"pane": map[string]any{"pane_id": p.ID, "terminal_id": p.TerminalID, "workspace_id": p.WorkspaceID},
 		}}, nil
 	})
 	s.Handle("plugin.pane.focus", func(req herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		if o.focusFail {
+			return nil, &herdrtest.ErrorBody{Code: "pane_not_found", Message: "no such pane"}
+		}
 		var p struct {
 			PaneID string `json:"pane_id"`
 		}
 		_ = json.Unmarshal(req.Params, &p)
 		return map[string]any{"type": "plugin_pane_focused", "plugin_pane": map[string]any{
 			"plugin_id": "swmcc.sightline", "entrypoint": "feed",
-			"pane": map[string]any{"pane_id": p.PaneID, "workspace_id": "w1"},
+			"pane": map[string]any{"pane_id": p.PaneID},
 		}}, nil
 	})
 	return s
@@ -64,10 +83,20 @@ func received(s *herdrtest.Server) []herdrtest.Request {
 	}
 }
 
-func methods(reqs []herdrtest.Request) []string {
+// calls is what was asked of herdr, leaving out pings, with the pane for
+// focus calls.
+func calls(reqs []herdrtest.Request) []string {
 	var out []string
 	for _, r := range reqs {
-		if r.Method != "ping" {
+		switch r.Method {
+		case "ping":
+		case "plugin.pane.focus":
+			var p struct {
+				PaneID string `json:"pane_id"`
+			}
+			_ = json.Unmarshal(r.Params, &p)
+			out = append(out, r.Method+" "+p.PaneID)
+		default:
 			out = append(out, r.Method)
 		}
 	}
@@ -84,16 +113,16 @@ func writeList(t *testing.T, dir string, panes []string) {
 	}
 }
 
-func noteFeeds(t *testing.T, dir string, feeds []string) {
+func noteFeeds(t *testing.T, dir string, terminals []string) {
 	t.Helper()
-	for _, f := range feeds {
+	for _, f := range terminals {
 		if err := registerFeed(dir, f); err != nil {
 			t.Fatal(err)
 		}
 	}
 }
 
-func notedFeeds(t *testing.T, dir string) []string {
+func feedNotes(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(dir, feedsDir))
 	if err != nil && !os.IsNotExist(err) {
@@ -115,21 +144,17 @@ func readList(t *testing.T, dir string) []string {
 	return got
 }
 
-var someWorkspaces = []herdr.Pane{
-	{ID: "w1:p1", WorkspaceID: "w1"},
-	{ID: "w1:p2", WorkspaceID: "w1"},
-	{ID: "w1:p9", WorkspaceID: "w1"},
-	{ID: "w2:p1", WorkspaceID: "w2"},
-	{ID: "w2:p5", WorkspaceID: "w2"},
-}
+var someWorkspaces = []herdr.Pane{pane("w1:p1"), pane("w1:p2"), pane("w1:p9"), pane("w2:p1"), pane("w2:p5")}
 
 func TestWatch(t *testing.T) {
 	tests := []struct {
 		name      string
 		env       map[string]string // added to a working environment
+		panes     []herdr.Pane      // nil for someWorkspaces
 		list      []string          // the watch list before, nil for no file
-		feeds     []string          // feed notes before
+		feeds     []string          // feed notes before, as terminal ids
 		openErr   bool
+		focusFail bool
 		wantCode  int
 		wantOut   string
 		wantErr   string
@@ -142,50 +167,77 @@ func TestWatch(t *testing.T) {
 			wantOut:   "Watching w1:p1. Opened the feed beside it.",
 			wantCalls: []string{"pane.list", "plugin.pane.open"},
 			wantList:  []string{"w1:p1"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
-			name:      "a feed open in the workspace is focused, not doubled",
+			name:      "an open feed is focused, not doubled",
 			list:      []string{"w1:p2"},
-			feeds:     []string{"w1:p9"},
-			wantOut:   "Watching w1:p1. The feed is already open.",
-			wantCalls: []string{"pane.list", "plugin.pane.focus"},
+			feeds:     []string{term("w1:p9")},
+			wantOut:   "Watching w1:p1. The feed is already open in w1:p9.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w1:p9"},
 			wantList:  []string{"w1:p2", "w1:p1"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:      "watching twice is harmless",
 			list:      []string{"w1:p1"},
-			feeds:     []string{"w1:p9"},
-			wantOut:   "Already watching w1:p1. The feed is already open.",
-			wantCalls: []string{"pane.list", "plugin.pane.focus"},
+			feeds:     []string{term("w1:p9")},
+			wantOut:   "Already watching w1:p1. The feed is already open in w1:p9.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w1:p9"},
 			wantList:  []string{"w1:p1"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
-			name:      "a feed in another workspace isn't reused",
-			feeds:     []string{"w2:p5"},
-			wantOut:   "Opened the feed beside it.",
-			wantCalls: []string{"pane.list", "plugin.pane.open"},
+			name:      "a feed in another workspace is reused, as every feed watches the whole list",
+			feeds:     []string{term("w2:p5")},
+			wantOut:   "The feed is already open in w2:p5.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w2:p5"},
 			wantList:  []string{"w1:p1"},
-			wantFeeds: []string{"w1:p9", "w2:p5"},
+			wantFeeds: []string{term("w2:p5")},
+		},
+		{
+			name:      "the feed in the pane's own workspace comes first",
+			feeds:     []string{term("w2:p5"), term("w1:p9")},
+			wantOut:   "The feed is already open in w1:p9.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w1:p9"},
+			wantList:  []string{"w1:p1"},
+			wantFeeds: []string{term("w1:p9"), term("w2:p5")},
+		},
+		{
+			name:      "a feed that can't be focused is passed over",
+			feeds:     []string{term("w2:p5")},
+			focusFail: true,
+			wantOut:   "Opened the feed beside it.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w2:p5", "plugin.pane.open"},
+			wantList:  []string{"w1:p1"},
+			wantFeeds: []string{term("w1:p9"), term("w2:p5")},
+		},
+		{
+			name:      "a feed that moved is still found by its terminal",
+			panes:     []herdr.Pane{pane("w1:p1"), {ID: "w2:p7", TerminalID: term("w1:p9"), WorkspaceID: "w2"}},
+			list:      []string{"w1:p4"},
+			feeds:     []string{term("w1:p9")},
+			wantOut:   "The feed is already open in w2:p7.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w2:p7"},
+			wantList:  []string{"w1:p4", "w1:p1"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:      "a note for a feed that has gone is cleared",
-			feeds:     []string{"w1:p8"},
+			feeds:     []string{"term_gone"},
 			wantOut:   "Opened the feed beside it.",
 			wantCalls: []string{"pane.list", "plugin.pane.open"},
 			wantList:  []string{"w1:p1"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:      "the feed never watches itself",
 			env:       map[string]string{"HERDR_PANE_ID": "w1:p9"},
-			feeds:     []string{"w1:p9"},
+			feeds:     []string{term("w1:p9")},
 			wantCode:  1,
 			wantErr:   "w1:p9 is the Sightline feed, which can't watch itself",
 			wantCalls: []string{"pane.list"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:      "closed panes are pruned when no feed is open",
@@ -193,16 +245,16 @@ func TestWatch(t *testing.T) {
 			wantOut:   "Watching w1:p1.",
 			wantCalls: []string{"pane.list", "plugin.pane.open"},
 			wantList:  []string{"w1:p2", "w1:p1"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:      "with a feed open old ids stay, as it follows moved panes by them",
 			list:      []string{"w1:p7"},
-			feeds:     []string{"w1:p9"},
-			wantOut:   "The feed is already open.",
-			wantCalls: []string{"pane.list", "plugin.pane.focus"},
+			feeds:     []string{term("w1:p9")},
+			wantOut:   "The feed is already open in w1:p9.",
+			wantCalls: []string{"pane.list", "plugin.pane.focus w1:p9"},
 			wantList:  []string{"w1:p7", "w1:p1"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:      "a pane that isn't open is refused",
@@ -225,7 +277,7 @@ func TestWatch(t *testing.T) {
 			wantOut:   "Watching w1:p2.",
 			wantCalls: []string{"pane.list", "plugin.pane.open"},
 			wantList:  []string{"w1:p2"},
-			wantFeeds: []string{"w1:p9"},
+			wantFeeds: []string{term("w1:p9")},
 		},
 		{
 			name:     "no focused pane",
@@ -254,7 +306,11 @@ func TestWatch(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := fakeHerdr(t, someWorkspaces, "w1:p9", tt.openErr)
+			panes := tt.panes
+			if panes == nil {
+				panes = someWorkspaces
+			}
+			s := fakeHerdr(t, fakeOptions{panes: panes, newFeed: "w1:p9", openErr: tt.openErr, focusFail: tt.focusFail})
 			dir := t.TempDir()
 			writeList(t, dir, tt.list)
 			noteFeeds(t, dir, tt.feeds)
@@ -279,14 +335,13 @@ func TestWatch(t *testing.T) {
 			if !strings.Contains(stderr.String(), tt.wantErr) {
 				t.Errorf("stderr = %q, want it to contain %q", stderr.String(), tt.wantErr)
 			}
-			reqs := received(s)
-			if got := methods(reqs); !slices.Equal(got, tt.wantCalls) {
+			if got := calls(received(s)); !slices.Equal(got, tt.wantCalls) {
 				t.Errorf("calls = %q, want %q", got, tt.wantCalls)
 			}
 			if got := readList(t, dir); !slices.Equal(got, tt.wantList) {
 				t.Errorf("watch list = %q, want %q", got, tt.wantList)
 			}
-			if got := notedFeeds(t, dir); !slices.Equal(got, tt.wantFeeds) {
+			if got := feedNotes(t, dir); !slices.Equal(got, tt.wantFeeds) {
 				t.Errorf("feeds = %q, want %q", got, tt.wantFeeds)
 			}
 		})
@@ -296,7 +351,7 @@ func TestWatch(t *testing.T) {
 // The feed opens as a split to the right of the watched pane and takes focus,
 // as the README's quick start describes.
 func TestWatchOpensTheFeedBesideThePane(t *testing.T) {
-	s := fakeHerdr(t, someWorkspaces, "w1:p9", false)
+	s := fakeHerdr(t, fakeOptions{panes: someWorkspaces, newFeed: "w1:p9"})
 	env := map[string]string{
 		"HERDR_PANE_ID":       "w1:p2",
 		"HERDR_PLUGIN_ID":     "swmcc.sightline",
@@ -383,19 +438,28 @@ func TestEndFeed(t *testing.T) {
 		self      string
 		feeds     []string
 		noHerdr   bool
+		wantCalls []string
 		wantList  []string
 		wantFeeds []string
 	}{
-		{name: "the last feed clears the list", self: "w1:p9", feeds: []string{"w1:p9"}},
-		{name: "another feed keeps it", self: "w1:p9", feeds: []string{"w1:p9", "w2:p5"}, wantList: []string{"w1:p1"}, wantFeeds: []string{"w2:p5"}},
-		{name: "a note for a feed that has gone doesn't keep it", self: "w1:p9", feeds: []string{"w1:p9", "w2:p8"}},
-		{name: "a feed without a pane id still clears it", feeds: nil},
-		{name: "without herdr any note keeps it", self: "w1:p9", feeds: []string{"w1:p9", "w2:p8"}, noHerdr: true, wantList: []string{"w1:p1"}, wantFeeds: []string{"w2:p8"}},
-		{name: "without herdr and no other note it clears", self: "w1:p9", feeds: []string{"w1:p9"}, noHerdr: true},
+		{name: "the last feed clears the list without asking herdr", self: term("w1:p9"), feeds: []string{term("w1:p9")}},
+		{
+			name: "another feed keeps it", self: term("w1:p9"), feeds: []string{term("w1:p9"), term("w2:p5")},
+			wantCalls: []string{"pane.list"}, wantList: []string{"w1:p1"}, wantFeeds: []string{term("w2:p5")},
+		},
+		{
+			name: "a note for a feed that has gone doesn't keep it", self: term("w1:p9"), feeds: []string{term("w1:p9"), "term_gone"},
+			wantCalls: []string{"pane.list"},
+		},
+		{name: "a feed that couldn't note itself still clears it"},
+		{
+			name: "without herdr any note keeps it", self: term("w1:p9"), feeds: []string{term("w1:p9"), "term_gone"}, noHerdr: true,
+			wantList: []string{"w1:p1"}, wantFeeds: []string{"term_gone"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := fakeHerdr(t, someWorkspaces, "", false)
+			s := fakeHerdr(t, fakeOptions{panes: someWorkspaces})
 			if tt.noHerdr {
 				s.Close()
 			}
@@ -407,12 +471,30 @@ func TestEndFeed(t *testing.T) {
 			if err := endFeed(client, dir, tt.self); err != nil {
 				t.Fatalf("endFeed: %v", err)
 			}
+			if got := calls(received(s)); !slices.Equal(got, tt.wantCalls) {
+				t.Errorf("calls = %q, want %q", got, tt.wantCalls)
+			}
 			if got := readList(t, dir); !slices.Equal(got, tt.wantList) {
 				t.Errorf("watch list = %q, want %q", got, tt.wantList)
 			}
-			if got := notedFeeds(t, dir); !slices.Equal(got, tt.wantFeeds) {
+			if got := feedNotes(t, dir); !slices.Equal(got, tt.wantFeeds) {
 				t.Errorf("feeds = %q, want %q", got, tt.wantFeeds)
 			}
 		})
+	}
+}
+
+func TestSelfTerminal(t *testing.T) {
+	s := fakeHerdr(t, fakeOptions{panes: someWorkspaces})
+	client := herdr.NewClient(herdr.UnixDialer(s.Path))
+	tests := []struct{ self, want string }{
+		{"w1:p9", term("w1:p9")},
+		{"w9:p9", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := selfTerminal(t.Context(), client, tt.self); got != tt.want {
+			t.Errorf("selfTerminal(%q) = %q, want %q", tt.self, got, tt.want)
+		}
 	}
 }

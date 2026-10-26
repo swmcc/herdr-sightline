@@ -73,10 +73,10 @@ install command again.
    ```
 
 3. A small Sightline pane opens beside it. That's the feed, and it's also the
-   watcher: close it and watching stops. Watching another pane in the same
-   workspace reuses the feed that's already open, and **Sightline: stop watching
-   this pane** takes one off. Closing the last feed also clears the watch list,
-   so the next watch starts fresh.
+   watcher: close it and watching stops. There's one feed for all your watched
+   panes, so watching another pane reuses it, even from another workspace.
+   **Sightline: stop watching this pane** takes one off. Closing the feed also
+   clears the watch list, so the next watch starts fresh.
 4. Break something. The error appears in the feed:
 
    ```

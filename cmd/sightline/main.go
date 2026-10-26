@@ -107,10 +107,19 @@ func feed(args []string, getenv func(string) string, stdin io.Reader, stdout, st
 		return 1
 	}
 
+	// The feed notes itself so watch can find it, and tidies up as it closes
+	// (see endFeed). Deferred so a panic still clears the list.
 	stateDir, self := getenv(watchlist.StateDirEnv), getenv("HERDR_PANE_ID")
-	if err := registerFeed(stateDir, self); err != nil {
+	terminal := selfTerminal(ctx, client, self)
+	if err := registerFeed(stateDir, terminal); err != nil {
 		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
 	}
+	defer func() {
+		if err := endFeed(client, stateDir, terminal); err != nil {
+			fmt.Fprintf(stderr, "sightline feed: %v\n", err)
+		}
+	}()
+
 	err = sightlinefeed.Run(ctx, sightlinefeed.Options{
 		Client:    client,
 		ConfigDir: getenv("HERDR_PLUGIN_CONFIG_DIR"),
@@ -119,15 +128,11 @@ func feed(args []string, getenv func(string) string, stdin io.Reader, stdout, st
 		Self:      self,
 		Program:   []tea.ProgramOption{tea.WithAltScreen()},
 	})
-	code := 0
 	if err != nil {
 		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
-		code = 1
+		return 1
 	}
-	if err := endFeed(client, stateDir, self); err != nil {
-		fmt.Fprintf(stderr, "sightline feed: %v\n", err)
-	}
-	return code
+	return 0
 }
 
 // dial connects to the herdr named in the environment.

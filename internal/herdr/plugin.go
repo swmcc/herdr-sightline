@@ -21,21 +21,11 @@ type PluginPaneOpen struct {
 	Focus bool
 }
 
-// pluginPaneReply is the plugin_pane_opened and plugin_pane_focused result.
-type pluginPaneReply struct {
-	PluginPane struct {
-		Pane struct {
-			ID          string `json:"pane_id"`
-			WorkspaceID string `json:"workspace_id"`
-		} `json:"pane"`
-	} `json:"plugin_pane"`
-}
-
 // OpenPluginPane opens one of a plugin's panes with plugin.pane.open and
-// returns the new pane's id.
-func (c *Client) OpenPluginPane(ctx context.Context, open PluginPaneOpen) (string, error) {
+// returns the new pane.
+func (c *Client) OpenPluginPane(ctx context.Context, open PluginPaneOpen) (Pane, error) {
 	if open.PluginID == "" || open.Entrypoint == "" {
-		return "", errors.New("herdr plugin.pane.open: plugin id and entrypoint are needed")
+		return Pane{}, errors.New("herdr plugin.pane.open: plugin id and entrypoint are needed")
 	}
 	params := struct {
 		PluginID   string  `json:"plugin_id"`
@@ -52,14 +42,18 @@ func (c *Client) OpenPluginPane(ctx context.Context, open PluginPaneOpen) (strin
 		Direction:  optional(open.Direction),
 		Focus:      open.Focus,
 	}
-	var out pluginPaneReply
+	var out struct {
+		PluginPane struct {
+			Pane Pane `json:"pane"`
+		} `json:"plugin_pane"`
+	}
 	if err := c.call(ctx, "plugin.pane.open", params, "plugin_pane_opened", &out); err != nil {
-		return "", err
+		return Pane{}, err
 	}
 	if out.PluginPane.Pane.ID == "" {
-		return "", errors.New("herdr plugin.pane.open: the reply has no pane id")
+		return Pane{}, errors.New("herdr plugin.pane.open: the reply has no pane id")
 	}
-	return out.PluginPane.Pane.ID, nil
+	return out.PluginPane.Pane, nil
 }
 
 // FocusPluginPane focuses a plugin's pane with plugin.pane.focus.

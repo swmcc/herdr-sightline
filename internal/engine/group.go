@@ -3,6 +3,7 @@ package engine
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -390,4 +391,89 @@ func (e *Engine) repeatOf(key groupKey, f found) *record {
 		return r
 	}
 	return nil
+}
+
+// Output is untrusted, so the number of entries is capped (#41). A dev server
+// printing a slightly different error for every request would otherwise grow the
+// feed without limit.
+//
+// When there are more than MaxEntries, entries go in this order, each group
+// oldest first by LastSeen:
+//
+//  1. dismissed, because I've already said I don't care
+//  2. finished (fixed or unverified), because the verdict is in
+//  3. new, which I haven't acted on yet
+//
+// An entry that's being checked is never dropped. That's one that has been sent
+// (whether its agent is still working or its settle period has started) or one
+// that's still failing after a send. Dropping either would throw away the answer
+// to "did the fix work?", which is the point of Sightline. Only a keypress can
+// make an entry sent, so output can't fill the feed with them. If every entry
+// left is being checked, the feed goes over the cap rather than drop one.
+//
+// The entry just added is never dropped either, so a new error always reaches
+// the feed. It's the newest, so it would be last in its group anyway.
+const (
+	dropDismissed = iota
+	dropFinished
+	dropNew
+	neverDrop
+)
+
+// dropOrder says which group r is dropped with.
+func dropOrder(r *record) int {
+	switch r.entry.State {
+	case StateDismissed:
+		return dropDismissed
+	case StateFixed, StateUnverified:
+		return dropFinished
+	case StateNew:
+		return dropNew
+	}
+	return neverDrop
+}
+
+// trim drops entries until there are no more than MaxEntries, keeping just.
+//
+// Finding the next entry to drop is one walk over the entries, so it costs at
+// most MaxEntries steps for each new entry and nothing for a repeat.
+func (e *Engine) trim(just *record) {
+	for len(e.records) > e.opts.MaxEntries {
+		i := e.nextToDrop(just)
+		if i < 0 {
+			return
+		}
+		e.drop(i)
+	}
+}
+
+// nextToDrop is the index in records of the entry to drop next, or -1 if there's
+// nothing that may be dropped. Records are oldest first, so on a tie the entry
+// caught first goes first.
+func (e *Engine) nextToDrop(just *record) int {
+	best, bestOrder := -1, neverDrop
+	for i, r := range e.records {
+		o := dropOrder(r)
+		if o == neverDrop || r == just {
+			continue
+		}
+		if best < 0 || o < bestOrder || (o == bestOrder && r.entry.LastSeen.Before(e.records[best].entry.LastSeen)) {
+			best, bestOrder = i, o
+		}
+	}
+	return best
+}
+
+// drop forgets the entry at records[i]. The grouping index only loses its key
+// if the key still points at this entry, because a newer entry for the same
+// failure may have taken it over. A later repeat of a dropped error is a fresh
+// entry.
+func (e *Engine) drop(i int) {
+	r := e.records[i]
+	e.records = slices.Delete(e.records, i, i+1)
+	delete(e.byID, r.entry.ID)
+	if k := keyOf(r); e.groups.newest[k] == r {
+		delete(e.groups.newest, k)
+	}
+	e.dropped++
 }

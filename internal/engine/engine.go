@@ -25,11 +25,20 @@ type Options struct {
 	Settle       time.Duration // fix check (#12)
 	Cooldown     time.Duration // crash loops (#7)
 	ClosingLine  string        // last line of the message (#11)
+	MaxEntries   int           // entries kept before older ones are dropped (#41)
 }
 
 // maxContextLines bounds ContextLines, and so the size of a message, until #11
 // adds a cap on the whole message.
 const maxContextLines = 200
+
+// MaxEntries is 200 when it isn't set and is kept between 10 and 10,000. See
+// trim in group.go for which entries go first.
+const (
+	defaultMaxEntries = 200
+	minMaxEntries     = 10
+	maxMaxEntries     = 10000
+)
 
 // Engine turns lines of output into entries and messages.
 //
@@ -43,6 +52,7 @@ type Engine struct {
 	byID     map[EntryID]*record
 	lastID   int
 	groups   groups   // #7's bookkeeping, see group.go
+	dropped  int      // entries dropped to stay within MaxEntries (#41)
 	arrivals arrivals // order of matches across sources, see window.go
 }
 
@@ -59,9 +69,14 @@ type record struct {
 }
 
 // New makes an engine with the given options. ContextLines is clamped to
-// between 0 and 200.
+// between 0 and 200. MaxEntries of zero or less means 200, and anything else is
+// clamped to between 10 and 10,000.
 func New(opts Options) *Engine {
 	opts.ContextLines = min(max(opts.ContextLines, 0), maxContextLines)
+	if opts.MaxEntries <= 0 {
+		opts.MaxEntries = defaultMaxEntries
+	}
+	opts.MaxEntries = min(max(opts.MaxEntries, minMaxEntries), maxMaxEntries)
 	return &Engine{
 		opts:    opts,
 		sources: make(map[SourceID]*source),
@@ -160,6 +175,13 @@ func (e *Engine) Entries() []Entry {
 	return out
 }
 
+// Dropped is how many entries have been dropped since the engine started, to
+// keep within MaxEntries. The feed shows it, so a flood of errors can't quietly
+// push older ones out of sight.
+func (e *Engine) Dropped() int {
+	return e.dropped
+}
+
 // Message returns exactly the text that would be sent to an agent for id. The
 // adapter must send it untouched, so what `v` shows is what the agent gets.
 func (e *Engine) Message(id EntryID) (string, error) {
@@ -177,5 +199,6 @@ func (e *Engine) add(en Entry) *record {
 	r := &record{entry: en}
 	e.records = append(e.records, r)
 	e.byID[en.ID] = r
+	e.trim(r)
 	return r
 }

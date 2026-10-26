@@ -176,8 +176,8 @@ func TestDiffSnapshots(t *testing.T) {
 		},
 		// Blind spots: an unchanged snapshot can hide a whole window of
 		// identical output, and nothing in the snapshots can tell it from
-		// nothing being printed. These pin today's behaviour (no lines, no gap,
-		// not ambiguous) until #45 brings in scroll events to catch them.
+		// nothing being printed. These pin what the diff alone says. The
+		// watcher catches them with scroll hints (TestPaneWatcherScrollHints).
 		{
 			name: "blind spot: clear and the same text printed again",
 			prev: snap("a\nb\n$ ", false),
@@ -341,6 +341,263 @@ func TestPaneWatcherNext(t *testing.T) {
 	}
 }
 
+// rows returns a scroll hint for a 40 row pane with the given max offset.
+func rows(offset uint64) ScrollInfo {
+	return ScrollInfo{MaxOffsetFromBottom: offset, ViewportRows: 40}
+}
+
+func TestPaneWatcherScrollHints(t *testing.T) {
+	type step struct {
+		hints     []ScrollInfo
+		snap      Snapshot
+		want      []string
+		gap       bool
+		ambiguous bool
+	}
+	// The three blind spots from TestDiffSnapshots, as the watcher sees them.
+	clearAndReprint := snap("a\nb\n$ ", false)
+	crashLoop := snap("e1\ne2\ne3\ne4\ne5\ne6", true)
+	shifted := snap("H\nE\nH\nE\nH\nE", true)
+
+	// start reads s for the first time with the history at 100 rows, then
+	// reads it again with nothing new, so the steps after it begin from a
+	// quiet pane with no credit left over.
+	start := func(s Snapshot) []step {
+		return []step{
+			{hints: []ScrollInfo{rows(100)}, snap: s, want: s.Lines},
+			{snap: s},
+		}
+	}
+
+	tests := []struct {
+		name  string
+		lines int
+		steps []step
+	}{
+		{
+			name:  "blind spot: clear and the same text printed again",
+			lines: 6,
+			steps: append(start(clearAndReprint),
+				step{hints: []ScrollInfo{rows(0)}, snap: clearAndReprint, ambiguous: true},
+			),
+		},
+		{
+			name:  "blind spot: a crash loop whose block is the whole window",
+			lines: 6,
+			steps: append(start(crashLoop),
+				step{hints: []ScrollInfo{rows(103), rows(106)}, snap: crashLoop, gap: true},
+				// The gap leaves the held back line alone, so the last line,
+				// reported on the first read, isn't sent again.
+				step{snap: crashLoop},
+				step{snap: crashLoop},
+			),
+		},
+		{
+			name:  "blind spot: a crash loop that printed less than a window",
+			lines: 6,
+			steps: append(start(crashLoop),
+				step{hints: []ScrollInfo{rows(103)}, snap: crashLoop, ambiguous: true},
+			),
+		},
+		{
+			name:  "blind spot: a window that shifts by its own period",
+			lines: 6,
+			// The diff alone already flags this one on every read.
+			steps: []step{
+				{hints: []ScrollInfo{rows(100)}, snap: shifted, want: shifted.Lines},
+				{snap: shifted, ambiguous: true},
+				{hints: []ScrollInfo{rows(106)}, snap: shifted, gap: true},
+			},
+		},
+		{
+			name:  "no hints, no news",
+			lines: 6,
+			steps: append(start(crashLoop), step{snap: crashLoop}),
+		},
+		{
+			name:  "hints that don't move the history are ignored",
+			lines: 6,
+			steps: append(start(crashLoop),
+				// Scrolling back through history changes offset_from_bottom only.
+				step{hints: []ScrollInfo{{OffsetFromBottom: 30, MaxOffsetFromBottom: 100, ViewportRows: 40}}, snap: crashLoop},
+			),
+		},
+		{
+			name:  "hints only count against the next read",
+			lines: 6,
+			steps: append(start(crashLoop),
+				step{hints: []ScrollInfo{rows(110)}, snap: crashLoop, gap: true},
+				step{snap: crashLoop},
+			),
+		},
+		{
+			name:  "the first hint counts as a change",
+			lines: 6,
+			steps: []step{
+				{snap: crashLoop, want: crashLoop.Lines},
+				{snap: crashLoop},
+				{hints: []ScrollInfo{rows(500)}, snap: crashLoop, ambiguous: true},
+			},
+		},
+		{
+			name:  "hints before the first read don't count",
+			lines: 6,
+			steps: []step{
+				{hints: []ScrollInfo{rows(100), rows(200)}, snap: crashLoop, want: crashLoop.Lines},
+				{snap: crashLoop},
+			},
+		},
+		{
+			// At the history cap the offset drops when old history is freed,
+			// even while output arrives. A fall is never growth.
+			name:  "a fall at the history cap is ambiguous, not a gap",
+			lines: 6,
+			steps: append(start(crashLoop),
+				step{hints: []ScrollInfo{rows(60)}, snap: crashLoop, ambiguous: true},
+			),
+		},
+		{
+			name:  "rises either side of a fall add up",
+			lines: 6,
+			steps: append(start(crashLoop),
+				step{hints: []ScrollInfo{rows(103), rows(50), rows(53)}, snap: crashLoop, gap: true},
+			),
+		},
+		{
+			name:  "a resize that pushes rows into history is ambiguous, not a gap",
+			lines: 6,
+			steps: append(start(crashLoop),
+				step{hints: []ScrollInfo{{MaxOffsetFromBottom: 120, ViewportRows: 20}}, snap: crashLoop, ambiguous: true},
+			),
+		},
+		{
+			name:  "new lines are reported as usual whatever the hints say",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{hints: []ScrollInfo{rows(103)}, snap: snap(numbered(4, 9), true), want: numberedLines(7, 8)},
+			),
+		},
+		{
+			name:  "a gap the diff found is left as it is",
+			lines: 6,
+			steps: append(start(snap("a\nb\nc", false)),
+				step{hints: []ScrollInfo{rows(0)}, snap: snap("$ ", false), gap: true},
+			),
+		},
+		// herdr batches scroll events, so the hint for a burst can land after
+		// the read that reported it. That mustn't make the quiet read after it
+		// look busy. The last line settling on that quiet read is the usual
+		// held back line, nothing to do with the hints.
+		{
+			name:  "a late hint for lines already reported is quiet",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(3, 8), true), want: []string{"line 7"}},
+				step{hints: []ScrollInfo{rows(102)}, snap: snap(numbered(3, 8), true), want: []string{"line 8"}},
+			),
+		},
+		{
+			name:  "a late hint up to a window after a gap is quiet",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(50, 55), true), want: numberedLines(50, 54), gap: true},
+				step{hints: []ScrollInfo{rows(106)}, snap: snap(numbered(50, 55), true), want: []string{"line 55"}},
+			),
+		},
+		{
+			// A late hint for a burst bigger than the window is bigger than the
+			// credit, so the read after the gap is a gap too. That only repeats
+			// "can't tell". The last line settles as usual and isn't sent again.
+			name:  "a late hint for a burst bigger than the window repeats the gap",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(50, 55), true), want: numberedLines(50, 54), gap: true},
+				step{hints: []ScrollInfo{rows(149)}, snap: snap(numbered(50, 55), true), want: []string{"line 55"}, gap: true},
+				step{snap: snap(numbered(50, 55), true)},
+			),
+		},
+		{
+			name:  "a late fall at the history cap after new lines is quiet",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(3, 8), true), want: []string{"line 7"}},
+				step{hints: []ScrollInfo{rows(60)}, snap: snap(numbered(3, 8), true), want: []string{"line 8"}},
+			),
+		},
+		{
+			name:  "a late clear after new lines is still ambiguous",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(3, 8), true), want: []string{"line 7"}},
+				step{hints: []ScrollInfo{rows(0)}, snap: snap(numbered(3, 8), true), want: []string{"line 8"}, ambiguous: true},
+			),
+		},
+		{
+			name:  "growth beyond what was reported still counts",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(3, 8), true), want: []string{"line 7"}},
+				step{hints: []ScrollInfo{rows(105)}, snap: snap(numbered(3, 8), true), want: []string{"line 8"}, ambiguous: true},
+			),
+		},
+		{
+			name:  "credit only lasts one read",
+			lines: 6,
+			steps: append(start(snap(numbered(1, 6), true)),
+				step{snap: snap(numbered(3, 8), true), want: []string{"line 7"}},
+				step{snap: snap(numbered(3, 8), true), want: []string{"line 8"}},
+				step{hints: []ScrollInfo{rows(102)}, snap: snap(numbered(3, 8), true), ambiguous: true},
+			),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := NewPaneWatcher(nil, "w1:p1")
+			w.Lines = tt.lines
+			for i, s := range tt.steps {
+				for _, h := range s.hints {
+					w.Hint(h)
+				}
+				got := w.next(s.snap)
+				if !slices.Equal(got.Lines, s.want) {
+					t.Errorf("step %d: lines = %q, want %q", i, got.Lines, s.want)
+				}
+				if got.Gap != s.gap {
+					t.Errorf("step %d: gap = %v, want %v", i, got.Gap, s.gap)
+				}
+				if got.Ambiguous != s.ambiguous {
+					t.Errorf("step %d: ambiguous = %v, want %v", i, got.Ambiguous, s.ambiguous)
+				}
+			}
+		})
+	}
+}
+
+func TestPaneWatcherHintSaysWhenToReadSooner(t *testing.T) {
+	tests := []struct {
+		name string
+		hint ScrollInfo
+		want bool
+	}{
+		{name: "the history grew", hint: rows(110), want: true},
+		{name: "the history shrank", hint: rows(0), want: true},
+		{name: "only the view scrolled", hint: ScrollInfo{OffsetFromBottom: 5, MaxOffsetFromBottom: 100, ViewportRows: 40}},
+		{name: "nothing changed", hint: rows(100)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := NewPaneWatcher(nil, "w1:p1")
+			if !w.Hint(rows(100)) {
+				t.Error("first hint = false, want true")
+			}
+			if got := w.Hint(tt.hint); got != tt.want {
+				t.Errorf("Hint = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // scriptedReader returns one read per call, then the error.
 type scriptedReader struct {
 	reads []PaneRead
@@ -420,6 +677,35 @@ func TestPaneWatcherOversizedRead(t *testing.T) {
 	reader.reads = []PaneRead{{Text: "a\nb\n$ \nc\n$ "}}
 	if d, err := w.Poll(ctx); err != nil || !slices.Equal(d.Lines, []string{"c"}) {
 		t.Errorf("poll after = %+v, %v, want it to diff against the last good read", d, err)
+	}
+}
+
+func TestPaneWatcherOversizedReadCoversHints(t *testing.T) {
+	reader := &scriptedReader{
+		reads: []PaneRead{{Text: "a\nb\n$ "}, {Text: "a\nb\n$ "}},
+		err:   fmt.Errorf("herdr pane.read: reading reply: %w", ErrTooLarge),
+	}
+	w := NewPaneWatcher(reader, "w1:p1")
+	ctx := context.Background()
+	w.Hint(rows(100))
+	for range 2 {
+		if _, err := w.Poll(ctx); err != nil {
+			t.Fatalf("poll: %v", err)
+		}
+	}
+
+	w.Hint(rows(100 + DefaultWatchLines + 100))
+	if d, err := w.Poll(ctx); err != nil || !d.Gap {
+		t.Fatalf("oversized poll = %+v, %v, want a gap", d, err)
+	}
+
+	reader.reads = []PaneRead{{Text: "a\nb\n$ "}}
+	d, err := w.Poll(ctx)
+	if err != nil {
+		t.Fatalf("poll after: %v", err)
+	}
+	if d.Gap || d.Ambiguous || d.Lines != nil {
+		t.Errorf("poll after = %+v, want nothing new, since the gap covered the hints", d)
 	}
 }
 

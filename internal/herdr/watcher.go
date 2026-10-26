@@ -70,6 +70,10 @@ type Delta struct {
 	// same place in the pane's history. They can still include
 	// lines that were reported before, so on a gap they must not be counted as
 	// repeats or as an error coming back.
+	//
+	// A PaneWatcher also sets Gap when a read finds nothing new but scroll
+	// hints say at least a window's worth of rows moved into the pane's
+	// history (see PaneWatcher.Hint).
 	Gap bool
 	// Initial marks the first read of a pane. Lines holds whatever was already
 	// there, last line included unless it's blank, which the caller may want to
@@ -80,8 +84,11 @@ type Delta struct {
 	// happens when a pane keeps printing the same lines, such as a crash loop
 	// with no timestamps. Lines then holds the fewest new lines that fit,
 	// possibly none, so a repeat of the same output can go unseen. A caller
-	// that cares (the fix check) should treat it as "can't tell" and look for
-	// other signs, such as a scroll event (#45).
+	// that cares (the fix check) should treat it as "can't tell".
+	//
+	// A PaneWatcher also sets Ambiguous when a read finds nothing new but
+	// scroll hints say the pane's history changed since the last read (see
+	// PaneWatcher.Hint).
 	Ambiguous bool
 }
 
@@ -100,7 +107,8 @@ type Delta struct {
 // screen cleared and the same text printed again, or a crash loop whose block
 // is at least as long as the window. The two can't be told apart, and
 // flagging every unchanged read would fire on every idle poll. So no lines
-// never proves no output. #45 is about using scroll events to close the gap.
+// never proves no output. PaneWatcher narrows the blind spot with scroll hints,
+// but can't close it (see PaneWatcher.Hint).
 func DiffSnapshots(prev, curr Snapshot) Delta {
 	old := prev.complete()
 	now := curr.complete()
@@ -193,8 +201,15 @@ type PaneReader interface {
 // The first read is the exception: its last line is included in the Initial
 // delta, since that's all history anyway.
 //
+// Snapshots alone can't tell an idle pane from one that printed a whole window
+// of the same output (see DiffSnapshots). So the owner should also subscribe
+// to ScrollChanged for the pane and pass each event's scroll to Hint. A read
+// that finds nothing new while the hints say the history moved then comes back
+// Ambiguous or Gap instead of looking quiet. The watcher has no goroutine of
+// its own and never subscribes itself, so it stays easy to test.
+//
 // A PaneWatcher isn't safe for concurrent use. Give each pane's watcher one
-// owner.
+// owner, and call Hint and Poll from that owner.
 type PaneWatcher struct {
 	reader PaneReader
 	paneID string
@@ -212,6 +227,130 @@ type PaneWatcher struct {
 	pending string
 	seen    int
 	flushed bool
+
+	// The last scroll hint, and what the hints since the last read add up to:
+	// rows that moved into history with the viewport unchanged (grew), a fall
+	// to 0 (cleared) and any other change that isn't growth (changed). credit
+	// is how many rows the last read already covered.
+	scroll      ScrollInfo
+	scrollKnown bool
+	grew        uint64
+	cleared     bool
+	changed     bool
+	credit      uint64
+}
+
+// Hint tells the watcher where herdr says the pane is scrolled to, as a
+// pane.scroll_changed event reports it. It returns true when the pane's history
+// changed, which usually means it printed something, so the owner may want to
+// Poll sooner than usual. Hints only change what the next Poll reports when
+// that read finds nothing new:
+//
+//   - If max_offset_from_bottom rose by at least Lines rows since the last
+//     read, it's a Gap. A window's worth of output went by unseen.
+//   - If it rose by less, or fell to 0, it's Ambiguous. Something was printed
+//     or cleared, and the read can't say what.
+//   - Any other change (a fall above 0, the viewport height changing or the
+//     first hint) is Ambiguous only if the read before left no credit, for
+//     the reason below.
+//
+// herdr sends the event in batches about 100ms apart, so the hint for a burst
+// often lands after the Poll that already reported the burst. So that it
+// doesn't make the quiet read after it look busy, the read leaves credit for
+// the lines it reported that its own hints hadn't already explained (a whole
+// window after a gap), and the next read takes that off the growth first. A
+// late fall above 0 is let off while there's credit, because at the cap output
+// makes the offset fall (see below). The credit lasts one read only, since a
+// credit that waited for a hint could later swallow real output. So the owner
+// shouldn't poll much faster than herdr's batching, or the credit is spent on
+// a read before the late hint arrives.
+//
+// Some late hints still make the quiet read after them Ambiguous or a Gap. The
+// offset counts screen rows, not lines, so a hint for long lines that wrapped
+// can come to more than the lines it describes. A burst bigger than the window
+// gives a late hint bigger than the credit. And a clear is never let off, so a
+// watcher that clears the screen on every rerun gives one Ambiguous read after
+// each. All of these err on the side of "can't tell". Spotting a clear is best
+// effort anyway: a clear and reprint inside one batch can arrive as an
+// ordinary rise or fall, never showing 0.
+//
+// What herdr 0.9.1 does with the offset, checked live for #45:
+//
+//   - A clear of the history (ESC[3J) resets it to 0. Clearing the screen alone
+//     (ESC[2J) leaves it be.
+//   - At the history cap, around 10,800 to 11,100 rows of short lines, it saw
+//     tooths. It rises as lines arrive, then drops by a few hundred rows at
+//     once when old history is freed. So a fall can hide output, and a fall is
+//     never counted as growth.
+//   - Shrinking the pane's height pushes rows into history without output, so
+//     a rise only counts when the viewport height stayed the same.
+//   - Narrowing the pane re-wraps long lines in history and raises the offset
+//     with the viewport height unchanged (125 rows became 288). ScrollInfo has
+//     no width, so that rise counts as growth and can make a quiet read a Gap.
+//     That's a false "can't tell", never a false "nothing happened".
+//
+// The first hint has nothing to compare with. herdr only sends the event when
+// something changed, so it counts as a change, but not as growth.
+//
+// Hints can't close the blind spot. herdr doesn't send the event until the
+// screen is full and lines start moving into history, so output that fits on
+// one screen (a clear and reprint of a short failure, say) still looks quiet.
+// So no new lines still never proves no output.
+func (w *PaneWatcher) Hint(s ScrollInfo) bool {
+	prev, known := w.scroll, w.scrollKnown
+	w.scroll, w.scrollKnown = s, true
+	switch {
+	case !known:
+		w.changed = true
+	case s.MaxOffsetFromBottom == prev.MaxOffsetFromBottom:
+		return false
+	case s.ViewportRows != prev.ViewportRows:
+		w.changed = true
+	case s.MaxOffsetFromBottom > prev.MaxOffsetFromBottom:
+		w.grew += s.MaxOffsetFromBottom - prev.MaxOffsetFromBottom
+	case s.MaxOffsetFromBottom == 0:
+		w.cleared = true
+	default:
+		w.changed = true
+	}
+	return true
+}
+
+// window is how many lines each read asks for.
+func (w *PaneWatcher) window() int { return max(w.Lines, MinWatchLines) }
+
+// forgetHints clears what the hints since the last read add up to, and gives
+// the next read credit for rows this one already covered.
+func (w *PaneWatcher) forgetHints(credit uint64) {
+	w.grew, w.cleared, w.changed, w.credit = 0, false, false, credit
+}
+
+// applyHints marks d Ambiguous or Gap if it found nothing new but the hints
+// since the last read say the history moved (see Hint), then works out the
+// credit for the next read. The first read is all history anyway, so hints
+// before it don't count.
+func (w *PaneWatcher) applyHints(d *Delta) {
+	window := uint64(w.window())
+	if d.Gap {
+		w.forgetHints(window)
+		return
+	}
+	if d.Initial {
+		w.forgetHints(uint64(len(d.Lines)))
+		return
+	}
+	unexplained := w.grew - min(w.grew, w.credit)
+	if reported := uint64(len(d.Lines)); reported > 0 {
+		w.forgetHints(reported - min(reported, unexplained))
+		return
+	}
+	switch {
+	case unexplained >= window:
+		d.Gap, d.Ambiguous = true, false
+	case unexplained > 0 || w.cleared || (w.changed && w.credit == 0):
+		d.Ambiguous = true
+	}
+	w.forgetHints(0)
 }
 
 // NewPaneWatcher returns a watcher for paneID using DefaultWatchLines and
@@ -236,8 +375,10 @@ func (w *PaneWatcher) PaneID() string { return w.paneID }
 // the last read it could use. Otherwise a pane full of very long lines would
 // fail every poll for ever. Lowering Lines makes the reads smaller.
 func (w *PaneWatcher) Poll(ctx context.Context) (Delta, error) {
-	read, err := w.reader.ReadPane(ctx, w.paneID, max(w.Lines, MinWatchLines))
+	read, err := w.reader.ReadPane(ctx, w.paneID, w.window())
 	if errors.Is(err, ErrTooLarge) {
+		// The gap covers whatever the hints so far describe.
+		w.forgetHints(uint64(w.window()))
 		return Delta{Gap: true}, nil
 	}
 	if err != nil {
@@ -255,16 +396,20 @@ func (w *PaneWatcher) next(curr Snapshot) Delta {
 	} else {
 		d = Delta{Lines: curr.complete(), Initial: true}
 	}
+	diffGap := d.Gap
 	completed := len(d.Lines)
+	w.applyHints(&d)
 
 	// A last line reported early is now usually the first completed line. Drop
 	// it if it finished as it was, so it isn't reported twice.
-	if w.flushed && !d.Gap && completed > 0 && d.Lines[0] == w.pending {
+	if w.flushed && !diffGap && completed > 0 && d.Lines[0] == w.pending {
 		d.Lines = d.Lines[1:]
 	}
 
+	// A gap only the hints found leaves the held back line alone, so a line
+	// that was already reported isn't sent again later outside a gap.
 	last := curr.last()
-	if w.started && !d.Gap && completed == 0 && last == w.pending {
+	if w.started && !diffGap && completed == 0 && last == w.pending {
 		w.seen++
 	} else {
 		w.pending, w.seen, w.flushed = last, 1, false

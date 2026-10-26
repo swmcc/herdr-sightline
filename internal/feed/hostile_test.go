@@ -233,3 +233,49 @@ func TestSnapshotFromBeforeTheSendDoesntFinishIt(t *testing.T) {
 		t.Error("a snapshot from before the send counted as the agent working on it")
 	}
 }
+
+func TestConfirmIsForOneAgent(t *testing.T) {
+	h, setTitle := titleFlip(t)
+	h.catchError()
+	h.run(h.press("enter"))
+	if calls := h.herdr.promptCalls(); len(calls) != 1 || calls[0].Target != agentPane {
+		t.Fatalf("first send = %+v", calls)
+	}
+	// Enter once to send it again, then the pane retitles itself to match a
+	// pin to an agent in another tab before the second enter.
+	h.press("enter")
+	setTitle("billing worker")
+	h.run(h.press("enter"))
+	if calls := h.herdr.promptCalls(); len(calls) != 1 {
+		t.Fatalf("the confirm given for %s sent to %s: status %q", agentPane, calls[len(calls)-1].Target, h.model.status)
+	}
+	if !strings.Contains(h.model.status, "prod-ops") {
+		t.Errorf("status = %q, want it to name the new agent", h.model.status)
+	}
+}
+
+func TestFloodDoesntMoveTheCursorToTheNewest(t *testing.T) {
+	h := newHarness(t)
+	h.sync()
+	h.update(watchListMsg{panes: []string{webPane}})
+	feed := func(i int) {
+		line := "panic: failure " + string(rune('a'+i%26)) + string(rune('a'+i/26))
+		h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{line}}})
+		h.clock.Advance(2 * time.Second)
+		h.update(tickMsg{})
+	}
+	for i := range 20 {
+		feed(i)
+	}
+	// Select the oldest, then flood until it's dropped.
+	h.model.selected = h.model.entries[len(h.model.entries)-1].ID
+	for i := 20; i < 400 && h.model.engine.Dropped() == 0; i++ {
+		feed(i)
+	}
+	if h.model.engine.Dropped() == 0 {
+		t.Fatal("the flood dropped nothing")
+	}
+	if h.model.selected == h.model.entries[0].ID {
+		t.Error("dropping the selected entry put the newest, the attacker's, under the cursor")
+	}
+}

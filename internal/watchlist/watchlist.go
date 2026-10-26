@@ -170,6 +170,11 @@ func Write(dir string, panes []string) error {
 		_ = tmp.Close()
 		return fmt.Errorf("writing watch list: %w", err)
 	}
+	// On disk before the rename, so a crash can't leave an empty list.
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing watch list: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("writing watch list: %w", err)
 	}

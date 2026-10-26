@@ -212,6 +212,12 @@ func (h *harness) run(cmd tea.Cmd) {
 	}
 }
 
+// gen is the number of the loop watching pane now, which a message from that
+// loop carries.
+func (h *harness) gen(pane string) uint64 {
+	return h.loops.panes[pane].gen
+}
+
 func (h *harness) sync() {
 	h.t.Helper()
 	h.update(h.loops.snapshot())
@@ -222,8 +228,8 @@ func (h *harness) catchError() engine.Entry {
 	h.t.Helper()
 	h.sync()
 	h.update(watchListMsg{panes: []string{webPane}})
-	h.update(deltaMsg{pane: webPane, delta: herdr.Delta{Initial: true, Lines: []string{"ready"}}})
-	h.update(deltaMsg{pane: webPane, delta: herdr.Delta{Lines: []string{
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Initial: true, Lines: []string{"ready"}}})
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{
 		" GET /notices 200",
 		"TypeError: Cannot read properties of undefined (reading 'map')",
 		"    at NoticeList (app/notices/page.tsx:14:22)",
@@ -240,7 +246,7 @@ func TestFirstReadIsHistory(t *testing.T) {
 	h := newHarness(t)
 	h.sync()
 	h.update(watchListMsg{panes: []string{webPane}})
-	h.update(deltaMsg{pane: webPane, delta: herdr.Delta{Initial: true, Lines: []string{"TypeError: old news"}}})
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Initial: true, Lines: []string{"TypeError: old news"}}})
 	h.clock.Advance(2 * time.Second)
 	h.update(tickMsg{})
 	if len(h.model.entries) != 0 {
@@ -483,7 +489,7 @@ func TestViewRefusesToSendAChangedMessage(t *testing.T) {
 func TestListKeys(t *testing.T) {
 	h := newHarness(t)
 	first := h.catchError()
-	h.update(deltaMsg{pane: webPane, delta: herdr.Delta{Lines: []string{"panic: something else broke"}}})
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{"panic: something else broke"}}})
 	h.clock.Advance(2 * time.Second)
 	h.update(tickMsg{})
 	if len(h.model.entries) != 2 {
@@ -577,7 +583,7 @@ func TestAgentFinishingStartsTheFixCheck(t *testing.T) {
 			}
 
 			h.clock.Advance(2 * time.Second)
-			h.update(deltaMsg{pane: webPane, delta: herdr.Delta{Lines: tt.after, Ambiguous: tt.ambiguous}})
+			h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: tt.after, Ambiguous: tt.ambiguous}})
 			h.clock.Advance(time.Duration(config.DefaultSettleSeconds)*time.Second + 2*captureWait)
 			h.update(tickMsg{})
 
@@ -637,7 +643,7 @@ func TestWatchList(t *testing.T) {
 		t.Error("no loop for the watched pane")
 	}
 
-	h.update(paneGoneMsg{pane: webPane})
+	h.update(paneGoneMsg{pane: webPane, gen: h.gen(webPane)})
 	if len(h.model.watching) != 0 {
 		t.Errorf("still watching %v after the pane closed", h.model.watching)
 	}
@@ -655,7 +661,7 @@ func TestPaneMoveIsFollowed(t *testing.T) {
 	h.sync()
 	h.update(watchListMsg{panes: []string{webPane}})
 	moved := &herdr.Pane{ID: "w2:p1", WorkspaceID: "w2", TabID: "w2:t1"}
-	h.update(eventMsg{herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p1", PreviousPaneID: webPane, Pane: moved}})
+	h.update(eventMsg{ev: herdr.Event{Kind: herdr.EventPaneMoved, PaneID: "w2:p1", PreviousPaneID: webPane, Pane: moved}})
 	if got := h.model.watching; len(got) != 1 || got[0] != "w2:p1" {
 		t.Errorf("watching %v, want the moved pane", got)
 	}
@@ -686,7 +692,7 @@ func TestDroppedCountIsShown(t *testing.T) {
 	h.update(watchListMsg{panes: []string{webPane}})
 	// More distinct errors than the engine keeps.
 	for i := range 210 {
-		h.update(deltaMsg{pane: webPane, delta: herdr.Delta{Lines: []string{"panic: failure number " + strings.Repeat("x", i%50) + string(rune('a'+i%26)) + string(rune('a'+i/26))}}})
+		h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{"panic: failure number " + strings.Repeat("x", i%50) + string(rune('a'+i%26)) + string(rune('a'+i/26))}}})
 		h.clock.Advance(2 * time.Second)
 		h.update(tickMsg{})
 	}
@@ -715,12 +721,13 @@ func TestQuitStopsEverything(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		done <- Run(context.Background(), Options{
-			Client:   f.client(),
-			StateDir: t.TempDir(),
-			Watch:    []string{webPane},
-			Self:     feedPane,
-			Every:    Timings{Poll: 20 * time.Millisecond, Sync: 20 * time.Millisecond, Tick: 20 * time.Millisecond, List: 20 * time.Millisecond},
-			Program:  []tea.ProgramOption{tea.WithInput(in), tea.WithOutput(io.Discard), tea.WithoutSignalHandler()},
+			Client:    f.client(),
+			StateDir:  t.TempDir(),
+			ConfigDir: t.TempDir(),
+			Watch:     []string{webPane},
+			Self:      feedPane,
+			Every:     Timings{Poll: 20 * time.Millisecond, Sync: 20 * time.Millisecond, Tick: 20 * time.Millisecond, List: 20 * time.Millisecond},
+			Program:   []tea.ProgramOption{tea.WithInput(in), tea.WithOutput(io.Discard), tea.WithoutSignalHandler()},
 		})
 	}()
 

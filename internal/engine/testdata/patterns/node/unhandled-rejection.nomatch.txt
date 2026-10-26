@@ -1,0 +1,7 @@
+  code: 'ERR_UNHANDLED_REJECTION'
+}
+node:internal/process/promises:289
+            triggerUncaughtException(err, true /* fromPromise */);
+            ^
+process.on('unhandledRejection') handler installed
+[UnhandledRejectionTracker] 0 pending

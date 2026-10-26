@@ -1,0 +1,3 @@
+which: no vite in (/usr/local/bin:/usr/bin)
+command found: vite
+Checking for command not found handler... done

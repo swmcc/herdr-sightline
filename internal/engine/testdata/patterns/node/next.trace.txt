@@ -1,0 +1,11 @@
+# starts: 1
+ ✓ Compiled /dashboard in 812ms (602 modules)
+ ⨯ TypeError: Cannot read properties of undefined (reading 'title')
+    at DashboardPage (./app/dashboard/page.tsx:12:24)
+    at stringify (<anonymous>)
+digest: "2786413359"
+  10 |   const data = await getData()
+  11 |
+> 12 |   return <h1>{data.title}</h1>
+     |                    ^
+ GET /dashboard 500 in 912ms

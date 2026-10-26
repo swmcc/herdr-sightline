@@ -1,0 +1,9 @@
+[12:00:00 PM] Starting compilation in watch mode...
+[12:00:02 PM] Found 0 errors. Watching for file changes.
+Found 3 errors in 2 files.
+Errors  Files
+     2  src/routes/users.ts:42
+42   const email = user.emial
+                        ~~~~~
+src/errors.ts
+  src/errors/http-error.ts:12:3

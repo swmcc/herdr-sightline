@@ -1,0 +1,11 @@
+# starts: 1
+Puma starting in single mode...
+* Puma version: 6.4.2 (ruby 3.3.0-p0) ("The Eagle of Durango")
+*  Min threads: 5
+*  Max threads: 5
+*  Environment: development
+! Unable to load application: NameError: uninitialized constant Foo
+bundler: failed to load command: puma (/usr/local/bundle/bin/puma)
+/app/config/routes.rb:2:in 'block in <main>': uninitialized constant Foo (NameError)
+	from /usr/local/bundle/gems/actionpack-7.1.3/lib/action_dispatch/routing/route_set.rb:450:in 'BasicObject#instance_exec'
+	from /usr/local/bundle/gems/actionpack-7.1.3/lib/action_dispatch/routing/route_set.rb:450:in 'ActionDispatch::Routing::RouteSet#eval_block'

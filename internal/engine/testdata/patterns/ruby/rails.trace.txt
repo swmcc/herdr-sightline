@@ -1,0 +1,12 @@
+# starts: 1
+Started GET "/posts/1" for 127.0.0.1 at 2026-10-26 12:00:00 +0000
+Processing by PostsController#show as HTML
+  Parameters: {"id"=>"1"}
+  Post Load (0.3ms)  SELECT "posts".* FROM "posts" WHERE "posts"."id" = $1 LIMIT $2  [["id", 1], ["LIMIT", 1]]
+Completed 500 Internal Server Error in 14ms (ActiveRecord: 1.2ms | Allocations: 5120)
+
+
+
+NoMethodError (undefined method 'title' for nil):
+
+app/controllers/posts_controller.rb:6:in 'PostsController#show'

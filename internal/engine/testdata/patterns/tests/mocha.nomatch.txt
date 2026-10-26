@@ -1,0 +1,5 @@
+  12 passing (48ms)
+  2 pending
+  1) Users API
+       returns 404 for a missing user:
+     AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:

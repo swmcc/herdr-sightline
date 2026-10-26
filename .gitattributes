@@ -1,0 +1,2 @@
+# Fixtures are matched byte for byte, and $ anchors break on CRLF.
+internal/engine/testdata/** text eol=lf

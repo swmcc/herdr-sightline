@@ -1,0 +1,8 @@
+BUILD SUCCESSFUL in 4s
+BUILD FAILED in 3s
+* What went wrong:
+Execution failed for task ':app:compileKotlin'.
+> Compilation error. See log for more details
+e: file:///app/src/main/kotlin/Main.kt:3:5 Unresolved reference: foo
+w: file:///app/src/main/kotlin/Main.kt:9:9 Variable 'x' is never used
+> Task :app:compileJava UP-TO-DATE

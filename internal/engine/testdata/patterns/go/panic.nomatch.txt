@@ -1,0 +1,9 @@
+goroutine 1 [running]:
+main.main()
+	/app/main.go:12 +0x1d
+[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x10467c8]
+exit status 2
+2026/10/26 12:00:00 recovered from panic in handler: boom
+ panic: boom
+created by net/http.(*Server).Serve in goroutine 1
+main.go:42: panic: recovered and logged

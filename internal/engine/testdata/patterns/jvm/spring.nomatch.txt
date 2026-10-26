@@ -1,0 +1,7 @@
+***************************
+Description:
+Action:
+Consider defining a bean of type 'com.acme.UserRepository' in your configuration.
+  .   ____          _            __ _ _
+ :: Spring Boot ::                (v3.2.5)
+Started App in 2.314 seconds (process running for 2.6)

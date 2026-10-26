@@ -1,0 +1,11 @@
+warning: unused variable: `err`
+ --> src/main.rs:4:9
+  |
+4 |     let err = 5;
+  |         ^^^ help: if this is intentional, prefix it with an underscore: `_err`
+  = note: `#[warn(unused_variables)]` on by default
+   Compiling app v0.1.0 (/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running `target/debug/app`
+For more information about this error, try `rustc --explain E0308`.
+[Running 'cargo run']

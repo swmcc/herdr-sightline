@@ -1,0 +1,4 @@
+main.c:12:5: error: implicit declaration of function 'foo' [-Wimplicit-function-declaration]
+src/App.java:7: error: cannot find symbol
+/app/src/lib.cpp:88:1: fatal error: 'boost/asio.hpp' file not found
+Sources/App/main.swift:3:9: error: cannot find 'foo' in scope

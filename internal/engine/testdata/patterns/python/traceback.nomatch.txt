@@ -1,0 +1,23 @@
+  File "/app/manage.py", line 22, in <module>
+    main()
+  File "/usr/local/lib/python3.12/site-packages/django/core/handlers/exception.py", line 55, in inner
+    response = get_response(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+    ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+During handling of the above exception, another exception occurred:
+The above exception was the direct cause of the following exception:
+ValueError: invalid literal for int() with base 10: 'abc'
+KeyError: 'user_id'
+Watching for file changes with StatReloader
+Performing system checks...
+System check identified no issues (0 silenced).
+Starting development server at http://127.0.0.1:8000/
+[26/Oct/2026 12:00:00] "GET /errors/ HTTP/1.1" 200 1234
+[26/Oct/2026 12:00:01] "GET /static/error.css HTTP/1.1" 304 0
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:52344 - "GET /health HTTP/1.1" 200 OK
+/app/views.py:12: DeprecationWarning: datetime.datetime.utcnow() is deprecated
+  warnings.warn("error_handler is deprecated", DeprecationWarning)
+2026-10-26 12:00:00,123 INFO app.tasks: retry_errors=0 processed=12
+ * Debugger is active!
+[2026-10-26 12:00:00,456] ERROR in app: Exception on /boom [GET]

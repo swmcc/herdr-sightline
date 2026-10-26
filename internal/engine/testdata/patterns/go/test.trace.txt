@@ -1,0 +1,9 @@
+# starts: 1
+=== RUN   TestParse
+=== RUN   TestParse/empty
+    parse_test.go:21: Parse("") error = <nil>, want an error
+--- FAIL: TestParse (0.00s)
+    --- FAIL: TestParse/empty (0.00s)
+FAIL
+FAIL	github.com/acme/app/internal/parse	0.008s
+FAIL

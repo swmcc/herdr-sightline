@@ -1,0 +1,5 @@
+▲ [WARNING] Duplicate key "name" in object literal [duplicate-object-key]
+  dist/out.js  12.3kb
+⚡ Done in 14ms
+[watch] build finished, watching for changes...
+1 error

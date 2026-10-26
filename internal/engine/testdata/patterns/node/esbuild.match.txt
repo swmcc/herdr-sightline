@@ -1,0 +1,2 @@
+✘ [ERROR] Could not resolve "lodash-es"
+X [ERROR] Expected ";" but found "const"

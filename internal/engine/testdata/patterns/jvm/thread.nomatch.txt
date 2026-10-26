@@ -1,0 +1,5 @@
+	at com.acme.App.main(App.java:12)
+	at com.acme.LoginKt.login(Login.kt:7)
+	... 23 more
+Caused by: java.io.FileNotFoundException: config.yml (No such file or directory)
+	Suppressed: java.lang.IllegalStateException: closed twice

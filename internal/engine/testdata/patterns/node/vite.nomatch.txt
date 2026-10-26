@@ -1,0 +1,8 @@
+  VITE v5.2.11  ready in 312 ms
+  ➜  Local:   http://localhost:5173/
+12:00:05 PM [vite] hmr update /src/App.tsx
+12:00:06 PM [vite] page reload src/pages/Error.tsx
+✓ 42 modules transformed.
+dist/assets/index-4f3a1c2b.js   143.21 kB │ gzip: 46.10 kB
+✓ built in 1.24s
+12:00:07 PM [vite] ✨ new dependencies optimized: react-error-boundary

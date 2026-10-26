@@ -1,0 +1,5 @@
+java.lang.IllegalStateException: Failed to load ApplicationContext
+org.springframework.beans.factory.BeanCreationException: Error creating bean with name 'dataSource'
+java.net.ConnectException: Connection refused
+kotlin.UninitializedPropertyAccessException: lateinit property repo has not been initialized
+java.lang.StackOverflowError

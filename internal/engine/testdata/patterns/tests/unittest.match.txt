@@ -1,0 +1,2 @@
+FAIL: test_missing_user (tests.test_users.UserTests.test_missing_user)
+ERROR: test_connect (tests.test_db.DBTests.test_connect)

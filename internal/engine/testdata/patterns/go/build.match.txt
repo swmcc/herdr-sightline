@@ -1,0 +1,4 @@
+# github.com/acme/app
+# command-line-arguments
+# github.com/acme/app/internal/server [github.com/acme/app/internal/server.test]
+# example.com/tools/v2/cmd/gen

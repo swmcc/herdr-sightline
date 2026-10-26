@@ -1,0 +1,2 @@
+FAILURE: Build failed with an exception.
+FAILURE: Build completed with 2 failures.

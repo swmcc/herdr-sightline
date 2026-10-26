@@ -14,7 +14,12 @@ or cries wolf, and crying wolf is worse.
    shape of the error (a stack frame, a file and line) over a single word.
 5. **Run the tests.** Both fixtures must pass. Then run the whole pattern suite to make
    sure the new pattern doesn't match another preset's healthy output.
-6. **Check grouping.** Two runs of the same error with different timestamps or ports
+   No-match lines are checked against every preset, not just their own, because
+   all presets are on by default.
+6. **Add a trace if it helps.** A `<name>.trace.txt` is a whole piece of real output
+   whose first line is `# starts: N`. The test counts the lines that start an error
+   with every preset on. It's how you show a stack frame doesn't start a second one.
+7. **Check grouping.** Two runs of the same error with different timestamps or ports
    should produce the same fingerprint.
 
 Don't merge a pattern without both fixtures. If you can't find healthy output that

@@ -1,0 +1,24 @@
+Found 0 errors. Watching for file changes.
+0 errors, 2 warnings
+error_count=0 warn_count=3
+errors: 0
+GET /api/errors?page=2 200 12ms
+POST /error-reports 201 4ms
+INFO  error reporting enabled (sentry)
+warning: unused import: `std::io`
+{"level":"error","time":"2026-10-26T12:00:00Z","msg":"upstream timeout","path":"/api"}
+level=error msg="dial tcp 127.0.0.1:6379: connect: connection refused"
+[2026-10-26 12:00:00] local.ERROR: Undefined variable $user
+Errors handled gracefully: 3
+on_error: retry
+onError callback registered
+2026-10-26 12:00:00.123 UTC [61] ERROR:  duplicate key value violates unique constraint "users_email_key"
+Error rate: 0.00%
+ERROR:    Exception in ASGI application
+error: none
+Error: 0
+ERROR: null
+error: false
+main.go:42: error: retrying in 2s
+WARN | Error: something deprecated
+INFO | Error: 0

@@ -1,0 +1,4 @@
+main.c:20:3: warning: unused variable 'x' [-Wunused-variable]
+main.c:12:5: note: previous declaration is here
+1 error generated.
+cc -o app main.c

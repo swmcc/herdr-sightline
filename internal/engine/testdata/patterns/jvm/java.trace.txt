@@ -1,0 +1,7 @@
+# starts: 1
+Exception in thread "main" java.lang.IllegalStateException: config not loaded
+	at com.acme.Config.get(Config.java:31)
+	at com.acme.App.main(App.java:12)
+Caused by: java.io.FileNotFoundException: config.yml (No such file or directory)
+	at java.base/java.io.FileInputStream.open0(Native Method)
+	... 1 more

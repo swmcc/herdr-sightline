@@ -141,7 +141,7 @@ func (c *capturer) gap() {
 // escape sequence in progress is forgotten too.
 func (c *capturer) lost() {
 	c.gap()
-	c.scrub = scrubber{noRedraw: c.scrub.noRedraw}
+	c.scrub = scrubber{noRedraw: c.scrub.noRedraw, vt52: c.scrub.vt52, lrMargins: c.scrub.lrMargins}
 	c.shadow = newShadow()
 	c.diverged = false
 }
@@ -725,6 +725,12 @@ type scrubber struct {
 	csiParam   int
 	csiPlain   bool
 	csiPrivate bool
+	// csiModes reads every parameter of a private CSI, which can set or reset
+	// several modes at once. csiMode is the parameter being read. csiInter
+	// is the last intermediate byte, such as the '$' of a rectangle operation.
+	csiModes modeList
+	csiMode  int
+	csiInter rune
 	// noRedraw stops redraws being followed on any line from here on. It's set
 	// by sequences whose effect lasts beyond their line (modes, margins, scroll
 	// regions, a saved cursor), because then a carriage return may not go where
@@ -736,8 +742,16 @@ type scrubber struct {
 	// drawn over. Only same line redraws are followed, so the capturer treats
 	// every line read so far as possibly unseen.
 	drawnAbove bool
-	escInter   rune // the first intermediate byte of the current escape
-	screen     screen
+	// vt52 means VT52 mode may be on, so some two byte escapes move the
+	// cursor (see step). Like noRedraw, a gap doesn't clear it, and nor does
+	// ESC c, which a terminal in VT52 mode ignores. Only ESC < leaves it.
+	vt52 bool
+	// lrMargins means left and right margins (mode 69) may be on, so a CSI s
+	// sets margins and homes the cursor instead of saving it. A gap doesn't
+	// clear it either.
+	lrMargins bool
+	escInter  rune // the first intermediate byte of the current escape
+	screen    screen
 	// overwritten is every character of the line just emitted, in the order
 	// printed, when that's different from what a terminal shows. Otherwise it's
 	// empty. It's only meaningful while emit runs.
@@ -850,6 +864,7 @@ func (s *scrubber) put(r rune) {
 func (s *scrubber) startCSI() {
 	s.state, s.csiBytes = scrubCSI, 0
 	s.csiParam, s.csiPlain, s.csiPrivate = 0, true, false
+	s.csiModes, s.csiMode, s.csiInter = modeList{}, 0, 0
 }
 
 // csiByte reads a parameter or intermediate byte of a CSI.
@@ -857,6 +872,20 @@ func (s *scrubber) csiByte(r rune) {
 	if s.csiBytes == 1 && r == '?' {
 		s.csiPrivate = true
 		return
+	}
+	if r >= 0x20 && r <= 0x2f {
+		s.csiInter = r
+	}
+	switch {
+	case r >= '0' && r <= '9':
+		s.csiMode = min(s.csiMode*10+int(r-'0'), maxCSIParam)
+	case r == ';':
+		s.csiModes.note(s.csiMode)
+		s.csiMode = 0
+	default:
+		// A sub-parameter or an intermediate. Nothing known to be harmless
+		// looks like that.
+		s.csiModes.unknown = true
 	}
 	if s.csiPlain && r >= '0' && r <= '9' {
 		s.csiParam = min(s.csiParam*10+int(r-'0'), maxCSIParam)
@@ -870,21 +899,92 @@ func (s *scrubber) csiByte(r rune) {
 // paste. Spinners hide the cursor while they draw.
 var harmlessModes = map[int]bool{1: true, 12: true, 25: true, 1004: true, 2004: true}
 
+// staysPutModes are private modes that never move the cursor to another line
+// or clear the screen: the harmless ones, reverse video, autowrap, mouse
+// reports and synchronised output, which TUIs send around every frame.
+var staysPutModes = map[int]bool{
+	1: true, 5: true, 7: true, 12: true, 25: true, 1000: true, 1002: true, 1003: true,
+	1004: true, 1005: true, 1006: true, 1015: true, 2004: true, 2026: true,
+}
+
+// modeList is what a private CSI's parameters say about the modes it names.
+type modeList struct {
+	unknown   bool // a mode that may move the cursor or clear the screen
+	vt52      bool // mode 2, VT52
+	lrMargins bool // mode 69, left and right margins
+}
+
+func (m *modeList) note(mode int) {
+	m.unknown = m.unknown || !staysPutModes[mode]
+	m.vt52 = m.vt52 || mode == 2
+	m.lrMargins = m.lrMargins || mode == 69
+}
+
 // csiFinal acts on the final byte of a CSI. Colour and the harmless modes change
 // nothing on the line. Erase in line and a move to a column are followed. Any
 // other mode, margins, scroll regions and a saved cursor last beyond the line,
 // so redraws stop being followed until a gap. Anything else may move the cursor,
 // so the line stops being followed.
 func (s *scrubber) csiFinal(r rune) {
-	setsMode := r == 'h' || r == 'l'
 	// Cursor up, to a line, to a position, erase in display, insert or
-	// delete lines, scrolling, margins (which move the cursor home), a
-	// restored cursor and the alternate screen can all draw over lines
-	// already read.
-	altScreen := s.csiPrivate && setsMode && s.csiPlain && (s.csiParam == 47 || s.csiParam == 1047 || s.csiParam == 1049)
-	if strings.ContainsRune("AFHfdJLMSTru", r) && !s.csiPrivate || altScreen {
+	// delete lines, scrolling (scroll down in xterm's other form, CSI Ps ^,
+	// too), margins (which move the cursor home) and a restored cursor can
+	// all draw over lines already read.
+	if strings.ContainsRune("AFHfdJLMSTru^", r) && !s.csiPrivate && s.csiInter == 0 {
 		s.drawnAbove = true
 	}
+	// The VT420 rectangle operations erase, fill or copy anywhere on the
+	// screen (DECERA, DECFRA, DECCRA and DECSERA). Deleting or inserting
+	// columns (DECDC, DECIC) and shifting the screen sideways (SL, SR) move
+	// text on every line already read.
+	switch {
+	case s.csiInter == '$' && strings.ContainsRune("zxv{", r),
+		s.csiInter == '\'' && strings.ContainsRune("~}", r),
+		s.csiInter == ' ' && strings.ContainsRune("@A", r):
+		s.drawnAbove = true
+	}
+	if s.csiPrivate {
+		s.privateFinal(r)
+		return
+	}
+	// With left and right margins on, CSI s sets them and homes the cursor,
+	// bare or not. With them off, only a bare one saves the cursor (SCO).
+	if r == 's' && (s.lrMargins || !(s.csiPlain && s.csiParam == 0)) {
+		s.drawnAbove = true
+	}
+	s.csiAct(r)
+}
+
+// privateFinal acts on the final byte of a private CSI (one starting with '?').
+func (s *scrubber) privateFinal(r rune) {
+	s.csiModes.note(s.csiMode)
+	if s.state == scrubCSIIgnore {
+		s.csiModes.unknown = true
+	}
+	// Setting, resetting or restoring (XTRESTORE, CSI ? Pm r) any mode that
+	// isn't known to stay put may move the cursor or clear the screen, now or
+	// later: the alternate screen (47, 1047, 1049), a restored cursor (1048),
+	// origin mode homing the cursor (6), a column change clearing the screen
+	// (3), VT52 mode (2) and left and right margins (69). So may a selective
+	// erase (CSI ? J).
+	changes := r == 'h' || r == 'l' || r == 'r'
+	if r == 'J' || changes && s.csiModes.unknown {
+		s.drawnAbove = true
+	}
+	// VT52 mode lasts until ESC <, and in it ESC A, H, I, J and Y move the
+	// cursor up or home or clear the screen. A restore might turn it on too.
+	if s.csiModes.vt52 && (r == 'l' || r == 'r') {
+		s.vt52 = true
+	}
+	if s.csiModes.lrMargins && changes {
+		s.lrMargins = r != 'l'
+	}
+	s.csiAct(r)
+}
+
+// csiAct follows what a CSI does to the line being read.
+func (s *scrubber) csiAct(r rune) {
+	setsMode := r == 'h' || r == 'l'
 	switch {
 	case s.state == scrubCSIIgnore:
 		// Too long to read, but a terminal may still act on its first
@@ -955,12 +1055,20 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 			// but some move the cursor. ESC c resets the terminal, modes and
 			// all, so redraws can be followed again from the next line.
 			s.untrack()
-			if r == 'c' {
-				s.noRedraw = false
+			// A terminal in VT52 mode ignores ESC c, so it only resets
+			// when VT52 mode can't be on.
+			if r == 'c' && !s.vt52 {
+				s.noRedraw, s.lrMargins = false, false
+			}
+			if r == '<' {
+				s.vt52 = false
 			}
 			// Restoring a saved cursor, a reverse index and a reset (which
-			// clears the screen) can all draw over lines already read.
-			if r == '7' || r == '8' || r == 'M' || r == 'c' {
+			// clears the screen) can all draw over lines already read. So can
+			// back and forward index (ESC 6, ESC 9), which shift every line
+			// sideways at a margin, and VT52's cursor up, home, reverse line
+			// feed, erase and cursor address.
+			if strings.ContainsRune("78Mc69", r) || s.vt52 && strings.ContainsRune("AHIJY", r) {
 				s.drawnAbove = true
 			}
 			s.state = scrubText

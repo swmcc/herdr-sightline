@@ -35,3 +35,4 @@ FAIL	github.com/swmcc/app/notices	0.201s
 test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 web-1  | compiled successfully in 80 ms
 10:41:03.120 [vite] page reload src/main.ts
+√ built in 1.23s

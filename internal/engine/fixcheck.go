@@ -33,9 +33,11 @@ import (
 //   - If the error's context shows the request it came from (a request that
 //     failed, or one that had just started, see triggerOf), the error probably
 //     needed that request to happen. Recompiling proves nothing then, so the
-//     only evidence is the same method and path being requested again without
-//     a 5xx. This is the README's "the bug needs a request to trigger" case,
-//     and without the request it stays unverified.
+//     only evidence is the same method, path and query being requested again
+//     with a 2xx (see sawLine). This is the README's "the bug needs a request
+//     to trigger" case, and without the request it stays unverified. A bug
+//     that depends on who sends the request can still look fixed when someone
+//     else sends it.
 //   - Otherwise it's a line saying a compile, build, restart or test run
 //     finished or started over. See ranSignals. A compile that started but
 //     hasn't finished ("Compiling...") isn't enough.
@@ -71,6 +73,10 @@ type fixState struct {
 	// trigger is the request ("GET /notices") the error seems to have needed,
 	// or empty if it doesn't look like it came from a request.
 	trigger string
+	// started means the trigger has just started again in a form with no
+	// status (Rails' Started, Phoenix's "GET /notices"), so the next line
+	// saying how a request ended is its outcome.
+	started bool
 	ran     bool // positive evidence that the changed code ran
 	unsure  bool // output may have gone unseen since the settle period started
 
@@ -143,7 +149,7 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 	read := false
 	var signal bool
 	var request string
-	var status int
+	var status, ended int
 	for _, r := range e.records {
 		f := &r.fix
 		if !f.settling || f.ran || r.entry.Source.ID != src {
@@ -157,17 +163,32 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 		if !read {
 			l := unprefix(cut(line, maxScannedLine))
 			request, status = requestOf(l)
+			ended = endedWith(l)
 			// Anyone who can reach the server can put words in its request
-			// log ("GET /compiled/successfully 404"), so a request line is
-			// never a sign that something ran.
-			signal = request == "" && ranSignal(l)
+			// log ("GET /compiled/successfully 404"), so a line that mentions
+			// a request anywhere, whatever its method, is never a sign that
+			// something ran.
+			signal = !mentionsRequest.MatchString(l) && ranSignal(l)
 			read = true
 		}
-		if f.trigger != "" {
-			// A 5xx is the request failing again, not proof it's fixed.
-			f.ran = request == f.trigger && status < 500
-		} else {
+		if f.trigger == "" {
 			f.ran = signal
+			continue
+		}
+		// Only a 2xx counts. A 5xx is the request failing again, and anyone
+		// can send the same request in a way that never reaches the bug: one
+		// that's redirected to a login page, rejected as bad or not found.
+		switch {
+		case request == f.trigger && status == 0:
+			f.started = true
+		case request == f.trigger:
+			f.ran = succeeded(status)
+		case request != "":
+			// Another request started, so the next ending may be its.
+			f.started = false
+		case ended != 0 && f.started:
+			f.ran = succeeded(ended)
+			f.started = false
 		}
 	}
 }
@@ -275,8 +296,10 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	`^\s*generated \S+ app\s*$`,
 	// Servers restarting or back up.
 	`^\s*\[nodemon\] (?:restarting|starting)\b`,
-	`\bchanged, reloading\b`, // Django's autoreloader
-	`^\W*listening on\b`,     // puma: "* Listening on http://127.0.0.1:3000"
+	// Django's autoreloader: "/app/notices/views.py changed, reloading." The
+	// path has no colons or spaces, so "INFO:root:evil.py" can't pass for one.
+	`^\s*/?(?:[\w.-]+/)*[\w.-]+\.py changed, reloading\.?\s*$`,
+	`^\W*listening on\b`, // puma: "* Listening on http://127.0.0.1:3000"
 	`\bstarting development server at\b`,
 	`\bapplication startup complete\b`, // uvicorn
 	`\brunning \S+\.endpoint with\b`,   // Phoenix
@@ -294,16 +317,19 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 
 // ranSignal reports whether l says something ran. The signals are tools' own
 // words, and tools print them at the start of a line, after at most a symbol,
-// a time, a tag in brackets, a log level like uvicorn's "INFO:", the tool's
-// name and version or (for Django's reloader) the file that changed. A match
-// after anything else doesn't count, because it could be text someone else
-// chose that the server logged: a path ("Not Found: /compiled/successfully"),
-// a query (`Parameters: {"q"=>"compiled successfully"}`), a record id
-// ("Couldn't find User with 'id'=x compiled successfully") or a search term.
+// a time, tags in brackets, a log level like uvicorn's "INFO:" and the tool's
+// name and version (see leadIn). A match after anything else doesn't count,
+// because it could be text someone else chose that the server logged: a path
+// ("Not Found: /compiled/successfully"), a query
+// (`Parameters: {"q"=>"compiled successfully"}`), a record id ("Couldn't find
+// User with 'id'=x compiled successfully"), a search term or a request id
+// inside a tag ("[compiled-successfully] Processing by").
 //
 // It can't stop every forgery. A server that logs someone else's text at the
-// very start of a line can still print one that looks like a recompile.
-// That's why fixed is only ever a hint.
+// very start of a line can still print one that looks like a recompile, and so
+// can one that logs it as a whole tag of its own, or logs a newline someone
+// sent as it is so their text starts a line. The same goes for requests (see
+// requestForms). That's why fixed is only ever a hint.
 func ranSignal(l string) bool {
 	for _, m := range ranSignals.FindAllStringIndex(l, -1) {
 		if leadIn.MatchString(l[:m[0]]) {
@@ -313,70 +339,218 @@ func ranSignal(l string) bool {
 	return false
 }
 
-// leadIn is what may come before a signal on its line.
-var leadIn = regexp.MustCompile(`^\W*` +
-	`(?:\d{1,2}:\d{2}:\d{2}(?:\.\d+)?(?: ?[AaPp][Mm])?\s*(?:-\s*)?)?` + // 10:41:03 AM -
-	`(?:\[[\w .:-]*\]\s*)*` + // [vite] [watch] [info]
-	`(?:(?:INFO|DEBUG|NOTICE):\s*)?` + // uvicorn
-	`(?:(?:webpack|VITE)(?: v?\d\S*)?\s+)?` + // webpack 5.88.2, VITE v5.4.2
-	`(?:\S+\.py\s+)?$`) // Django: /app/views.py changed, reloading
+// The parts of a log line that may come before its own words, shared by the
+// signals and the request forms.
+const (
+	// 10:41:03 AM - or 10:41:03.120
+	logTime = `(?:\d{1,2}:\d{2}:\d{2}(?:\.\d+)?(?: ?[AaPp][Mm])?\s*(?:-\s*)?)?`
+	// [vite] [watch] [info] [abc-123]. Closed, with no spaces, so a signal
+	// can't start inside one.
+	logTags = `(?:\[[\w.:@-]*\]\s*)*`
+	// uvicorn's INFO:
+	logLevel = `(?:(?:INFO|DEBUG|NOTICE):\s*)?`
+)
 
-// requestLine finds the method, path and status of an HTTP request in a log
-// line, in the forms dev servers print: "GET /notices 500 in 30ms",
-// `"GET /notices HTTP/1.1" 500`, or `Started GET "/notices"` with no status.
-// The query string isn't part of the path.
-var requestLine = regexp.MustCompile(`\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) "?(/[^\s"?#]*)[^\s"]*"?(?: HTTP/[\d.]+"?)?(?:\s+([1-5]\d\d)\b)?`)
+// leadIn is what may come before a signal on its line: spaces and at most one
+// symbol ("✓", "*", "▲", "√", ">"), then a time, tags, a log level and the
+// tool's name. The symbol is a symbol and not just anything that isn't a word,
+// so it can't be a bracket, a quote or a word in another script
+// ("Пользователь").
+var leadIn = regexp.MustCompile(`^\s*(?:[\p{So}*•>√]\s*)?` + logTime + logTags + logLevel +
+	`(?:(?:webpack|VITE)(?: v?\d\S*)?\s+)?$`) // webpack 5.88.2, VITE v5.4.2
 
-// requestOf gives "GET /notices" and its status for a request line, with 0 when
+// mentionsRequest finds a request anywhere in a line, whatever its method:
+// "PURGE /x", `Started GET "/x"` or a quoted request line like
+// `"PROPFIND / HTTP/1.1"`, whose method can be any token. A line with one is
+// never a signal, because a server may log text the client chose next to it
+// (a forwarded address, a host, a user).
+var mentionsRequest = regexp.MustCompile(`\b[A-Z][A-Z0-9_-]+ +"?/|"[^\s"]+ \S+ HTTP/\d`)
+
+// requestForms are the request lines dev servers print. Each is anchored at
+// the start of the line, after a time, tags or a log level, so a request
+// mentioned anywhere else on a line (a logged parameter like `Parameters:
+// {"q"=>"GET /notices 200"}` or Django's "Not Found: /x GET /notices 200")
+// never reads as one. Each has the method, the path and maybe the status as
+// its groups. The query string is part of the path, as a bug may need it.
+var requestForms = func() []*regexp.Regexp {
+	const (
+		start  = `^\s*` + logTime + logTags + logLevel
+		method = `(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) `
+		path   = `(/[^\s"#]*)`
+		status = `([1-5]\d\d)`
+		// The quoted part of a request line, with no quote or space inside.
+		request = method + path + `[^\s"]* HTTP/(?:1\.[01]|0\.9)`
+		// An IPv4 or IPv6 address, with or without a port.
+		address = `[\w.:\[\]-]+`
+	)
+	return []*regexp.Regexp{
+		// Next.js, Phoenix, morgan's dev and tiny formats: "GET /notices 500 in
+		// 30ms", "[info] GET /notices". The path is the only part a client
+		// chooses, and it has no spaces.
+		regexp.MustCompile(start + method + path + `\S*(?:\s+` + status + `\b)?`),
+		// Rails: `Started GET "/notices" for 127.0.0.1`, with no status
+		regexp.MustCompile(start + `Started ` + method + `"` + path + `[^\s"]*"()`),
+		// A quoted request line. Servers log fields a client chooses before it
+		// (a user, a forwarded address), and some log a bad request line raw,
+		// quotes and all. So these forms are anchored at both ends, with the
+		// server's own status and size or reason last. The fields before the
+		// quoted request are fixed in place and can't hold a space, and the
+		// request itself can't hold a quote or a space.
+		//
+		// The common log format, Werkzeug's included:
+		// `127.0.0.1 - - [01/Jan/2026:09:00:00 +0000] "GET /notices HTTP/1.1" 500 512`
+		regexp.MustCompile(start + address + ` \S+ \S+ \[[^\]]*\] "` + request + `" ` + status + ` (?:\d+|-)\s*$`),
+		// Django: `[01/Jan/2026 09:00:00] "GET /notices HTTP/1.1" 500 145`
+		regexp.MustCompile(start + `\[[^\]]*\] "` + request + `" ` + status + ` (?:\d+|-)\s*$`),
+		// uvicorn: `INFO:     127.0.0.1:52342 - "GET /notices HTTP/1.1" 500 Internal Server Error`
+		regexp.MustCompile(start + address + ` - "` + request + `" ` + status + `(?: [A-Za-z' -]*)?\s*$`),
+	}
+}()
+
+// requestOf gives "GET /notices?page=2" and its status for a request line, with 0 when
 // the line shows no status. The key is empty if it isn't a request line.
 func requestOf(l string) (key string, status int) {
-	m := requestLine.FindStringSubmatch(l)
-	if m == nil {
+	// A server logs one request line per request. A second means someone put
+	// one in a field of their own.
+	if strings.Count(l, "HTTP/") > 1 {
 		return "", 0
 	}
-	if m[3] != "" {
-		status, _ = strconv.Atoi(m[3])
+	for _, re := range requestForms {
+		m := re.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		if m[3] != "" {
+			status, _ = strconv.Atoi(m[3])
+		}
+		return m[1] + " " + m[2], status
 	}
-	return m[1] + " " + m[2], status
+	return "", 0
 }
+
+// requestEnded is the line Rails and Phoenix print when a request they logged
+// without a status ends: "Completed 200 OK in 12ms", "[info] Sent 200 in 3ms".
+// It doesn't say which request ended, so the fix check takes the next one
+// after the trigger starts, and none if another request starts in between. A
+// server handling requests side by side can still end someone else's request
+// there.
+var requestEnded = regexp.MustCompile(`^\s*` + logTime + logTags + logLevel + `(?:Completed|Sent) ([1-5]\d\d)\b`)
+
+// endedWith gives the status on a line saying a request ended, or 0.
+func endedWith(l string) int {
+	m := requestEnded.FindStringSubmatch(l)
+	if m == nil {
+		return 0
+	}
+	status, _ := strconv.Atoi(m[1])
+	return status
+}
+
+// succeeded reports whether status is a 2xx.
+func succeeded(status int) bool {
+	return status >= 200 && status < 300
+}
+
+// unclearTrigger is the trigger of an error that seems to have needed a
+// request, when the context can't say which. No request line has it as its
+// key, so such an entry is never fixed.
+const unclearTrigger = "?"
 
 // triggerOf is the request en's error seems to have needed, or empty if it
 // doesn't look like it came from one. Dev servers log plenty of requests that
-// have nothing to do with an error (health checks, polling, favicons), so a
-// request only counts if it failed or is the one being handled when the error
-// struck:
+// have nothing to do with an error (health checks, polling, favicons), and
+// anyone who can reach the server can put their own requests next to an error
+// and then send them again to pass. So a request only counts if it's the one
+// that failed:
 //
-//  1. the nearest request near the error with a 4xx or 5xx status, looking back
+//  1. the nearest request near the error with a 5xx status, looking back
 //     through the lines before it and then on through the lines after it
-//  2. otherwise the nearest request before it that shows no status, which is a
-//     request starting (Rails' `Started GET "/notices"`, Phoenix's "GET /notices")
+//  2. otherwise the request before it that shows no status, which is a
+//     request starting (Rails' `Started GET "/notices"`, Phoenix's "GET
+//     /notices"), when it ended with a 5xx or its end isn't shown. One that
+//     ended any other way had nothing to do with the error.
 //
-// A request with a 2xx or 3xx status is never the trigger.
+// If the context holds any two requests with no status, before or after the
+// error and ended or not, or an ending that can't be tied to a request, the
+// endings may be on the wrong requests. A request's start can scroll out of
+// the context, so two that look one after the other may still have run side
+// by side. There's no telling which request failed then, and the trigger is
+// unclearTrigger, even when no request seems to have failed. So a Rails or
+// Phoenix error with two requests in its context is only ever unverified,
+// even after a recompile. A 4xx is never the trigger, as anyone can make one,
+// and nor is the server's own 501 or 505.
+//
+// One request someone else sent just before an error that came from no request
+// at all, and that hasn't ended by the time the context is captured, still
+// becomes the trigger. So does one they started after the failing request's
+// own start scrolled out of the context, which a request logging more than
+// ContextLines lines before it fails can do. Those are among the reasons fixed
+// is only a hint.
 func triggerOf(en Entry) string {
 	type seen struct {
 		key    string
 		status int
+		ended  int // for a request with no status, how it ended, if shown
+		at     int // where it is in the lines
 	}
-	var before, after []seen
-	for _, l := range slices.Backward(en.Before) {
-		if k, st := requestOf(unprefix(cut(l, maxScannedLine))); k != "" {
-			before = append(before, seen{k, st})
+	lines := append(append(slices.Clip(en.Before), en.Lines...), en.After...)
+	var reqs []seen // in the order printed
+	// stray means an ending couldn't be tied to a request, so requests were
+	// handled side by side and endings may be on the wrong ones.
+	stray := false
+	for i, l := range lines {
+		l = unprefix(cut(l, maxScannedLine))
+		if k, st := requestOf(l); k != "" {
+			reqs = append(reqs, seen{key: k, status: st, at: i})
+			continue
+		}
+		// An ending belongs to the last request, if that showed no status:
+		// one that started since would be last instead.
+		if end := endedWith(l); end != 0 && len(reqs) > 0 {
+			if last := &reqs[len(reqs)-1]; last.status == 0 && last.ended == 0 {
+				last.ended = end
+			} else {
+				stray = true
+			}
 		}
 	}
-	for _, l := range en.After {
-		if k, st := requestOf(unprefix(cut(l, maxScannedLine))); k != "" {
-			after = append(after, seen{k, st})
-		}
+	// The server's own refusals (501 for a method it doesn't know, 505 for an
+	// HTTP version it doesn't speak) never reach the app, and anyone can get
+	// one, so they're not a request failing.
+	failed := func(status int) bool {
+		return status >= 500 && status != 501 && status != 505
 	}
-	for _, r := range append(before, after...) {
-		if r.status >= 400 {
+	errorAt := len(en.Before)
+	for _, r := range slices.Backward(reqs) {
+		if r.at < errorAt && failed(r.status) {
 			return r.key
 		}
 	}
-	for _, r := range before {
+	for _, r := range reqs {
+		if r.at >= errorAt && failed(r.status) {
+			return r.key
+		}
+	}
+	var candidates []string
+	for _, r := range reqs {
+		if r.at < errorAt && r.status == 0 && (r.ended == 0 || r.ended >= 500) {
+			candidates = append(candidates, r.key)
+		}
+	}
+	// An ending doesn't say which request it ends, so with any two requests
+	// with no status in the context, an ending may be on the wrong one, and
+	// someone sending requests of their own can arrange that it is.
+	statusless := 0
+	for _, r := range reqs {
 		if r.status == 0 {
-			return r.key
+			statusless++
 		}
 	}
-	return ""
+	switch {
+	case statusless > 1 || stray:
+		return unclearTrigger
+	case len(candidates) == 0:
+		return ""
+	}
+	return candidates[0]
 }

@@ -89,7 +89,10 @@ install command again.
 ## Which agent gets the error
 
 By default, the most recently active agent **in the same tab** as the watched pane.
-That's almost always the one that just changed the code.
+That's almost always the one that just changed the code. Active means the agent
+last started working. If no agent in the tab has been seen starting work, the one
+whose status changed most recently in herdr wins. If there's no agent in the tab at
+all, Sightline asks rather than guessing. It never quietly picks one from another tab.
 
 Press `t` on an entry to pick a different agent. To pin a pane to an agent:
 
@@ -99,6 +102,12 @@ Press `t` on an entry to pick a different agent. To pin a pane to an agent:
 pane_title = "web"
 agent = "claude"
 ```
+
+`pane_title` is the pane's label or its terminal title, exactly. `agent` is matched,
+ignoring case, against the agent's herdr name (`herdr agent rename`), then the label
+on its pane, then its kind, such as `claude` or `codex`. If several agents fit, the
+one in the same tab wins, then the most recently active. If the pinned agent isn't
+running, Sightline falls back to the tab and says so.
 
 ## What the agent receives
 

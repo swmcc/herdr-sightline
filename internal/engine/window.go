@@ -21,24 +21,53 @@ const maxPending = 32
 // capturer is everything the engine keeps for one source between lines: the
 // scrubber's state, the window and the captures still collecting lines.
 type capturer struct {
-	scrub   scrubber
-	window  window
-	pending []*capture
-	missed  bool // output was swallowed, so flag the next capture MaybeGap
+	scrub scrubber
+	// shadow reads the same output but never abandons a string, so it knows what
+	// a real terminal is still hiding after scrub has given up at the cap.
+	shadow   scrubber
+	diverged bool // shadow hid something on this line that scrub showed
+	window   window
+	pending  []*capture
+	missed   bool // output was swallowed, so flag the next capture MaybeGap
 }
 
 func newCapturer(contextLines int) capturer {
-	return capturer{window: window{size: contextLines}}
+	return capturer{window: window{size: contextLines}, shadow: newShadow()}
 }
 
 // read runs lines from the adapter through the scrubber and calls use for each
 // clean line, in order. Each element is one line, with or without its line end.
+//
+// A line that a terminal would have hidden, even in part, is still passed on
+// (so the watcher can't be blinded), but it's marked as a gap: captures in
+// progress and the next capture are flagged MaybeGap.
 func (c *capturer) read(lines []string, use func(line string)) {
+	emit := func(line string) {
+		if c.diverged || c.shadow.hiding() {
+			c.missed = true
+			for _, p := range c.pending {
+				p.maybeGap = true
+			}
+		}
+		c.diverged = false
+		use(line)
+	}
 	for _, l := range lines {
 		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
-		c.scrub.write(l+"\n", use, c.hidLines)
+		for _, r := range l + "\n" {
+			c.shadow.step(r, discardLine, noGap)
+			c.scrub.step(r, emit, c.hidLines)
+			// A line end has just emitted its line, and emit checks the shadow
+			// itself, so it mustn't mark the next line.
+			if r != '\n' && c.shadow.hiding() && !c.scrub.hiding() {
+				c.diverged = true
+			}
+		}
 	}
 }
+
+func discardLine(string) {}
+func noGap()             {}
 
 // hidLines is called when the scrubber may have hidden whole lines, inside a
 // control string or by giving up on one. Either way it's a gap.
@@ -61,6 +90,8 @@ func (c *capturer) gap() {
 func (c *capturer) lost() {
 	c.gap()
 	c.scrub = scrubber{}
+	c.shadow = newShadow()
+	c.diverged = false
 }
 
 // arrivals numbers matches across every source in the order the engine saw them,
@@ -226,6 +257,16 @@ type scrubber struct {
 	// output that keeps reopening strings still hits the cap.
 	hiddenBytes int
 	hiddenLines int
+	// shadow means only the state is tracked: no text is kept and strings are
+	// never abandoned. Its work per rune is constant, so it can't be made slow.
+	shadow bool
+}
+
+func newShadow() scrubber { return scrubber{shadow: true} }
+
+// hiding reports whether the scrubber is inside a control string.
+func (s *scrubber) hiding() bool {
+	return s.state == scrubOSC || s.state == scrubString || s.state == scrubStringEsc
 }
 
 // write runs text through the scrubber. emit gets each complete, clean line.
@@ -258,7 +299,7 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 		case r >= 0x20 && r <= 0x2f:
 			s.state = scrubEscInter
 		case r < 0x20 || r == ctrlDEL:
-			s.control(r, emit)
+			s.control(r, emit, hid)
 		default:
 			// The final byte of a two byte escape, or junk. Neither is shown.
 			s.state = scrubText
@@ -268,7 +309,7 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 		switch {
 		case r >= 0x20 && r <= 0x2f:
 		case r < 0x20 || r == ctrlDEL:
-			s.control(r, emit)
+			s.control(r, emit, hid)
 		default:
 			s.state = scrubText
 		}
@@ -279,7 +320,7 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 		case r >= 0x40 && r <= 0x7e:
 			s.state = scrubText
 		case r < 0x20 || r == ctrlDEL:
-			s.control(r, emit)
+			s.control(r, emit, hid)
 		case r >= 0x20 && r <= 0x3f:
 			if s.csiBytes > maxCSIBytes {
 				s.state = scrubCSIIgnore
@@ -352,10 +393,13 @@ func (s *scrubber) anywhere(r rune) bool {
 
 // control handles a C0 control or DEL inside an escape or CSI. A terminal acts on
 // it and stays in the sequence. Only a line end matters here, because it ends a
-// line.
-func (s *scrubber) control(r rune, emit func(string)) {
+// line. The sequence then carries on into the next line and eats its first
+// characters, as a terminal does, which could quietly defeat a pattern anchored
+// at the start of a line. So it counts as a gap.
+func (s *scrubber) control(r rune, emit func(string), hid func()) {
 	if r == '\n' {
 		s.endLine(emit)
+		hid()
 	}
 }
 
@@ -374,7 +418,7 @@ func (s *scrubber) swallow(r rune, emit func(string), hid func()) {
 		// may be missing, which is a gap, cap or no cap.
 		hid()
 	}
-	if s.hiddenBytes <= maxHiddenBytes && s.hiddenLines <= maxHiddenLines {
+	if s.shadow || s.hiddenBytes <= maxHiddenBytes && s.hiddenLines <= maxHiddenLines {
 		return
 	}
 	s.hiddenBytes, s.hiddenLines = 0, 0
@@ -388,6 +432,9 @@ func (s *scrubber) swallow(r rune, emit func(string), hid func()) {
 
 // text handles r outside any escape sequence.
 func (s *scrubber) text(r rune, emit func(string)) {
+	if s.shadow {
+		return
+	}
 	switch {
 	case r == '\n':
 		s.endLine(emit)
@@ -405,6 +452,9 @@ func (s *scrubber) visible(r rune) {
 }
 
 func (s *scrubber) endLine(emit func(string)) {
+	if s.shadow {
+		return
+	}
 	emit(s.line.String())
 	s.line.Reset()
 }
@@ -425,6 +475,12 @@ var invisible = []*unicode.RangeTable{
 // cleanLine scrubs a single string on its own, such as a pane title, joining any
 // lines in it. An escape sequence that never ends swallows the rest, but text
 // before it on the same line is kept, as a terminal would show it.
+//
+// It joins the lines with nothing between them, so text either side of a hidden
+// string can run together ("Err" and "or" make "Error"). That's harmless for
+// titles and for lines the stream has already scrubbed, but it must never be
+// used on anything that reaches detection. Pane output goes through
+// capturer.read instead.
 func cleanLine(s string) string {
 	var sc scrubber
 	var b strings.Builder

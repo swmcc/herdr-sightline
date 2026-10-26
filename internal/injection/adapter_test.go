@@ -111,8 +111,10 @@ func TestReadPaneIsValidUTF8(t *testing.T) {
 	}
 }
 
-// After a reconnect the adapter must call Gap, never Unwatch then Watch. #9's
-// feed owns the reconnect, so this is the engine side of that contract. With Gap
+// After a reconnect the adapter must call Gap, never Unwatch then Watch. The
+// feed (internal/feed) keeps its watchers through a reconnect of the event
+// stream, because pane reads are polls that pick up where they left off, and it
+// calls Gap when a pane moves. This is the engine side of that contract. With Gap
 // the error being captured when the connection dropped is flagged, and the
 // modes that stop redraws being followed are kept. Unwatch files it straight
 // away as if it were complete. It also forgets the modes, which this test

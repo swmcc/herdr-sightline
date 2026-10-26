@@ -20,6 +20,8 @@ type Appended struct {
 	Block string
 	// Regex is the rule as it went in.
 	Regex string
+	// Created says there was no file before, so undo removes it again.
+	Created bool
 }
 
 // AppendIgnore adds an [[ignore]] table for regex to the end of the config file
@@ -82,7 +84,7 @@ func AppendIgnore(dir, regex string, now time.Time) (Appended, error) {
 	if err := replaceFile(path, data, exists, next); err != nil {
 		return Appended{}, err
 	}
-	return Appended{Path: path, Block: block, Regex: regex}, nil
+	return Appended{Path: path, Block: block, Regex: regex, Created: !exists}, nil
 }
 
 // ErrChanged says the file no longer ends with the table that was appended, so
@@ -107,6 +109,13 @@ func RemoveAppended(a Appended) error {
 		return ErrChanged
 	}
 	next := data[:len(data)-len(a.Block)]
+	if a.Created && len(next) == 0 {
+		// The file didn't exist before the rule, so it goes.
+		if err := os.Remove(a.Path); err != nil {
+			return fmt.Errorf("removing config: %w", err)
+		}
+		return nil
+	}
 	// Taking a whole table off the end can't break a file that loads, but check
 	// anyway. A file that was already broken is left for the person to fix.
 	if _, err := Parse(a.Path, data); err == nil {
@@ -160,10 +169,14 @@ func tomlString(s string) (string, error) {
 // resolve follows a symlink at path, so writing replaces the file it points at
 // rather than the link. A path that doesn't exist yet is used as it is.
 func resolve(path string) (string, error) {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return path, nil
+	}
 	target, err := filepath.EvalSymlinks(path)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		return path, nil
+		// A link to nothing. Writing would replace the link with a file.
+		return "", &Error{File: path, Msg: "is a symlink to a file that doesn't exist, so it was left alone"}
 	case err != nil:
 		return "", fmt.Errorf("finding the config file: %w", err)
 	}
@@ -173,7 +186,9 @@ func resolve(path string) (string, error) {
 // replaceFile writes data to path through a temporary file in the same directory
 // and a rename, keeping the file's mode. old is what the file held when it was
 // read. If that's changed in the meantime (an editor saved it), nothing is
-// written, so someone else's edit isn't lost.
+// written. A save landing between that check and the rename would still be
+// lost, but the gap is tiny. The rename gives the file a new inode, so a hard
+// link to it is broken and its owner becomes whoever runs the feed.
 func replaceFile(path string, old []byte, existed bool, data []byte) error {
 	mode := os.FileMode(0o600)
 	if existed {

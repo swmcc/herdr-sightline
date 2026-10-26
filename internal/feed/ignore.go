@@ -22,6 +22,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/swmcc/herdr-sightline/internal/config"
 )
@@ -46,7 +47,8 @@ type neverState struct {
 
 	added   *config.Appended // the last rule added, until undone or too old
 	addedAt time.Time
-	applied bool // a reload has picked the added rule up
+	applied bool   // a reload has picked the added rule up
+	removed string // a rule just undone, until a reload shows it gone
 }
 
 // neverMsg is the result of saving or undoing a rule.
@@ -92,12 +94,42 @@ func checkRule(expr, line string) (ok bool, note string) {
 	if !re.MatchString(line) {
 		return false, "It doesn't match this entry's line."
 	}
+	for _, p := range otherErrors(line) {
+		if re.MatchString(p) {
+			return false, fmt.Sprintf("It also matches other errors like %q, so it would hide far too much.", p)
+		}
+	}
 	return true, "Compiles and matches this entry's line."
+}
+
+// otherErrors are lines a rule for line must not match: common errors, and
+// line's own start followed by something unrelated. A rule that matches those
+// hides a whole kind of error rather than this one. The pane chooses the line,
+// so without this it could steer the suggestion to ^Error: and still pass.
+func otherErrors(line string) []string {
+	probes := []string{"Error: boom", "panic: boom", "TypeError: boom", "error: boom"}
+	start := ""
+	if i := strings.Index(line, ": "); i >= 0 {
+		start = line[:i+2]
+	} else if i := strings.IndexByte(strings.TrimLeftFunc(line, unicode.IsSpace), ' '); i >= 0 {
+		lead := len(line) - len(strings.TrimLeftFunc(line, unicode.IsSpace))
+		start = line[:lead+i+1]
+	}
+	if start != "" {
+		for _, rest := range []string{"zzq", "zzq unrelated words here", "'zzq unrelated'", `"zzq unrelated"`, "`zzq unrelated'"} {
+			probes = append(probes, start+rest)
+		}
+		// The same shape with every word swapped, which catches a rule that
+		// made every word after the start general.
+		probes = append(probes, start+anyWord.ReplaceAllString(line[len(start):], "zzq"))
+	}
+	return slices.DeleteFunc(probes, func(p string) bool { return p == line })
 }
 
 var (
 	// cutMarker is what the engine adds to a line it shortened to store.
 	cutMarker = regexp.MustCompile(` \[\d+ more bytes cut\]$`)
+	anyWord   = regexp.MustCompile(`\S+`)
 	uuid      = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 	hexNumber = regexp.MustCompile(`^0[xX][0-9a-fA-F]+`)
 	hexRun    = regexp.MustCompile(`^[0-9a-fA-F]{7,}`)
@@ -108,19 +140,41 @@ var (
 // values and, after the first ": ", paths) become patterns. Everything else is
 // kept literally. It's anchored at the start, and at the end too unless the line
 // was long and only its start is used.
+//
+// If that would hide other errors as well (see checkRule), it falls back to the
+// line exactly as printed. A narrow rule is better than a broad one.
 func suggestRule(line string) string {
+	s := buildRule(line, true)
+	if fit, _ := checkRule(s, line); fit {
+		return s
+	}
+	return buildRule(line, false)
+}
+
+// reSpace is what RE2's \s matches. Only this is trimmed and written as \s*, so
+// a line padded with something wider, like a non-breaking space, keeps it as a
+// literal and the rule still matches.
+const reSpace = " \t\n\f\r"
+
+// buildRule writes the rule for line, with the parts that change made general
+// when general is set and everything literal when it isn't.
+func buildRule(line string, general bool) string {
 	open := false
-	if loc := cutMarker.FindStringIndex(line); loc != nil {
+	// Only a line long enough to have been cut really was. A pane can print the
+	// marker itself to drop the end anchor from a short line.
+	if loc := cutMarker.FindStringIndex(line); loc != nil && loc[0] >= suggestFrom {
 		line, open = line[:loc[0]], true
 	}
-	body := strings.TrimRightFunc(line, unicode.IsSpace)
+	body := strings.TrimRight(line, reSpace)
 	trailing := len(body) < len(line)
-	trimmed := strings.TrimLeftFunc(body, unicode.IsSpace)
+	trimmed := strings.TrimLeft(body, reSpace)
 	leading := len(trimmed) < len(body)
 	body = trimmed
 	if len(body) > suggestFrom {
+		// Cut at a space when there's one far enough in. One near the start
+		// would leave a rule of a word or two.
 		cut := strings.LastIndexByte(body[:suggestFrom], ' ')
-		if cut <= 0 {
+		if cut < suggestFrom/2 {
 			cut = suggestFrom
 			for cut > 0 && !utf8.RuneStart(body[cut]) {
 				cut--
@@ -153,7 +207,7 @@ func suggestRule(line string) string {
 		c := body[i]
 
 		// A quoted value. An apostrophe inside a word ("can't") isn't a quote.
-		if (c == '\'' || c == '"' || c == '`') && atWord {
+		if general && (c == '\'' || c == '"' || c == '`') && atWord {
 			closer := c
 			end := strings.IndexByte(rest[1:], closer)
 			if c == '`' {
@@ -168,7 +222,7 @@ func suggestRule(line string) string {
 				continue
 			}
 		}
-		if atWord {
+		if general && atWord {
 			if m := uuid.FindString(rest); m != "" && wordEnds(rest, len(m)) {
 				pattern(`[0-9a-fA-F-]+`)
 				i += len(m)
@@ -188,7 +242,8 @@ func suggestRule(line string) string {
 			// A path after the first ": " is where it happened, which moves.
 			if pastColon && prev == ' ' {
 				token := rest
-				if j := strings.IndexAny(rest, " \t"); j >= 0 {
+				// Split where \S stops, so \S+ covers the whole token.
+				if j := strings.IndexAny(rest, reSpace); j >= 0 {
 					token = rest[:j]
 				}
 				if strings.ContainsAny(token, `/\`) {
@@ -199,7 +254,7 @@ func suggestRule(line string) string {
 			}
 		}
 		// A number, unless it's part of a name like E0425 or utf8.
-		if isDigit(c) && !wordStartsWithLetter(body, i) {
+		if general && isDigit(c) && !wordStartsWithLetter(body, i) {
 			j := i
 			for j < len(body) && isDigit(body[j]) {
 				j++
@@ -280,6 +335,12 @@ func (m *Model) openNever(lines []string) {
 // do what they do in the list.
 func (m *Model) neverKey(k tea.KeyMsg) tea.Cmd {
 	n := &m.never
+	if n.busy {
+		// The save's result decides what happens next. Leaving now would say
+		// no rule was added when one may have been.
+		m.status = "Still saving the rule."
+		return nil
+	}
 	switch k.Type {
 	case tea.KeyEsc:
 		m.mode = modeList
@@ -387,13 +448,14 @@ func (m *Model) neverDone(msg neverMsg) {
 		m.status = fmt.Sprintf("Couldn't undo the rule: %v", msg.err)
 	case msg.undo:
 		m.status = "Removed the rule, so sightline.toml is as it was. Anything it dismissed stays dismissed."
+		n.removed = n.added.Regex
 		n.added = nil
 	case msg.err != nil:
 		// Stay in the editor so the rule isn't lost.
 		m.status = fmt.Sprintf("Not saved: %v", msg.err)
 	default:
 		a := msg.appended
-		n.added, n.addedAt, n.applied = &a, m.now(), false
+		n.added, n.addedAt, n.applied, n.removed = &a, m.now(), false, ""
 		m.mode = modeList
 		m.status = fmt.Sprintf("Added an ignore rule to sightline.toml. It applies once the feed reloads the file. Press u within %ds to undo it.", int(undoFor.Seconds()))
 	}
@@ -402,9 +464,18 @@ func (m *Model) neverDone(msg neverMsg) {
 // noteRule follows a reload. The first reload that has the new rule in it is
 // the one that applied it, so the status says the rule is in and how to undo
 // it, rather than just that the file was reloaded.
+//
+// The same goes for an undo: the reload after it says the rule is gone.
 func (m *Model) noteRule() {
 	n := &m.never
-	if n.added == nil || n.applied || m.cfgErr != nil {
+	if m.cfgErr != nil {
+		return
+	}
+	if n.removed != "" && !slices.ContainsFunc(m.cfg.Ignores, func(ig config.Ignore) bool { return ig.Regex.String() == n.removed }) {
+		n.removed = ""
+		m.status = "Rule removed. " + m.status
+	}
+	if n.added == nil || n.applied {
 		return
 	}
 	for _, ig := range m.cfg.Ignores {
@@ -434,10 +505,11 @@ func (m *Model) neverView() string {
 	}
 	out = append(out, ruleLines(n.text, n.cursor, w)...)
 	out = append(out, "")
+	// The note can quote the rule, which can hold anything that was pasted.
 	if ok, note := checkRule(string(n.text), n.line); ok {
-		out = append(out, okStyle.Render(fit("✓ "+note, w)))
+		out = append(out, okStyle.Render(fit("✓ "+clean(note), w)))
 	} else {
-		out = append(out, failStyle.Render(fit("✗ "+note, w)))
+		out = append(out, failStyle.Render(fit("✗ "+clean(note), w)))
 	}
 	out = append(out, faint.Render(fit("Enter adds it to the end of "+config.Path(m.configDir)+".", w)))
 	for len(out) < m.height-2 {
@@ -452,20 +524,26 @@ func (m *Model) neverView() string {
 func ruleLines(text []rune, cursor, w int) []string {
 	w = max(w-2, 8)
 	cells := append(slices.Clone(text), ' ') // room for the cursor at the end
+	// Rows are measured in cells, not runes, because the terminal cuts anything
+	// past its width and a wide character takes two.
 	var out []string
-	for start := 0; start < len(cells); start += w {
-		end := min(start+w, len(cells))
-		var b strings.Builder
-		for i := start; i < end; i++ {
-			s := clean(string(cells[i]))
-			if i == cursor {
-				s = cursorStyle.Render(s)
-			}
-			b.WriteString(s)
+	var b strings.Builder
+	used := 0
+	for i, r := range cells {
+		s := clean(string(r))
+		width := runewidth.StringWidth(s)
+		if used > 0 && used+width > w {
+			out = append(out, "  "+b.String())
+			b.Reset()
+			used = 0
 		}
-		out = append(out, "  "+b.String())
+		if i == cursor {
+			s = cursorStyle.Render(s)
+		}
+		b.WriteString(s)
+		used += width
 	}
-	return out
+	return append(out, "  "+b.String())
 }
 
 var cursorStyle = lipgloss.NewStyle().Reverse(true)

@@ -181,6 +181,24 @@ func TestAppendIgnoreCreatesTheFile(t *testing.T) {
 	}
 }
 
+// There was no file before, so undo leaves none.
+func TestRemoveAppendedRemovesAFileItCreated(t *testing.T) {
+	dir := t.TempDir()
+	a, err := AppendIgnore(dir, `x`, addedOn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !a.Created {
+		t.Error("Created isn't set for a new file")
+	}
+	if err := RemoveAppended(a); err != nil {
+		t.Fatalf("RemoveAppended: %v", err)
+	}
+	if _, err := os.Stat(Path(dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the file is still there after undo (stat: %v)", err)
+	}
+}
+
 // The feed must never break the config or write somewhere odd.
 func TestAppendIgnoreRefusesToRiskTheConfig(t *testing.T) {
 	tests := []struct {
@@ -193,6 +211,11 @@ func TestAppendIgnoreRefusesToRiskTheConfig(t *testing.T) {
 				t.Fatal(err)
 			}
 		}, "not a regular file"},
+		{"symlink to nothing", func(t *testing.T, dir string) {
+			if err := os.Symlink(filepath.Join(dir, "missing.toml"), Path(dir)); err != nil {
+				t.Skipf("can't make a symlink here: %v", err)
+			}
+		}, "symlink to a file that doesn't exist"},
 		{"already broken", func(t *testing.T, dir string) {
 			writeBytes(t, Path(dir), []byte("settle_seconds = \n"), 0o600)
 		}, "already has a problem"},

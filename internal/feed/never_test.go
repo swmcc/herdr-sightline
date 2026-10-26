@@ -97,11 +97,16 @@ func TestNeverAgainAddsARuleAndUndoesIt(t *testing.T) {
 
 	h.clock.Advance(10 * time.Second)
 	h.run(h.press("u"))
-	if got := fileText(t, dir); got != "" {
-		t.Errorf("after undo sightline.toml is %q, want it empty again", got)
+	if _, err := os.Stat(config.Path(dir)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("after undo sightline.toml is still there (stat: %v), want it gone as before", err)
 	}
 	if !strings.Contains(h.model.status, "Removed the rule") {
 		t.Errorf("undo status = %q", h.model.status)
+	}
+	// The reload after the undo still says so.
+	h.update(configMsg{config.Update{Config: config.Default()}})
+	if h.model.status != "Rule removed. Reloaded sightline.toml." {
+		t.Errorf("reload after undo status = %q", h.model.status)
 	}
 	if cmd := h.press("u"); cmd != nil {
 		t.Error("a second u tried to undo again")
@@ -139,6 +144,29 @@ func TestNeverAgainEditor(t *testing.T) {
 	}
 	if _, err := os.Stat(config.Path(dir)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("nothing should have been written (stat: %v)", err)
+	}
+}
+
+// While the save runs the editor stays put, so its result can't land on a
+// different rule or contradict a "no rule added".
+func TestNeverAgainWaitsForTheSave(t *testing.T) {
+	h, dir, _ := neverHarness(t)
+	h.press("n")
+	save := h.press("enter")
+	if save == nil {
+		t.Fatal("enter didn't save")
+	}
+	h.press("esc")
+	h.press("x")
+	if h.model.mode != modeNever || h.model.status != "Still saving the rule." {
+		t.Errorf("mode %v, status %q, want the editor to wait for the save", h.model.mode, h.model.status)
+	}
+	h.run(save)
+	if h.model.mode != modeList || !strings.Contains(h.model.status, "Added an ignore rule") {
+		t.Errorf("mode %v, status %q after the save", h.model.mode, h.model.status)
+	}
+	if !strings.Contains(fileText(t, dir), "[[ignore]]") {
+		t.Error("the rule wasn't written")
 	}
 }
 

@@ -221,6 +221,13 @@ Patterns use Go's [RE2 syntax](https://github.com/google/re2/wiki/Syntax). There
 lookbehind or backreferences, but matching always runs in linear time, which matters
 when the text being matched is untrusted.
 
+Changes apply as soon as you save. There's no need to reopen the feed and nothing
+in it is lost. Patterns and ignore rules apply to the next line. A new ignore rule
+also dismisses any new entries it matches, but never one you've sent. A new
+`settle_seconds` or `context_lines` applies to the next error or fix check, not one
+already under way. If the file has a mistake in it, the feed shows the error and
+carries on with the last good version.
+
 Press `n` on any entry to add an ignore rule for it without editing the file.
 
 ## Safety
@@ -305,7 +312,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [ ] End the wait when the agent an error was sent to exits ([#57](https://github.com/swmcc/herdr-sightline/issues/57))
 - [x] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
 - [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
-- [ ] Apply config changes without reopening the feed ([#58](https://github.com/swmcc/herdr-sightline/issues/58))
+- [x] Apply config changes without reopening the feed ([#58](https://github.com/swmcc/herdr-sightline/issues/58))
 - [ ] Recover from a panic in the feed cleanly ([#59](https://github.com/swmcc/herdr-sightline/issues/59))
 - [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
 - [x] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))

@@ -71,7 +71,7 @@ type fixState struct {
 
 	// gaps are the times of recent Gap reads during the settle period. A repeat
 	// matched at one of them came from lines that may be a replay. Only times
-	// within CaptureWait are kept, as captures from older reads have been filed.
+	// within longestWait are kept, as captures from older reads have been filed.
 	gaps []time.Time
 }
 
@@ -120,7 +120,9 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 		if !f.settling || f.ran || r.entry.Source.ID != src {
 			continue
 		}
-		if !now.After(f.from) || now.After(f.from.Add(e.opts.Settle/2)) {
+		// Half of this settle period's own length, as Reconfigure may have
+		// changed Settle since it started.
+		if !now.After(f.from) || now.After(f.from.Add(f.until.Sub(f.from)/2)) {
 			continue
 		}
 		if !read {
@@ -149,7 +151,7 @@ func (e *Engine) uncertainRead(src SourceID, now time.Time, gap bool) {
 		}
 		f.unsure = true
 		if gap {
-			oldest := now.Add(-e.opts.CaptureWait)
+			oldest := now.Add(-e.longestWait())
 			f.gaps = slices.DeleteFunc(f.gaps, func(t time.Time) bool { return t.Before(oldest) })
 			f.gaps = append(f.gaps, now)
 		}
@@ -189,12 +191,20 @@ func (e *Engine) recurred(r *record, matchedAt time.Time) {
 }
 
 // checkFixes gives a verdict on every entry whose settle period is over. It
-// waits a further CaptureWait, so a repeat that matched just before the end has
-// been filed (and has made the entry still failing) before the verdict.
+// waits a further CaptureWait (or longer, see longestWait), so a repeat that
+// matched just before the end has been filed (and has made the entry still
+// failing) before the verdict.
 func (e *Engine) checkFixes(now time.Time) {
+	wait := time.Duration(-1) // only worked out once an entry is settling
 	for _, r := range e.records {
 		f := r.fix
-		if !f.settling || now.Before(f.until.Add(e.opts.CaptureWait)) {
+		if !f.settling {
+			continue
+		}
+		if wait < 0 {
+			wait = e.longestWait()
+		}
+		if now.Before(f.until.Add(wait)) {
 			continue
 		}
 		if f.ran && !f.unsure && !f.lateRepeat {

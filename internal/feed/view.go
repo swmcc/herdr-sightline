@@ -200,9 +200,6 @@ func (m *Model) headerLines(w int) []string {
 	if m.cfgErr != nil {
 		problems = append(problems, fmt.Sprintf("sightline.toml: %v", m.cfgErr))
 	}
-	if m.cfgPending {
-		problems = append(problems, "sightline.toml changed. New patterns and settings apply when the feed is reopened.")
-	}
 	if m.listErr != nil {
 		problems = append(problems, m.listErr.Error())
 	}

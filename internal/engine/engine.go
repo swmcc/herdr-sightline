@@ -72,16 +72,83 @@ type record struct {
 // between 0 and 200. MaxEntries of zero or less means 200, and anything else is
 // clamped to between 10 and 10,000.
 func New(opts Options) *Engine {
+	return &Engine{
+		opts:    clamp(opts),
+		sources: make(map[SourceID]*source),
+		byID:    make(map[EntryID]*record),
+	}
+}
+
+// clamp keeps opts within the limits New describes. Reconfigure uses it too, so
+// a reload can't get round them.
+func clamp(opts Options) Options {
 	opts.ContextLines = min(max(opts.ContextLines, 0), maxContextLines)
 	if opts.MaxEntries <= 0 {
 		opts.MaxEntries = defaultMaxEntries
 	}
 	opts.MaxEntries = min(max(opts.MaxEntries, minMaxEntries), maxMaxEntries)
-	return &Engine{
-		opts:    opts,
-		sources: make(map[SourceID]*source),
-		byID:    make(map[EntryID]*record),
+	return opts
+}
+
+// Reconfigure swaps in new options without losing entries, so a change to
+// sightline.toml applies while the feed is open (#58). They're clamped as New
+// clamps them. Each option takes effect like this:
+//
+//   - Matchers and Ignores apply from the next line fed. A capture already in
+//     progress carries on and is filed as usual.
+//   - ClosingLine applies to the next Message.
+//   - ContextLines applies to captures that start after. A capture in progress
+//     keeps the limit it started with, so it never loses a line it has. Each
+//     source's window takes the new size straight away, so a smaller one drops
+//     its oldest lines, which were only waiting to be context for a later error.
+//   - CaptureWait applies to captures that start after. A capture in progress
+//     keeps its wait, and the fix check still waits for it before a verdict
+//     (see longestWait).
+//   - Settle applies to settle periods that start after. One under way keeps
+//     its length.
+//   - Cooldown applies from now, to the next repeat of a dismissed entry.
+//   - MaxEntries applies from now. If it shrank, entries are dropped straight
+//     away in the usual order (see trim), and an entry being checked is still
+//     never dropped.
+//
+// A new ignore rule should work straight away (#14), so any new entry whose
+// error line an ignore rule matches is dismissed, and Reconfigure returns how
+// many were. Only new entries. An entry that has been sent, is settling, is
+// still failing or has a verdict is left alone, because it's the answer to
+// whether a fix worked and an ignore rule shouldn't hide that. A line cut short
+// to be stored (see capStored) is matched as it was kept.
+func (e *Engine) Reconfigure(opts Options) (dismissed int) {
+	e.opts = clamp(opts)
+	for _, s := range e.sources {
+		w := &s.capture.window
+		w.size = e.opts.ContextLines
+		if extra := len(w.lines) - w.size; extra > 0 {
+			w.lines = w.lines[extra:]
+		}
 	}
+	for _, r := range e.records {
+		if r.entry.State == StateNew && len(r.entry.Lines) > 0 && e.ignored(r.entry.Lines[0]) {
+			e.dismissed(r)
+			dismissed++
+		}
+	}
+	e.trim(nil)
+	return dismissed
+}
+
+// longestWait is how long the longest capture in progress waits, and at least
+// CaptureWait. The two only differ after Reconfigure has shortened CaptureWait
+// while captures with the old wait are still collecting lines. The fix check
+// waits this long, so a repeat matched before a settle period ends is still
+// filed before its verdict.
+func (e *Engine) longestWait() time.Duration {
+	wait := e.opts.CaptureWait
+	for _, s := range e.sources {
+		for _, c := range s.capture.pending {
+			wait = max(wait, c.due.Sub(c.matchedAt))
+		}
+	}
+	return wait
 }
 
 // Watch starts accepting lines from src. Watching a source again updates its

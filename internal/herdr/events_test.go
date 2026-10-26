@@ -193,8 +193,12 @@ func TestSubscribeReconnects(t *testing.T) {
 			first := nextSubscriber(t, srv)
 			tt.cut(first)
 
-			if ev := nextEvent(t, events); ev.Kind != herdr.EventReconnected {
+			ev := nextEvent(t, events)
+			if ev.Kind != herdr.EventReconnected {
 				t.Fatalf("event = %+v, want reconnected", ev)
+			}
+			if ev.Err == nil {
+				t.Error("reconnected event has no cause")
 			}
 			second := nextSubscriber(t, srv)
 			if string(second.Subscriptions) != string(first.Subscriptions) {
@@ -221,12 +225,15 @@ func TestSubscribeRetriesUntilHerdrIsBack(t *testing.T) {
 	first := nextSubscriber(t, srv)
 	nextRequest(t, srv)
 
-	// Answer the next two attempts with nonsense, like a server that's still
-	// starting, then let the third through.
+	// Answer the next two attempts like a server that's still starting, with a
+	// temporary error and then nonsense, and let the third through.
 	attempts := make(chan struct{}, 8)
 	srv.Handle("events.subscribe", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
 		attempts <- struct{}{}
-		if len(attempts) <= 2 {
+		switch len(attempts) {
+		case 1:
+			return nil, &herdrtest.ErrorBody{Code: "shutting_down", Message: "handing off"}
+		case 2:
 			return json.RawMessage(`{"type":"not_ready"}`), nil
 		}
 		return map[string]string{"type": "subscription_started"}, nil

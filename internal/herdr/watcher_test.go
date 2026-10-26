@@ -30,11 +30,12 @@ func numberedLines(from, to int) []string {
 
 func TestDiffSnapshots(t *testing.T) {
 	tests := []struct {
-		name    string
-		prev    Snapshot
-		curr    Snapshot
-		want    []string
-		wantGap bool
+		name          string
+		prev          Snapshot
+		curr          Snapshot
+		want          []string
+		wantGap       bool
+		wantAmbiguous bool
 	}{
 		{
 			name: "appended lines",
@@ -89,9 +90,30 @@ func TestDiffSnapshots(t *testing.T) {
 			want: []string{"x"},
 		},
 		{
-			name: "a window of nothing but one repeated line can't show new copies",
-			prev: snap(strings.Repeat(".\n", 9)+".", true),
-			curr: snap(strings.Repeat(".\n", 9)+".", true),
+			name:          "a window of one repeated line is ambiguous",
+			prev:          snap(strings.Repeat(".\n", 9)+".", true),
+			curr:          snap(strings.Repeat(".\n", 9)+".", true),
+			wantAmbiguous: true,
+		},
+		{
+			name:          "a crash loop repeating a block is ambiguous",
+			prev:          snap(strings.Repeat("Error: boom\n    at a\n    at b\n", 4)+"$ ", true),
+			curr:          snap(strings.Repeat("Error: boom\n    at a\n    at b\n", 4)+"$ ", true),
+			wantAmbiguous: true,
+		},
+		{
+			name:    "an empty pane then more than the window holds",
+			prev:    snap("", false),
+			curr:    snap(numbered(1, 10), true),
+			want:    numberedLines(1, 9),
+			wantGap: true,
+		},
+		{
+			name:    "a lone line then more than the window holds",
+			prev:    snap("$ \nmake", false),
+			curr:    snap("$ \nmore\nstuff", true),
+			want:    []string{"$ ", "more"},
+			wantGap: true,
 		},
 		{
 			name:    "cleared screen",
@@ -145,6 +167,9 @@ func TestDiffSnapshots(t *testing.T) {
 			if got.Gap != tt.wantGap {
 				t.Errorf("gap = %v, want %v", got.Gap, tt.wantGap)
 			}
+			if got.Ambiguous != tt.wantAmbiguous {
+				t.Errorf("ambiguous = %v, want %v", got.Ambiguous, tt.wantAmbiguous)
+			}
 		})
 	}
 }
@@ -165,42 +190,56 @@ func TestPaneWatcherNext(t *testing.T) {
 			name:   "first read returns what's already there",
 			settle: 2,
 			steps: []step{
-				{snap: snap("a\nb\n$ ", false), want: []string{"a", "b"}, initial: true},
+				{snap: snap("a\nb\n$ ", false), want: []string{"a", "b", "$ "}, initial: true},
+			},
+		},
+		{
+			name:   "a stale last line from before watching isn't news later",
+			settle: 2,
+			steps: []step{
+				{snap: snap("a\nError: listen EADDRINUSE", false), want: []string{"a", "Error: listen EADDRINUSE"}, initial: true},
+				{snap: snap("a\nError: listen EADDRINUSE", false)},
+				{snap: snap("a\nError: listen EADDRINUSE", false)},
+				{snap: snap("a\nError: listen EADDRINUSE\n$ ", false)},
 			},
 		},
 		{
 			name:   "a growing last line waits for the line after it",
 			settle: 2,
 			steps: []step{
-				{snap: snap("a\nTypeEr", false), want: []string{"a"}, initial: true},
-				{snap: snap("a\nTypeError: x", false)},
-				{snap: snap("a\nTypeError: x is undefined\n    at main", false), want: []string{"TypeError: x is undefined"}},
+				{snap: snap("a\n$ ", false), want: []string{"a", "$ "}, initial: true},
+				{snap: snap("a\n$ \nTypeEr", false)},
+				{snap: snap("a\n$ \nTypeError: x", false)},
+				{snap: snap("a\n$ \nTypeError: x is undefined\n    at main", false), want: []string{"TypeError: x is undefined"}},
 			},
 		},
 		{
 			name:   "a last line that stays put is reported once",
 			settle: 2,
 			steps: []step{
-				{snap: snap("a\nError: boom", false), want: []string{"a"}, initial: true},
-				{snap: snap("a\nError: boom", false), want: []string{"Error: boom"}},
-				{snap: snap("a\nError: boom", false)},
-				{snap: snap("a\nError: boom\n$ ", false)},
+				{snap: snap("a\n$ ", false), want: []string{"a", "$ "}, initial: true},
+				{snap: snap("a\n$ \nError: boom", false)},
+				{snap: snap("a\n$ \nError: boom", false), want: []string{"Error: boom"}},
+				{snap: snap("a\n$ \nError: boom", false)},
+				{snap: snap("a\n$ \nError: boom\n$ ", false)},
 			},
 		},
 		{
 			name:   "a settled line that then grows is reported again in full",
 			settle: 2,
 			steps: []step{
-				{snap: snap("a\nError", false), want: []string{"a"}, initial: true},
-				{snap: snap("a\nError", false), want: []string{"Error"}},
-				{snap: snap("a\nError: boom\n$ ", false), want: []string{"Error: boom"}},
+				{snap: snap("a\n$ ", false), want: []string{"a", "$ "}, initial: true},
+				{snap: snap("a\n$ \nError", false)},
+				{snap: snap("a\n$ \nError", false), want: []string{"Error"}},
+				{snap: snap("a\n$ \nError: boom\n$ ", false), want: []string{"Error: boom"}},
 			},
 		},
 		{
 			name:   "the same line printed twice is reported twice",
 			settle: 2,
 			steps: []step{
-				{snap: snap("a\nok", false), want: []string{"a"}, initial: true},
+				{snap: snap("a\n", false), want: []string{"a"}, initial: true},
+				{snap: snap("a\nok", false)},
 				{snap: snap("a\nok", false), want: []string{"ok"}},
 				{snap: snap("a\nok\nok", false)},
 				{snap: snap("a\nok\nok", false), want: []string{"ok"}},
@@ -219,7 +258,7 @@ func TestPaneWatcherNext(t *testing.T) {
 			name:   "settling can be turned off",
 			settle: 0,
 			steps: []step{
-				{snap: snap("a\nError: boom", false), want: []string{"a"}, initial: true},
+				{snap: snap("a\n", false), want: []string{"a"}, initial: true},
 				{snap: snap("a\nError: boom", false)},
 				{snap: snap("a\nError: boom", false)},
 				{snap: snap("a\nError: boom\n$ ", false), want: []string{"Error: boom"}},
@@ -229,8 +268,7 @@ func TestPaneWatcherNext(t *testing.T) {
 			name:   "a gap after a settled line doesn't lose anything",
 			settle: 2,
 			steps: []step{
-				{snap: snap("a\nError: boom", false), want: []string{"a"}, initial: true},
-				{snap: snap("a\nError: boom", false), want: []string{"Error: boom"}},
+				{snap: snap("a\nError: boom", false), want: []string{"a", "Error: boom"}, initial: true},
 				{snap: snap("fresh\nstart\n$ ", false), want: []string{"fresh", "start"}, gap: true},
 			},
 		},
@@ -285,10 +323,10 @@ func TestPaneWatcherPoll(t *testing.T) {
 	w := NewPaneWatcher(reader, "w1:p1")
 	ctx := context.Background()
 
-	if d, err := w.Poll(ctx); err != nil || !slices.Equal(d.Lines, []string{"a"}) || !d.Initial {
+	if d, err := w.Poll(ctx); err != nil || !slices.Equal(d.Lines, []string{"a", "b"}) || !d.Initial {
 		t.Fatalf("first poll = %+v, %v", d, err)
 	}
-	if d, err := w.Poll(ctx); err != nil || !slices.Equal(d.Lines, []string{"b", "c"}) {
+	if d, err := w.Poll(ctx); err != nil || !slices.Equal(d.Lines, []string{"c"}) {
 		t.Fatalf("second poll = %+v, %v", d, err)
 	}
 	_, err := w.Poll(ctx)

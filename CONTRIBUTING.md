@@ -29,8 +29,10 @@ thread before any code.
 
 ## Getting set up
 
-You'll need [Go](https://go.dev/dl/) (the version in `go.mod` or newer) and, to try
-your change for real, [herdr](https://herdr.dev) 0.9.1 or newer on macOS or Linux.
+You'll need [Go](https://go.dev/dl/) 1.24 or newer and, to try your change for real,
+[herdr](https://herdr.dev) 0.9.1 or newer on macOS or Linux. If your Go is older than
+the `toolchain` line in `go.mod`, `go` downloads that version for you the first time
+you build.
 
 [Fork the repo](https://github.com/swmcc/herdr-sightline/fork), then clone your fork
 and keep the original as `upstream`:

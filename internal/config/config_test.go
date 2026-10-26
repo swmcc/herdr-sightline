@@ -232,9 +232,17 @@ func readFixture(t *testing.T, name string) []byte {
 	return data
 }
 
+// writeConfig saves the config the way most editors do, by writing a new file and
+// renaming it into place. os.WriteFile truncates first, so a watcher polling on a
+// busy machine can see the empty file for two checks running and rightly report
+// it as the defaults, which made the watch tests flaky.
 func writeConfig(t *testing.T, dir, contents string) {
 	t.Helper()
-	if err := os.WriteFile(Path(dir), []byte(contents), 0o644); err != nil {
+	tmp := filepath.Join(dir, ".sightline.toml.tmp")
+	if err := os.WriteFile(tmp, []byte(contents), 0o644); err != nil {
 		t.Fatalf("writing config: %v", err)
+	}
+	if err := os.Rename(tmp, Path(dir)); err != nil {
+		t.Fatalf("renaming config into place: %v", err)
 	}
 }

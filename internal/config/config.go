@@ -145,9 +145,26 @@ func Load(dir string) (Config, error) {
 	return Parse(path, data)
 }
 
-// readFile reads the config file, refusing anything over MaxFileSize.
+// readFile reads the config file, refusing anything over MaxFileSize or anything
+// that isn't a regular file.
+//
+// Opening a FIFO for reading blocks until something writes to it, which would
+// hang Watch where it can't see its context. So the path is checked first, then
+// opened without blocking (see openFlags) and checked again through the open
+// file, in case it was swapped in between.
 func readFile(path string) (data []byte, exists bool, err error) {
-	f, err := os.Open(path)
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("reading config: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, true, notRegular(path, info)
+	}
+
+	f, err := os.OpenFile(path, os.O_RDONLY|openFlags, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -155,6 +172,13 @@ func readFile(path string) (data []byte, exists bool, err error) {
 		return nil, false, fmt.Errorf("reading config: %w", err)
 	}
 	defer f.Close()
+	info, err = f.Stat()
+	if err != nil {
+		return nil, true, fmt.Errorf("reading config: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, true, notRegular(path, info)
+	}
 	data, err = io.ReadAll(io.LimitReader(f, MaxFileSize+1))
 	if err != nil {
 		return nil, true, fmt.Errorf("reading config: %w", err)
@@ -163,6 +187,25 @@ func readFile(path string) (data []byte, exists bool, err error) {
 		return nil, true, &Error{File: path, Msg: "file is bigger than 1 MiB, which is far too big for a config file"}
 	}
 	return data, true, nil
+}
+
+func notRegular(path string, info os.FileInfo) error {
+	return &Error{File: path, Msg: fmt.Sprintf("not a regular file (it's a %s), so it won't be read", fileKind(info.Mode()))}
+}
+
+func fileKind(m os.FileMode) string {
+	switch {
+	case m.IsDir():
+		return "directory"
+	case m&os.ModeNamedPipe != 0:
+		return "named pipe"
+	case m&os.ModeSocket != 0:
+		return "socket"
+	case m&os.ModeDevice != 0:
+		return "device"
+	default:
+		return "special file"
+	}
 }
 
 // Parse turns the contents of a config file into a Config. name is only used in

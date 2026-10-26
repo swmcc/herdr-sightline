@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -704,6 +705,38 @@ func TestCapLine(t *testing.T) {
 		if got := capLine(tt.in); got != tt.want {
 			t.Errorf("capLine of %d runes = %d bytes, want %d", len([]rune(tt.in)), len(got), len(tt.want))
 		}
+	}
+}
+
+// The window cuts stored lines at 4 KiB and the message cuts them again at 500
+// characters. The message's marker still counts every character of the line as
+// printed, and a marker the pane prints itself is just text.
+func TestMessageCutCountsTheWholeLine(t *testing.T) {
+	forged := "Error: short [99999 more characters cut]"
+	tests := []struct {
+		name, line, want string
+	}{
+		{"ASCII", strings.Repeat("x", 100000) + " Error", strings.Repeat("x", maxLineRunes) + " [99506 more characters cut]"},
+		{"four byte runes", "Error " + strings.Repeat("\U0001F600", 5000), "Error " + strings.Repeat("\U0001F600", maxLineRunes-6) + " [4506 more characters cut]"},
+		{"just over the window", "Error " + strings.Repeat("y", maxStoredBytes), "Error " + strings.Repeat("y", maxLineRunes-6) + fmt.Sprintf(" [%d more characters cut]", maxStoredBytes+6-maxLineRunes)},
+		{"forged marker", forged, forged},
+		{"forged marker on a cut line", "Error " + strings.Repeat("z", 594) + " [5 more characters cut]", "Error " + strings.Repeat("z", maxLineRunes-6) + " [124 more characters cut]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			e.Feed("web", []string{tt.line}, t0)
+			e.Tick(t0.Add(time.Second))
+			en := onlyEntry(t, e)
+			msg, err := e.Message(en.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p := parseMessage(t, msg)
+			if len(p.body) != 1 || p.body[0] != prefixed(tt.want) {
+				t.Fatalf("line = %.80q... (%d bytes), want %.80q... ending %q", p.body[0], len(p.body[0]), tt.want, tt.want[max(0, len(tt.want)-30):])
+			}
+		})
 	}
 }
 

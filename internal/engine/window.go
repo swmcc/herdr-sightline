@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -49,6 +49,9 @@ type capturer struct {
 	window   window
 	pending  []*capture
 	missed   bool // output was swallowed, so flag the next capture MaybeGap
+	// unseen means the line being read isn't all a terminal shows: it was shown
+	// while a terminal would still be hiding output. observe reads and clears it.
+	unseen bool
 	// hid is set whenever output is swallowed, and cleared by the fix check
 	// after each Feed (see tookHidden). missed can't serve, as a new capture
 	// clears it.
@@ -74,7 +77,8 @@ func newCapturer(contextLines int) capturer {
 // progress and the next capture are flagged MaybeGap.
 func (c *capturer) read(lines []string, use func(line string)) {
 	emit := func(line string) {
-		if c.diverged || c.shadow.hiding() {
+		c.unseen = c.diverged || c.shadow.hiding()
+		if c.unseen {
 			c.missed, c.hid = true, true
 			for _, p := range c.pending {
 				p.maybeGap = true
@@ -138,18 +142,26 @@ func (a *arrivals) take() int {
 }
 
 // window keeps the last few lines from a source, for the context before a match.
+//
+// It remembers which of them hold text a terminal didn't show: lines shown while
+// a terminal would still be hiding output, and lines whose drawn over text was
+// kept so an error couldn't hide. Any capture whose context includes one is
+// flagged MaybeGap, however many captures later, not just the next one.
 type window struct {
-	size  int
-	lines []string
+	size   int
+	lines  []string
+	unseen []bool // for each line, whether it holds text a terminal didn't show
 }
 
-func (w *window) push(line string) {
+func (w *window) push(line string, unseen bool) {
 	if w.size <= 0 {
 		return
 	}
 	w.lines = append(w.lines, line)
+	w.unseen = append(w.unseen, unseen)
 	if len(w.lines) > w.size {
 		w.lines = w.lines[len(w.lines)-w.size:]
+		w.unseen = w.unseen[len(w.unseen)-w.size:]
 	}
 }
 
@@ -157,8 +169,14 @@ func (w *window) snapshot() []string {
 	return append([]string(nil), w.lines...)
 }
 
+// holdsUnseen reports whether any line in the window holds text a terminal
+// didn't show.
+func (w *window) holdsUnseen() bool {
+	return slices.Contains(w.unseen, true)
+}
+
 func (w *window) reset() {
-	w.lines = nil
+	w.lines, w.unseen = nil, nil
 }
 
 // capture is an error that has matched but is still collecting the lines after it.
@@ -186,7 +204,13 @@ func (c *capture) result() found {
 // sees the whole line. Only what's kept, and so what can reach a message, is cut.
 const maxStoredBytes = 4 << 10
 
-// capStored shortens a very long line and says so, so the cut is visible.
+// capStored shortens a very long line and says so, so the cut is visible. The
+// marker counts characters, like the message's own (see capLine), so the
+// message can carry the count on when it cuts the line again.
+//
+// Every kept line goes through here, and a line is only marked when it's longer
+// than maxStoredBytes. So a kept line longer than that always ends in a real
+// marker, and pane output can't forge one (see storedCut in message.go).
 func capStored(line string) string {
 	if len(line) <= maxStoredBytes {
 		return line
@@ -195,7 +219,7 @@ func capStored(line string) string {
 	for cut > 0 && !utf8.RuneStart(line[cut]) {
 		cut--
 	}
-	return fmt.Sprintf("%s [%d more bytes cut]", line[:cut], len(line)-cut)
+	return line[:cut] + cutMarker(utf8.RuneCountInString(line[cut:]))
 }
 
 // observe takes one clean line from s. It returns the line it used, which unhide
@@ -203,6 +227,8 @@ func capStored(line string) string {
 func (e *Engine) observe(s *source, line string, now time.Time) string {
 	c := &s.capture
 	line, hidden := c.unhide(line, e.startsError)
+	unseen := c.unseen || hidden
+	c.unseen = false
 	kept := capStored(line)
 	sh := shapeOf(line)
 	// A match on a line tied to an error being captured is part of that error,
@@ -239,7 +265,7 @@ func (e *Engine) observe(s *source, line string, now time.Time) string {
 					lines:     []string{kept},
 					before:    c.window.snapshot(),
 					matchedAt: now,
-					maybeGap:  c.missed || hidden,
+					maybeGap:  c.missed || unseen || c.window.holdsUnseen(),
 				},
 				block:   startBlock(sh),
 				due:     now.Add(e.opts.CaptureWait),
@@ -249,7 +275,7 @@ func (e *Engine) observe(s *source, line string, now time.Time) string {
 			c.missed = false
 		}
 	}
-	c.window.push(kept)
+	c.window.push(kept, unseen)
 	return line
 }
 
@@ -960,6 +986,13 @@ func (s *scrubber) anywhere(r rune) bool {
 	}
 	inString := s.state == scrubOSC || s.state == scrubString
 	switch {
+	case inString && r >= 0x80 && r <= 0x9f:
+		// Inside a string, a C1 control is swallowed with the rest. xterm would
+		// end the string on any of them (ST, CSI, the lot), but herdr 0.9.1
+		// ignores UTF-8 C1 controls (checked live for #15), so it may well keep
+		// hiding. Carrying on is the safe way to differ: it can only hide more,
+		// the shadow flags every line shown meanwhile and the cap bounds it.
+		return false
 	case r == ctrlCAN, r == ctrlSUB, r == c1ST:
 		// Cancel any sequence. Nothing is shown here, though some terminals
 		// draw a character for SUB, so the line stops being followed.
@@ -974,13 +1007,9 @@ func (s *scrubber) anywhere(r rune) bool {
 	case r == c1DCS, r == c1SOS, r == c1PM, r == c1APC:
 		s.state = scrubString
 	case r >= 0x80 && r <= 0x9f:
-		// Any other C1 control is acted on and never shown. A terminal also ends a
-		// string here, but carrying on swallowing is the safe way to differ: it
-		// can only hide more, and the cap bounds that. Some, like NEL and RI,
-		// move the cursor to another line.
-		if !inString {
-			s.state = scrubText
-		}
+		// Any other C1 control is acted on and never shown. Some, like NEL and
+		// RI, move the cursor to another line.
+		s.state = scrubText
 		s.untrack()
 	default:
 		return false

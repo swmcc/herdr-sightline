@@ -156,8 +156,11 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 		}
 		if !read {
 			l := unprefix(cut(line, maxScannedLine))
-			signal = ranSignals.MatchString(l)
 			request, status = requestOf(l)
+			// Anyone who can reach the server can put words in its request
+			// log ("GET /compiled/successfully 404"), so a request line is
+			// never a sign that something ran.
+			signal = request == "" && ranSignals.MatchString(l)
 			read = true
 		}
 		if f.trigger != "" {

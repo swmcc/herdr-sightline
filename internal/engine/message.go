@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -310,8 +311,11 @@ func label(s, allowed string, limit int) string {
 	return s
 }
 
-// capLine shortens a very long line and says so, so the cut is visible.
+// capLine shortens a very long line and says so, so the cut is visible. A line
+// the window already cut keeps the window's count, so the marker always says how
+// much of the line as printed was left out.
 func capLine(l string) string {
+	l, more := storedCut(l)
 	cut, n := 0, 0
 	for i := range l {
 		if n == maxLineRunes {
@@ -320,10 +324,40 @@ func capLine(l string) string {
 		}
 		n++
 	}
-	if cut == 0 {
+	if cut > 0 {
+		more += utf8.RuneCountInString(l[cut:])
+		l = l[:cut]
+	}
+	if more == 0 {
 		return l
 	}
-	return fmt.Sprintf("%s [%d more characters cut]", l[:cut], utf8.RuneCountInString(l[cut:]))
+	return l + cutMarker(more)
+}
+
+// cutMarker is what follows a line that was cut.
+func cutMarker(n int) string {
+	return fmt.Sprintf(" [%d more characters cut]", n)
+}
+
+// storedCut takes the window's marker off a line it cut (see capStored) and
+// returns how many characters it says were cut. Only a line longer than
+// maxStoredBytes is read, because the window cuts and marks every longer line
+// it keeps. A shorter line that ends in something like a marker is pane output
+// and is left as it is.
+func storedCut(l string) (string, int) {
+	if len(l) <= maxStoredBytes {
+		return l, 0
+	}
+	i := strings.LastIndex(l, " [")
+	if i < 0 || i > maxStoredBytes {
+		return l, 0
+	}
+	digits, ok := strings.CutSuffix(l[i+2:], " more characters cut]")
+	n, err := strconv.Atoi(digits)
+	if !ok || err != nil || n <= 0 || cutMarker(n) != l[i:] {
+		return l, 0
+	}
+	return l[:i], n
 }
 
 // longestRun is the length of the longest unbroken run of c in s.

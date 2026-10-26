@@ -37,6 +37,10 @@ func PaneClosed() Subscription { return Subscription{Type: "pane.closed"} }
 // PaneExited subscribes to the process in any pane exiting.
 func PaneExited() Subscription { return Subscription{Type: "pane.exited"} }
 
+// PaneMoved subscribes to any pane moving. A pane that moves to another
+// workspace gets a new ID.
+func PaneMoved() Subscription { return Subscription{Type: "pane.moved"} }
+
 // EventKind says what an Event is about.
 type EventKind string
 
@@ -46,6 +50,9 @@ const (
 	EventScrollChanged      EventKind = "scroll_changed"
 	EventPaneClosed         EventKind = "pane_closed"
 	EventPaneExited         EventKind = "pane_exited"
+	// EventPaneMoved means a pane moved. PaneID is its ID now, which may be
+	// new, and PreviousPaneID the one it had before.
+	EventPaneMoved EventKind = "pane_moved"
 	// EventReconnected means the connection dropped and has been re-established
 	// with the same subscriptions. Anything could have happened in between, so
 	// treat it as a possible gap and read the panes again. Err says why the
@@ -80,6 +87,10 @@ type Event struct {
 	Agent       string
 	// Scroll is set for EventScrollChanged.
 	Scroll *ScrollInfo
+	// PreviousPaneID and Pane are set for EventPaneMoved. Pane is the pane
+	// as it is after the move.
+	PreviousPaneID string
+	Pane           *Pane
 	// Data is the event's payload as herdr sent it.
 	Data json.RawMessage
 	// Err is set for EventFailed and EventReconnected.
@@ -293,6 +304,8 @@ func decodeEvent(name string, data json.RawMessage) Event {
 		ev.Kind = EventPaneClosed
 	case "pane_exited":
 		ev.Kind = EventPaneExited
+	case "pane_moved":
+		ev.Kind = EventPaneMoved
 	}
 
 	var fields struct {
@@ -301,6 +314,8 @@ func decodeEvent(name string, data json.RawMessage) Event {
 		AgentStatus AgentStatus `json:"agent_status"`
 		Agent       string      `json:"agent"`
 		Scroll      *ScrollInfo `json:"scroll"`
+		Previous    string      `json:"previous_pane_id"`
+		Pane        *Pane       `json:"pane"`
 	}
 	// A field of the wrong type is skipped and the rest still filled, which is
 	// all that's wanted here, so the error is deliberately ignored.
@@ -313,6 +328,14 @@ func decodeEvent(name string, data json.RawMessage) Event {
 		ev.Agent = fields.Agent
 	case EventScrollChanged:
 		ev.Scroll = fields.Scroll
+	case EventPaneMoved:
+		// A moved pane's ID is inside the pane, not at the top level.
+		ev.PreviousPaneID = fields.Previous
+		ev.Pane = fields.Pane
+		if fields.Pane != nil {
+			ev.PaneID = fields.Pane.ID
+			ev.WorkspaceID = fields.Pane.WorkspaceID
+		}
 	}
 	return ev
 }

@@ -103,6 +103,14 @@ func TestSubscribeDecodesEvents(t *testing.T) {
 			want:  herdr.Event{Kind: herdr.EventPaneExited, Name: "pane_exited", PaneID: "w1:p2", WorkspaceID: "w1"},
 		},
 		{
+			name:  "pane moved",
+			event: "pane_moved",
+			data:  `{"type":"pane_moved","previous_pane_id":"w1:p2","previous_tab_id":"w1:t1","previous_workspace_id":"w1","pane":{"pane_id":"w2:p5","workspace_id":"w2","tab_id":"w2:t1","agent":"claude","agent_status":"idle","revision":0}}`,
+			want: herdr.Event{Kind: herdr.EventPaneMoved, Name: "pane_moved", PaneID: "w2:p5", WorkspaceID: "w2",
+				PreviousPaneID: "w1:p2", Pane: &herdr.Pane{ID: "w2:p5", WorkspaceID: "w2", TabID: "w2:t1",
+					Agent: "claude", AgentStatus: herdr.AgentIdle}},
+		},
+		{
 			name:  "scroll changed",
 			event: "pane.scroll_changed",
 			data:  `{"pane_id":"w1:p2","workspace_id":"w1","scroll":{"offset_from_bottom":0,"max_offset_from_bottom":42,"viewport_rows":30}}`,

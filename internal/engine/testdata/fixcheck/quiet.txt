@@ -20,3 +20,11 @@ webpack compiled with 1 error
 Failed to compile with 2 errors
 [watch] build finished with 2 errors
 Finished SyncNoticesJob (Job ID: 1) from Async(default) in 2.1s
+GET /compiled/successfully 404 in 3ms
+"GET /x?ready in 3ms HTTP/1.1" 404
+Not Found: /compiled/successfully
+Not Found: /x ready in 3ms
+No route matches [GET] "/x&ready in 3ms"
+  Parameters: {"q"=>"compiled successfully"}
+  Parameters: %{"q" => "ready in 3ms"}
+user-agent: compiled successfully

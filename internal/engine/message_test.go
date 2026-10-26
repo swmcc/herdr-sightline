@@ -270,10 +270,19 @@ func parseMessage(t *testing.T, msg string) parsed {
 	block, tail := lines[open+1:end], lines[end+1:]
 	p.tail = tail
 
-	switch {
-	case len(p.header) == 3:
-	case len(p.header) == 4 && leftOutNote.MatchString(p.header[2]):
-	default:
+	// Between the count and the blank line: the line about "@" if any, then
+	// the line about the cap if any. Nothing else.
+	if len(p.header) < 3 {
+		t.Fatalf("header = %q", p.header)
+	}
+	notes := p.header[2 : len(p.header)-1]
+	if len(notes) > 0 && notes[0] == strings.TrimSuffix(mentionNote, "\n") {
+		notes = notes[1:]
+	}
+	if len(notes) > 0 && leftOutNote.MatchString(notes[0]) {
+		notes = notes[1:]
+	}
+	if len(notes) > 0 {
 		t.Fatalf("header = %q", p.header)
 	}
 	if !firstLine.MatchString(p.header[0]) {
@@ -708,7 +717,7 @@ func TestCapLine(t *testing.T) {
 		{strings.Repeat("\U0001F600", maxLineRunes+3), strings.Repeat("\U0001F600", maxLineRunes) + " [3 more characters cut]"},
 	}
 	for _, tt := range tests {
-		if got := capLine(tt.in); got != tt.want {
+		if got := capLine(tt.in, 0); got != tt.want {
 			t.Errorf("capLine of %d runes = %d bytes, want %d", len([]rune(tt.in)), len(got), len(tt.want))
 		}
 	}
@@ -726,6 +735,10 @@ func TestMessageCutCountsTheWholeLine(t *testing.T) {
 		{"four byte runes", "Error " + strings.Repeat("\U0001F600", 5000), "Error " + strings.Repeat("\U0001F600", maxLineRunes-6) + " [4506 more characters cut]"},
 		{"just over the window", "Error " + strings.Repeat("y", maxStoredBytes), "Error " + strings.Repeat("y", maxLineRunes-6) + fmt.Sprintf(" [%d more characters cut]", maxStoredBytes+6-maxLineRunes)},
 		{"forged marker", forged, forged},
+		// Each "@" grows by two bytes when it's made fullwidth, which mustn't
+		// make a short line look like one the window cut.
+		{"forged marker grown past the window by @", "Error: x " + strings.Repeat("@", 1355) + " [99999 more characters cut]",
+			"Error: x " + strings.Repeat("\uff20", maxLineRunes-9) + " [892 more characters cut]"},
 		{"forged marker on a cut line", "Error " + strings.Repeat("z", 594) + " [5 more characters cut]", "Error " + strings.Repeat("z", maxLineRunes-6) + " [124 more characters cut]"},
 	}
 	for _, tt := range tests {
@@ -740,7 +753,7 @@ func TestMessageCutCountsTheWholeLine(t *testing.T) {
 			}
 			p := parseMessage(t, msg)
 			if len(p.body) != 1 || p.body[0] != prefixed(tt.want) {
-				t.Fatalf("line = %.80q... (%d bytes), want %.80q... ending %q", p.body[0], len(p.body[0]), tt.want, tt.want[max(0, len(tt.want)-30):])
+				t.Fatalf("line = %.80q... (%d bytes) ending %q, want %.80q... ending %q", p.body[0], len(p.body[0]), p.body[0][max(0, len(p.body[0])-30):], tt.want, tt.want[max(0, len(tt.want)-30):])
 			}
 		})
 	}
@@ -773,7 +786,31 @@ func TestMessageHasNoFileMentions(t *testing.T) {
 			if want := []string{"|# pane name: web?admin", "|# running: npx ?babel/core", "|"}; !slices.Equal(p.about, want) {
 				t.Fatalf("name and command = %q, want %q", p.about, want)
 			}
+			// Sightline says why, but only when it changed something.
+			said := slices.Contains(p.header, strings.TrimSuffix(mentionNote, "\n"))
+			if changed := strings.Contains(tt.in, "@"); said != changed {
+				t.Fatalf("header = %q, want the line about @ only when one was changed", p.header)
+			}
 		})
+	}
+}
+
+// The line about "@" counts only the lines the cap keeps, and it fits with the
+// cap's own note.
+func TestMessageMentionNoteFollowsTheCap(t *testing.T) {
+	en := Entry{
+		Source: Source{ID: "w1:p3"},
+		Before: []string{"me@example.com far from the error"},
+		Lines:  []string{"Error: boom"},
+	}
+	d := newDraft(en, Options{})
+	full := parseMessage(t, renderMessage(en, Options{}, d.size(2)))
+	if !slices.Contains(full.header, strings.TrimSuffix(mentionNote, "\n")) {
+		t.Fatalf("header = %q, want the line about @", full.header)
+	}
+	capped := parseMessage(t, renderMessage(en, Options{}, d.size(1)))
+	if len(capped.body) != 1 || slices.Contains(capped.header, strings.TrimSuffix(mentionNote, "\n")) {
+		t.Fatalf("header = %q body %q, want the @ line left out and no line about @", capped.header, capped.body)
 	}
 }
 

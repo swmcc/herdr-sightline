@@ -20,6 +20,7 @@ const (
 	maxMessageBytes = 16 << 10
 	maxLineRunes    = 500
 	closingLine     = "That's the end of the pane output. Please investigate and fix the cause."
+	mentionLine     = "Any at sign in the output is shown as \uff20 so it can't be read as a file mention."
 	titleAllowed    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ._/-?"
 	commandAllowed  = titleAllowed + "=+"
 )
@@ -41,6 +42,7 @@ type message struct {
 	body             []string // the pane's output, without the "| " mark
 	leftContext      int      // lines the cap left out
 	leftError        int
+	mentioned        bool // the header says "@" was made fullwidth
 	fence            string
 }
 
@@ -136,6 +138,10 @@ func check(msg string, en engine.Entry) (m message, err error) {
 	m.commanded = strings.Contains(c[1], "command")
 	shown, _ := strconv.Atoi(c[2])
 
+	if lines[i] == mentionLine {
+		m.mentioned = true
+		i++
+	}
 	if n := noteLine.FindStringSubmatch(lines[i]); n != nil {
 		m.leftContext, _ = strconv.Atoi(n[1])
 		m.leftError, _ = strconv.Atoi(n[3])
@@ -237,6 +243,12 @@ func check(msg string, en engine.Entry) (m message, err error) {
 	// Rebuild Sightline's own words from what they claim and compare the whole
 	// message, so nothing the pane printed can sit outside the block.
 	rebuilt := want + "\n" + countSentence(m.named, m.commanded, shown) + "\n"
+	if m.mentioned {
+		if !strings.Contains(strings.Join(m.body, "\n"), "\uff20") {
+			fail("header says an @ was changed, but no output line has one")
+		}
+		rebuilt += mentionLine + "\n"
+	}
 	if m.leftContext+m.leftError > 0 {
 		rebuilt += noteSentence(m.leftContext, m.leftError) + "\n"
 	}

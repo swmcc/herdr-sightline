@@ -78,6 +78,13 @@ func newCapturer(contextLines int) capturer {
 func (c *capturer) read(lines []string, use func(line string)) {
 	emit := func(line string) {
 		c.unseen = c.diverged || c.shadow.hiding()
+		if c.scrub.drawnAbove {
+			// Lines already read may have been drawn over or cleared, so
+			// none of them can be trusted to be what a person saw.
+			c.scrub.drawnAbove = false
+			c.window.markUnseen()
+			c.unseen = true
+		}
 		if c.unseen {
 			c.missed, c.hid = true, true
 			for _, p := range c.pending {
@@ -173,6 +180,14 @@ func (w *window) snapshot() []string {
 // didn't show.
 func (w *window) holdsUnseen() bool {
 	return slices.Contains(w.unseen, true)
+}
+
+// markUnseen marks every line in the window as holding text a terminal may not
+// show any more.
+func (w *window) markUnseen() {
+	for i := range w.unseen {
+		w.unseen[i] = true
+	}
 }
 
 func (w *window) reset() {
@@ -676,6 +691,7 @@ const (
 	ctrlDEL          = 0x7f
 	c1DCS, c1SOS     = 0x90, 0x98
 	c1CSI, c1ST      = 0x9b, 0x9c
+	c1RI             = 0x8d
 	c1OSC            = 0x9d
 	c1PM, c1APC      = 0x9e, 0x9f
 )
@@ -705,7 +721,12 @@ type scrubber struct {
 	// the screen model thinks. A gap doesn't clear it, because the terminal is
 	// still in whatever mode it was. Only a full reset (ESC c) does.
 	noRedraw bool
-	screen   screen
+	// drawnAbove means the cursor went to an earlier line, or the screen was
+	// cleared, since the last line was emitted: anything above may have been
+	// drawn over. Only same line redraws are followed, so the capturer treats
+	// every line read so far as possibly unseen.
+	drawnAbove bool
+	screen     screen
 	// overwritten is every character of the line just emitted, in the order
 	// printed, when that's different from what a terminal shows. Otherwise it's
 	// empty. It's only meaningful while emit runs.
@@ -845,6 +866,11 @@ var harmlessModes = map[int]bool{1: true, 12: true, 25: true, 1004: true, 2004: 
 // so the line stops being followed.
 func (s *scrubber) csiFinal(r rune) {
 	setsMode := r == 'h' || r == 'l'
+	// Cursor up, to a line, to a position, erase in display, insert or
+	// delete lines and scrolling can all draw over lines already read.
+	if strings.ContainsRune("AFHfdJLMST", r) {
+		s.drawnAbove = true
+	}
 	switch {
 	case s.state == scrubCSIIgnore:
 		// Too long to read, but a terminal may still act on its first
@@ -916,6 +942,11 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 			s.untrack()
 			if r == 'c' {
 				s.noRedraw = false
+			}
+			// Restoring a saved cursor, a reverse index and a reset (which
+			// clears the screen) can all draw over lines already read.
+			if r == '7' || r == '8' || r == 'M' || r == 'c' {
+				s.drawnAbove = true
 			}
 			s.state = scrubText
 		}
@@ -1011,6 +1042,9 @@ func (s *scrubber) anywhere(r rune) bool {
 		// RI, move the cursor to another line.
 		s.state = scrubText
 		s.untrack()
+		if r == c1RI {
+			s.drawnAbove = true
+		}
 	default:
 		return false
 	}

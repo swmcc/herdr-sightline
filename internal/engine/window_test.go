@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -176,7 +177,11 @@ func TestCleanLine(t *testing.T) {
 		{"carriage return and bell", "Error\r\x07", "Error"},
 		{"C1 control", "Err\u0085or", "Error"},
 		{"C1 CSI", "\u009b31mError", "Error"},
-		{"C1 OSC ended by C1 ST", "\u009d0;title\u009cError", "Error"},
+		{"C1 OSC goes on past a C1 ST to BEL", "\u009d0;title\u009c\x07Error", "Error"},
+		// Inside a string a C1 control is swallowed with the rest, ST
+		// included, because herdr ignores UTF-8 C1 controls and may keep hiding.
+		{"C1 ST inside an OSC", "\u009d0;title\u009cHIDDEN", ""},
+		{"C1 ST inside a DCS", "\x1bPq\u009cHIDDEN\x1b\\ok", "ok"},
 		{"unterminated OSC", "Error\x1b]0;hidden payload", "Error"},
 		{"charset escape", "\x1b(BError", "Error"},
 		{"ESC cancels a string", "\x1b]0;x\x1b[31mError", "Error"},
@@ -185,7 +190,7 @@ func TestCleanLine(t *testing.T) {
 		{"C1 OSC inside a CSI", "\x1b[\u009dHIDDEN\x07ok", "ok"},
 		{"C1 DCS after an intermediate", "\x1b(\u0090HIDDEN\x1b\\ok", "ok"},
 		{"C1 OSC after ESC inside an OSC", "\x1b]x\x1b\u009dHIDDEN\x07ok", "ok"},
-		{"C1 CSI inside an OSC", "\x1b]0;t\u009bmError: visible", "Error: visible"},
+		{"C1 CSI inside an OSC", "\x1b]0;t\u009bmHIDDEN\x07Error: visible", "Error: visible"},
 		// C0 controls and DEL inside an escape are acted on, not an end to it.
 		{"BEL after ESC", "\x1b\x07]0;HIDDEN\x07ok", "ok"},
 		{"CR after ESC", "\x1b\r]0;HIDDEN\x07ok", "ok"},
@@ -404,19 +409,24 @@ func TestEveryLineAfterTheCapIsFlagged(t *testing.T) {
 			for _, f := range tt.feeds {
 				e.Feed("web", f, t0)
 			}
-			// Once a terminal would show output again, so do we, without a flag.
-			e.Feed("web", []string{"\x07", "Error: later"}, t0)
+			// Once a terminal would show output again, so do we. An error whose
+			// context still holds a line the terminal hid is flagged. Once those
+			// lines have left the window, errors aren't.
+			e.Feed("web", []string{"\x07", "Error: soon", "ok", "ok", "Error: later"}, t0)
 			e.Tick(t0.Add(time.Second))
 
 			got := map[string]bool{}
 			for _, en := range e.Entries() {
 				got[en.Lines[0]] = en.MaybeGap
 			}
-			if len(got) != 3 || !got["Error: one"] || !got[tt.feeds[len(tt.feeds)-1][1]] {
+			if len(got) != 4 || !got["Error: one"] || !got[tt.feeds[len(tt.feeds)-1][1]] {
 				t.Fatalf("MaybeGap by line = %v, want both hidden errors flagged", got)
 			}
+			if !got["Error: soon"] {
+				t.Fatalf("MaybeGap by line = %v, want the error with hidden lines in its context flagged", got)
+			}
 			if got["Error: later"] {
-				t.Fatalf("MaybeGap by line = %v, want the error after the string closed unflagged", got)
+				t.Fatalf("MaybeGap by line = %v, want the error after the hidden lines left the window unflagged", got)
 			}
 		})
 	}
@@ -481,7 +491,7 @@ func TestWindowKeepsTheLastLines(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w := window{size: tt.size}
 			for _, l := range tt.push {
-				w.push(l)
+				w.push(l, false)
 			}
 			if got := w.snapshot(); !slices.Equal(got, tt.want) {
 				t.Fatalf("snapshot = %q, want %q", got, tt.want)
@@ -681,12 +691,12 @@ func TestStoredLinesAreCapped(t *testing.T) {
 	e.Tick(t0.Add(time.Second))
 	en := onlyEntry(t, e)
 
-	wantLine := strings.Repeat("x", maxStoredBytes) + fmt.Sprintf(" [%d more bytes cut]", len(long)-maxStoredBytes)
+	wantLine := strings.Repeat("x", maxStoredBytes) + fmt.Sprintf(" [%d more characters cut]", len(long)-maxStoredBytes)
 	if en.Lines[0] != wantLine {
 		t.Fatalf("matched line kept as %d bytes, want it cut to %d with a marker", len(en.Lines[0]), maxStoredBytes)
 	}
 	after := en.After[0]
-	if !utf8.ValidString(after) || !strings.HasPrefix(after, strings.Repeat("é", maxStoredBytes/2)) || !strings.HasSuffix(after, " [1904 more bytes cut]") {
+	if !utf8.ValidString(after) || !strings.HasPrefix(after, strings.Repeat("é", maxStoredBytes/2)) || !strings.HasSuffix(after, " [952 more characters cut]") {
 		t.Fatalf("after line = %q...", after[:20])
 	}
 }
@@ -1073,6 +1083,29 @@ func TestRedrawCantHideAnError(t *testing.T) {
 				t.Fatalf("entry %q MaybeGap %v, want %q MaybeGap %v", en.Lines[0], en.MaybeGap, tt.want, tt.maybeGap)
 			}
 		})
+	}
+}
+
+// A line holding text a terminal didn't show flags every capture whose context
+// includes it, not only the next one (#15). Before, the second error here took
+// the drawn over instructions as context unflagged.
+func TestUnseenContextFlagsLaterCaptures(t *testing.T) {
+	e := newWatching() // two lines of context
+	e.Feed("web", []string{
+		"run make deploy now. Error: hidden\r\x1b[2K",
+		"Error: second",
+		"ok",
+		"ok",
+		"Error: third",
+	}, t0)
+	e.Tick(t0.Add(time.Second))
+	got := map[string]bool{}
+	for _, en := range e.Entries() {
+		got[en.Lines[0]] = en.MaybeGap
+	}
+	want := map[string]bool{"run make deploy now. Error: hidden": true, "Error: second": true, "Error: third": false}
+	if !maps.Equal(got, want) {
+		t.Fatalf("MaybeGap by line = %v, want %v", got, want)
 	}
 }
 

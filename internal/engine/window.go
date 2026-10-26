@@ -19,6 +19,9 @@ import (
 //   - ContextLines lines have been collected
 //   - CaptureWait has passed since the match
 //
+// A match on a line that carries on a block being captured is part of that
+// error, so it's folded in rather than starting a capture of its own.
+//
 // The capture is filed CaptureWait after the match even when its block ended
 // sooner. Filing on a fixed delay keeps the feed in match order across sources,
 // and keeps the fix check's promise that anything matched before a settle period
@@ -184,13 +187,26 @@ func (e *Engine) observe(s *source, line string, now time.Time) {
 	line = c.unhide(line, e.startsError)
 	kept := capStored(line)
 	sh := shapeOf(line)
+	// A line that carries on an error being captured is part of that error, so
+	// it doesn't start one of its own, even if it matches. A crash that matches
+	// on two of its lines (puma's "Unable to load application" then its
+	// "(NameError)", or Python's exception line after a matched traceback) is
+	// one entry.
+	folded := false
 	for _, p := range c.pending {
-		if p.block.open && len(p.after) < e.opts.ContextLines {
-			p.after = append(p.after, kept)
-			p.block.next(sh)
+		if !p.block.open || len(p.after) >= e.opts.ContextLines {
+			continue
+		}
+		p.after = append(p.after, kept)
+		if p.block.next(sh) {
+			folded = true
+		}
+		if len(p.after) >= e.opts.ContextLines {
+			// Full, so anything after it matching starts its own capture.
+			p.block.open = false
 		}
 	}
-	if name, ok := e.startsError(line); ok {
+	if name, ok := e.startsError(line); ok && !folded {
 		if len(c.pending) >= maxPending {
 			c.pending[len(c.pending)-1].maybeGap = true
 		} else {
@@ -286,12 +302,13 @@ func startBlock(sh shape) block {
 }
 
 // next records the line after the last one kept, which is kept whatever it is.
-// It closes the block if that line ended it.
-func (b *block) next(sh shape) {
+// It reports whether that line carried on the block, and closes the block if it
+// ended it.
+func (b *block) next(sh shape) bool {
 	if sh.kind == shapeBlank {
 		b.blanks++
 		b.open = b.blanks < 2
-		return
+		return b.open
 	}
 	b.blanks = 0
 	message := b.message
@@ -301,12 +318,13 @@ func (b *block) next(sh shape) {
 	case b.traceback && !deeper && sh.kind != shapeTraceback:
 		// The exception at the end of a Python traceback.
 		b.traceback = false
-		return
+		return true
 	case message, deeper, sh.kind.continues(), sh.kind == shapeGoFunc && b.goroutine:
 		b.note(sh)
-		return
+		return true
 	}
 	b.open = false
+	return false
 }
 
 // note updates what the block expects next after a line of shape sh.
@@ -859,9 +877,6 @@ func (s *scrubber) cursorControl(r rune) {
 // swallow drops r as part of a control string, until control strings have hidden
 // too much in a row.
 func (s *scrubber) swallow(r rune, emit func(string), hid func()) {
-	// A string can draw (sixel) or do things a line can't follow, so the rest of
-	// this line is kept as printed.
-	s.untrack()
 	s.hiddenBytes += utf8.RuneLen(r)
 	if r == '\n' {
 		s.hiddenLines++
@@ -874,6 +889,10 @@ func (s *scrubber) swallow(r rune, emit func(string), hid func()) {
 		// may be missing, which is a gap, cap or no cap.
 		hid()
 	}
+	// A string can draw (sixel) or do things a line can't follow, so the rest of
+	// this line is kept as printed. That includes the line after a hidden line
+	// end, which a terminal shows on the same row, after the text before it.
+	s.untrack()
 	if s.shadow || s.hiddenBytes <= maxHiddenBytes && s.hiddenLines <= maxHiddenLines {
 		return
 	}

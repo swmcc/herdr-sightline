@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -8,9 +10,21 @@ import (
 	"unicode/utf8"
 )
 
-// Stand-in until #8. A fixed size window per source, the matched line as the
-// error and up to ContextLines either side. #8 decides how much of a stack trace
-// counts as the error itself.
+// The lines around an error. Each source keeps a rolling window of its last
+// ContextLines lines, which become the context before a match. The matched line
+// is the error itself. After it, the capture collects the rest of the error
+// block (stack frames, "Caused by:" and the like) until one of these comes first:
+//
+//   - the block ends (see block.next for the rule)
+//   - ContextLines lines have been collected
+//   - CaptureWait has passed since the match
+//
+// The capture is filed CaptureWait after the match even when its block ended
+// sooner. Filing on a fixed delay keeps the feed in match order across sources,
+// and keeps the fix check's promise that anything matched before a settle period
+// ends is filed before its verdict.
+//
+// Only this short window is ever kept. Sightline isn't a log store.
 
 // maxPending caps the captures in progress on one source. A flood of matching
 // lines would otherwise make every new line do work for every capture. Matches
@@ -133,16 +147,47 @@ func (w *window) reset() {
 // capture is an error that has matched but is still collecting the lines after it.
 type capture struct {
 	found
+	block   block // whether the error block is still going
 	due     time.Time
 	arrival int // from arrivals, to break ties between equal times
+}
+
+// result is what the capture files: its context with any blank lines at the end
+// dropped, because they only separate the error from whatever came next.
+func (c *capture) result() found {
+	f := c.found
+	for len(f.after) > 0 && strings.TrimSpace(f.after[len(f.after)-1]) == "" {
+		f.after = f.after[:len(f.after)-1]
+	}
+	return f
+}
+
+// maxStoredBytes caps each line the window and captures keep. Detection still
+// sees the whole line. Only what's kept, and so what can reach a message, is cut.
+const maxStoredBytes = 4 << 10
+
+// capStored shortens a very long line and says so, so the cut is visible.
+func capStored(line string) string {
+	if len(line) <= maxStoredBytes {
+		return line
+	}
+	cut := maxStoredBytes
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s [%d more bytes cut]", line[:cut], len(line)-cut)
 }
 
 // observe takes one clean line from s.
 func (e *Engine) observe(s *source, line string, now time.Time) {
 	c := &s.capture
+	line = c.unhide(line, e.startsError)
+	kept := capStored(line)
+	sh := shapeOf(line)
 	for _, p := range c.pending {
-		if len(p.after) < e.opts.ContextLines {
-			p.after = append(p.after, line)
+		if p.block.open && len(p.after) < e.opts.ContextLines {
+			p.after = append(p.after, kept)
+			p.block.next(sh)
 		}
 	}
 	if name, ok := e.startsError(line); ok {
@@ -152,18 +197,238 @@ func (e *Engine) observe(s *source, line string, now time.Time) {
 			c.pending = append(c.pending, &capture{
 				found: found{
 					matcher:   name,
-					lines:     []string{line},
+					lines:     []string{kept},
 					before:    c.window.snapshot(),
 					matchedAt: now,
 					maybeGap:  c.missed,
 				},
+				block:   startBlock(sh),
 				due:     now.Add(e.opts.CaptureWait),
 				arrival: e.arrivals.take(),
 			})
 			c.missed = false
 		}
 	}
-	c.window.push(line)
+	c.window.push(kept)
+}
+
+// unhide stops a carriage return being used to blind the watcher. The scrubber
+// keeps only the final text of a redrawn line, as a terminal shows it. If the
+// text that was drawn over is what matches an error and the final text doesn't,
+// the whole line is used instead, every character in the order it was printed,
+// and it's flagged like any other line a terminal would partly hide.
+func (c *capturer) unhide(line string, matches func(string) (string, bool)) string {
+	full := c.scrub.overwritten
+	if full == "" {
+		return line
+	}
+	if _, ok := matches(line); ok {
+		return line
+	}
+	if _, ok := matches(full); !ok {
+		return line
+	}
+	c.missed = true
+	for _, p := range c.pending {
+		p.maybeGap = true
+	}
+	return full
+}
+
+// The end of an error block. After the matched line a capture keeps collecting
+// while lines look like more of the same error, and stops at the first line that
+// doesn't. That line is kept too, as the last line of context, because it's
+// often the process saying what happened next ("exit status 2", "Node.js
+// v20.11.0", "[nodemon] app crashed") and it shows the agent where the error
+// stopped.
+//
+// A line carries on the block when it is:
+//
+//   - indented further than the matched line: stack frames in every language,
+//     Python's source lines and carets, Rust's backtrace and its " --> "
+//     locations. Further, not just indented, because some dev servers indent
+//     their own logs (Next.js prints " GET /notices 500 in 87ms").
+//   - a known continuation: "Caused by:", "Suppressed:", "... 12 more",
+//     "During handling of the above exception", "The above exception was the
+//     direct cause", "Traceback (most recent call last):", Go's "goroutine 1
+//     [running]:", "[signal ...]" and "created by", Rust's "stack backtrace:"
+//     and its "note: run with `RUST_BACKTRACE" hints, Next.js's "digest:"
+//   - a JVM exception heading, like "java.lang.IllegalStateException: boom"
+//     after a log line that says something failed
+//   - a line of a source excerpt, like rustc's "12 |     let x = y;" or the
+//     "> 14 |" that Node tools put on the line at fault
+//   - nothing but closing brackets, like the "}" after a Node error's properties
+//   - a Go function call, like "main.main()", after a goroutine heading
+//   - the first line after a Python traceback that isn't one of its frames,
+//     which is its exception
+//   - the line after a Rust "panicked at src/main.rs:4:5:", which is its message
+//
+// A blank line might be either, so it's kept for now. A second blank line in a
+// row ends the block, and blank lines at the end are dropped when it's filed.
+//
+// Anything else ends the block: a timestamped log line, a request log, a
+// compiler's next message. Missing the odd unusual frame is better than padding
+// every short error with unrelated lines.
+type block struct {
+	open      bool
+	indent    int  // the matched line's indentation
+	blanks    int  // blank lines in a row
+	traceback bool // inside a Python traceback, waiting for its exception line
+	goroutine bool // inside a Go goroutine dump, where frames aren't indented
+	message   bool // the next line is a Rust panic's message
+}
+
+// startBlock opens the block for an error that matched on a line of shape sh.
+func startBlock(sh shape) block {
+	b := block{open: true, indent: sh.indent}
+	b.note(sh)
+	return b
+}
+
+// next records the line after the last one kept, which is kept whatever it is.
+// It closes the block if that line ended it.
+func (b *block) next(sh shape) {
+	if sh.kind == shapeBlank {
+		b.blanks++
+		b.open = b.blanks < 2
+		return
+	}
+	b.blanks = 0
+	message := b.message
+	b.message = false
+	deeper := sh.kind == shapeIndented && sh.indent > b.indent
+	switch {
+	case b.traceback && !deeper && sh.kind != shapeTraceback:
+		// The exception at the end of a Python traceback.
+		b.traceback = false
+		return
+	case message, deeper, sh.kind.continues(), sh.kind == shapeGoFunc && b.goroutine:
+		b.note(sh)
+		return
+	}
+	b.open = false
+}
+
+// note updates what the block expects next after a line of shape sh.
+func (b *block) note(sh shape) {
+	switch sh.kind {
+	case shapeTraceback:
+		b.traceback = true
+	case shapeGoroutine:
+		b.goroutine = true
+	case shapeRustPanic:
+		b.message = true
+	}
+}
+
+// shape is what a line looks like, worked out once and shared by every capture
+// in progress.
+type shape struct {
+	kind   shapeKind
+	indent int // columns of leading space, with tab stops every 8
+}
+
+type shapeKind uint8
+
+const (
+	shapeOther      shapeKind = iota // could be anything, so it ends a block
+	shapeBlank                       // empty or only spaces
+	shapeIndented                    // starts with a space or a tab
+	shapeMarker                      // a known continuation line
+	shapeTraceback                   // "Traceback (most recent call last):"
+	shapeGoroutine                   // "goroutine 1 [running]:"
+	shapeGoFunc                      // "main.main()", a Go frame's function line
+	shapeRustPanic                   // "thread 'main' panicked at src/main.rs:4:5:"
+	shapeJVMHeading                  // "java.lang.IllegalStateException: boom"
+	shapeSource                      // "12 |     let x = y;" or "> 14 |"
+	shapeClosing                     // "}" or "})"
+)
+
+// continues reports whether a line of this kind carries on any block, wherever
+// it starts.
+func (k shapeKind) continues() bool {
+	switch k {
+	case shapeMarker, shapeTraceback, shapeGoroutine, shapeRustPanic,
+		shapeJVMHeading, shapeSource, shapeClosing:
+		return true
+	}
+	return false
+}
+
+// continuations start lines that carry on an error block in some language.
+var continuations = []string{
+	"Caused by:",
+	"Suppressed:",
+	"During handling of the above exception",
+	"The above exception was the direct cause",
+	"stack backtrace:",
+	"note: run with `RUST_BACKTRACE",
+	"note: Some details are omitted",
+	"[signal ",
+	"created by ",
+	`digest: "`,
+}
+
+var (
+	goroutineHeading = regexp.MustCompile(`^goroutine \d+ \[[^\]]*\]:$`)
+	jvmHeading       = regexp.MustCompile(`^(?:[A-Za-z_$][\w$]*\.)+[A-Z][\w$]*(?:Exception|Error|Throwable)(?::|$)`)
+	sourceExcerpt    = regexp.MustCompile(`^>? *\d+ +\|`)
+	jvmMore          = regexp.MustCompile(`^\.\.\. \d+ (?:more|common frames omitted)$`)
+)
+
+func shapeOf(line string) shape {
+	switch {
+	case strings.TrimSpace(line) == "":
+		return shape{kind: shapeBlank}
+	case line[0] == ' ' || line[0] == '\t':
+		return shape{kind: shapeIndented, indent: indentOf(line)}
+	case line == "Traceback (most recent call last):":
+		return shape{kind: shapeTraceback}
+	case goroutineHeading.MatchString(line):
+		return shape{kind: shapeGoroutine}
+	case strings.Contains(line, " panicked at ") && strings.HasSuffix(line, ":"):
+		return shape{kind: shapeRustPanic}
+	case jvmMore.MatchString(line):
+		return shape{kind: shapeMarker}
+	case strings.Trim(line, "}]);, ") == "":
+		return shape{kind: shapeClosing}
+	case sourceExcerpt.MatchString(line):
+		return shape{kind: shapeSource}
+	case jvmHeading.MatchString(line):
+		return shape{kind: shapeJVMHeading}
+	case isGoFunc(line):
+		return shape{kind: shapeGoFunc}
+	}
+	for _, c := range continuations {
+		if strings.HasPrefix(line, c) {
+			return shape{kind: shapeMarker}
+		}
+	}
+	return shape{kind: shapeOther}
+}
+
+// indentOf counts the columns of space at the start of line, as a terminal with
+// a tab stop every 8 columns lays it out.
+func indentOf(line string) int {
+	n := 0
+	for _, r := range line {
+		switch r {
+		case ' ':
+			n++
+		case '\t':
+			n = n/8*8 + 8
+		default:
+			return n
+		}
+	}
+	return n
+}
+
+// isGoFunc reports whether line looks like the function line of a Go frame: a
+// name with no spaces, then its arguments in brackets to the end of the line.
+func isGoFunc(line string) bool {
+	open := strings.IndexByte(line, '(')
+	return open > 0 && strings.HasSuffix(line, ")") && !strings.ContainsAny(line[:open], " \t")
 }
 
 // finishCaptures files every capture whose wait is over. They're filed in the
@@ -195,7 +460,7 @@ func (e *Engine) finishCaptures(now time.Time) {
 		return a.c.arrival < b.c.arrival
 	})
 	for _, f := range due {
-		e.group(f.src, f.c.found)
+		e.group(f.src, f.c.result())
 	}
 }
 
@@ -203,7 +468,7 @@ func (e *Engine) finishCaptures(now time.Time) {
 // a source stops being watched.
 func (e *Engine) fileAll(s *source) {
 	for _, c := range s.capture.pending {
-		e.group(s.info, c.found)
+		e.group(s.info, c.result())
 	}
 	s.capture.pending = nil
 }
@@ -216,9 +481,22 @@ func (e *Engine) fileAll(s *source) {
 // DEC VT500 parser that xterm and VTE are built on, including the controls that
 // act from any state.
 //
-// One known gap, left for #8: a carriage return or cursor movement that
-// overwrites text on screen isn't interpreted, so both the old and new text are
-// kept. That fails towards showing more, never less, and `v` shows it.
+// Redrawn lines. A progress bar or spinner rewrites its line with a carriage
+// return, so a terminal shows only the final text. The scrubber follows that, so
+// "50%\r100%" is kept as "100%", not "50%100%". Dropping the text that was drawn
+// over can't smuggle anything to a model, because the model only ever gets what
+// the message holds, and that's what `v` shows. What it could do is hide an error
+// from the watcher, so observe checks the drawn over text too (see unhide).
+//
+// It only follows a line while it's sure where the cursor is. That means plain
+// ASCII and Braille (spinners), colour codes, a carriage return, a backspace,
+// erase in line (CSI K) and a move to a column already written (CSI G). Anything
+// else, such as a tab, a character that might be wide, another cursor movement, a
+// control string or any other escape, stops it following that line, and the rest
+// of the line is kept as printed, with nothing drawn over. Being unsure always
+// keeps more text, never less. It assumes the line doesn't wrap. herdr's reads
+// are already drawn by its terminal, so in practice this only matters for a raw
+// stream.
 
 type scrubState uint8
 
@@ -260,6 +538,150 @@ type scrubber struct {
 	// shadow means only the state is tracked: no text is kept and strings are
 	// never abandoned. Its work per rune is constant, so it can't be made slow.
 	shadow bool
+	// csiParam and csiPlain read the current CSI's parameter, for the two that
+	// redraw a line: erase in line and move to a column. csiPlain is false once
+	// anything but a digit has been seen.
+	csiParam int
+	csiPlain bool
+	screen   screen
+	// overwritten is every character of the line just emitted, in the order
+	// printed, when that's different from what a terminal shows. Otherwise it's
+	// empty. It's only meaningful while emit runs.
+	overwritten string
+}
+
+const (
+	maxCSIParam   = 1 << 16  // a bigger parameter is read as this
+	maxRedrawWork = 64 << 10 // the most cells erasing may blank on one line
+)
+
+// screen is the current line as a terminal shows it, once it has been redrawn.
+// Until then the line is exactly what scrubber.line holds.
+type screen struct {
+	active    bool // the line has been redrawn, so cells is what's shown
+	untracked bool // the cursor moved in a way that isn't followed
+	cells     []rune
+	cursor    int
+	work      int // cells blanked so far, against maxRedrawWork
+}
+
+// narrow reports whether r is certain to take exactly one column in any
+// terminal. Everything else might be wide, or zero width, or depend on settings.
+func narrow(r rune) bool {
+	return r >= 0x20 && r < ctrlDEL || r >= 0x2800 && r <= 0x28ff
+}
+
+// untrack stops following the line. The rest of it is kept as printed.
+func (s *scrubber) untrack() {
+	s.screen.untracked = true
+}
+
+// redraw gets the screen ready for the cursor to move, and reports false if the
+// line isn't being followed.
+func (s *scrubber) redraw() bool {
+	if s.shadow || s.screen.untracked {
+		return false
+	}
+	if !s.screen.active {
+		s.screen.active = true
+		s.screen.cells = []rune(s.line.String())
+		s.screen.cursor = len(s.screen.cells)
+	}
+	return true
+}
+
+// moveTo puts the cursor at col, counting from 0. A column past the end of the
+// line would leave blank cells before the next character, so it isn't followed.
+func (s *scrubber) moveTo(col int) {
+	if !s.redraw() {
+		return
+	}
+	if col > len(s.screen.cells) {
+		s.untrack()
+		return
+	}
+	s.screen.cursor = max(col, 0)
+}
+
+func (s *scrubber) backspace() {
+	if s.redraw() {
+		s.screen.cursor = max(s.screen.cursor-1, 0)
+	}
+}
+
+// eraseLine is CSI K: 0 erases from the cursor to the end of the line, 1 from
+// the start to the cursor and 2 the whole line. The cursor doesn't move.
+func (s *scrubber) eraseLine(mode int) {
+	if !s.redraw() {
+		return
+	}
+	sc := &s.screen
+	if mode == 0 || mode == 2 {
+		sc.cells = sc.cells[:sc.cursor]
+	}
+	if mode == 0 {
+		return
+	}
+	n := min(sc.cursor+1, len(sc.cells))
+	sc.work += n
+	if sc.work > maxRedrawWork {
+		// Erasing over and over could make each line slow. Keep the rest instead.
+		s.untrack()
+		return
+	}
+	for i := range n {
+		sc.cells[i] = ' '
+	}
+}
+
+// put writes a visible character where the cursor is.
+func (s *scrubber) put(r rune) {
+	sc := &s.screen
+	if !narrow(r) {
+		sc.untracked = true
+	}
+	switch {
+	case !sc.active:
+	case sc.untracked:
+		sc.cells = append(sc.cells, r)
+	case sc.cursor == len(sc.cells):
+		sc.cells = append(sc.cells, r)
+		sc.cursor++
+	default:
+		sc.cells[sc.cursor] = r
+		sc.cursor++
+	}
+}
+
+func (s *scrubber) startCSI() {
+	s.state, s.csiBytes = scrubCSI, 0
+	s.csiParam, s.csiPlain = 0, true
+}
+
+// csiByte reads a parameter or intermediate byte of a CSI.
+func (s *scrubber) csiByte(r rune) {
+	if s.csiPlain && r >= '0' && r <= '9' {
+		s.csiParam = min(s.csiParam*10+int(r-'0'), maxCSIParam)
+		return
+	}
+	s.csiPlain = false
+}
+
+// csiFinal acts on the final byte of a CSI. Colour changes nothing on the line.
+// Erase in line and a move to a column are followed. Anything else may move the
+// cursor, so the line stops being followed.
+func (s *scrubber) csiFinal(r rune) {
+	switch {
+	case s.state == scrubCSIIgnore:
+		s.untrack()
+	case r == 'm':
+	case r == 'K' && s.csiPlain && s.csiParam <= 2:
+		s.eraseLine(s.csiParam)
+	case r == 'G' && s.csiPlain:
+		s.moveTo(max(s.csiParam, 1) - 1)
+	default:
+		s.untrack()
+	}
 }
 
 func newShadow() scrubber { return scrubber{shadow: true} }
@@ -291,23 +713,30 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 	case scrubEsc:
 		switch {
 		case r == '[':
-			s.state, s.csiBytes = scrubCSI, 0
+			s.startCSI()
 		case r == ']':
 			s.state = scrubOSC
 		case r == 'P', r == 'X', r == '^', r == '_':
 			s.state = scrubString
 		case r >= 0x20 && r <= 0x2f:
 			s.state = scrubEscInter
+			// ESC ( to ESC / pick a character set and leave the cursor alone.
+			if r < '(' {
+				s.untrack()
+			}
 		case r < 0x20 || r == ctrlDEL:
 			s.control(r, emit, hid)
 		default:
-			// The final byte of a two byte escape, or junk. Neither is shown.
+			// The final byte of a two byte escape, or junk. Neither is shown,
+			// but some move the cursor.
+			s.untrack()
 			s.state = scrubText
 		}
 
 	case scrubEscInter:
 		switch {
 		case r >= 0x20 && r <= 0x2f:
+			s.untrack()
 		case r < 0x20 || r == ctrlDEL:
 			s.control(r, emit, hid)
 		default:
@@ -318,15 +747,18 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 		s.csiBytes++
 		switch {
 		case r >= 0x40 && r <= 0x7e:
+			s.csiFinal(r)
 			s.state = scrubText
 		case r < 0x20 || r == ctrlDEL:
 			s.control(r, emit, hid)
 		case r >= 0x20 && r <= 0x3f:
+			s.csiByte(r)
 			if s.csiBytes > maxCSIBytes {
 				s.state = scrubCSIIgnore
 			}
 		default:
 			// Not ASCII, so not part of any sequence. Abandon it unshown.
+			s.untrack()
 			s.state = scrubText
 		}
 
@@ -368,12 +800,14 @@ func (s *scrubber) anywhere(r rune) bool {
 	inString := s.state == scrubOSC || s.state == scrubString
 	switch {
 	case r == ctrlCAN, r == ctrlSUB, r == c1ST:
-		// Cancel any sequence. Nothing is shown.
+		// Cancel any sequence. Nothing is shown here, though some terminals
+		// draw a character for SUB, so the line stops being followed.
 		s.state = scrubText
+		s.untrack()
 	case r == ctrlESC && !inString:
 		s.state = scrubEsc
 	case r == c1CSI:
-		s.state, s.csiBytes = scrubCSI, 0
+		s.startCSI()
 	case r == c1OSC:
 		s.state = scrubOSC
 	case r == c1DCS, r == c1SOS, r == c1PM, r == c1APC:
@@ -381,10 +815,12 @@ func (s *scrubber) anywhere(r rune) bool {
 	case r >= 0x80 && r <= 0x9f:
 		// Any other C1 control is acted on and never shown. A terminal also ends a
 		// string here, but carrying on swallowing is the safe way to differ: it
-		// can only hide more, and the cap bounds that.
+		// can only hide more, and the cap bounds that. Some, like NEL and RI,
+		// move the cursor to another line.
 		if !inString {
 			s.state = scrubText
 		}
+		s.untrack()
 	default:
 		return false
 	}
@@ -392,20 +828,40 @@ func (s *scrubber) anywhere(r rune) bool {
 }
 
 // control handles a C0 control or DEL inside an escape or CSI. A terminal acts on
-// it and stays in the sequence. Only a line end matters here, because it ends a
-// line. The sequence then carries on into the next line and eats its first
-// characters, as a terminal does, which could quietly defeat a pattern anchored
-// at the start of a line. So it counts as a gap.
+// it and stays in the sequence. A line end ends the line. The sequence then
+// carries on into the next line and eats its first characters, as a terminal
+// does, which could quietly defeat a pattern anchored at the start of a line. So
+// it counts as a gap. The controls that move the cursor along the line are
+// followed as they are outside a sequence.
 func (s *scrubber) control(r rune, emit func(string), hid func()) {
-	if r == '\n' {
+	switch r {
+	case '\n':
 		s.endLine(emit)
 		hid()
+	case '\r', '\b', '\t', '\v', '\f':
+		s.cursorControl(r)
+	}
+}
+
+// cursorControl follows a carriage return or backspace. A tab, vertical tab or
+// form feed moves the cursor somewhere that isn't followed.
+func (s *scrubber) cursorControl(r rune) {
+	switch r {
+	case '\r':
+		s.moveTo(0)
+	case '\b':
+		s.backspace()
+	default:
+		s.untrack()
 	}
 }
 
 // swallow drops r as part of a control string, until control strings have hidden
 // too much in a row.
 func (s *scrubber) swallow(r rune, emit func(string), hid func()) {
+	// A string can draw (sixel) or do things a line can't follow, so the rest of
+	// this line is kept as printed.
+	s.untrack()
 	s.hiddenBytes += utf8.RuneLen(r)
 	if r == '\n' {
 		s.hiddenLines++
@@ -440,6 +896,9 @@ func (s *scrubber) text(r rune, emit func(string)) {
 		s.endLine(emit)
 	case r == '\t':
 		s.visible(r)
+		s.untrack()
+	case r == '\r', r == '\b', r == '\v', r == '\f':
+		s.cursorControl(r)
 	case unicode.In(r, invisible...):
 	default:
 		s.visible(r)
@@ -448,15 +907,26 @@ func (s *scrubber) text(r rune, emit func(string)) {
 
 func (s *scrubber) visible(r rune) {
 	s.line.WriteRune(r)
+	s.put(r)
 	s.hiddenBytes, s.hiddenLines = 0, 0
 }
 
+// endLine emits the line as a terminal shows it. If that's different from what
+// was printed, everything printed is left in overwritten while emit runs.
 func (s *scrubber) endLine(emit func(string)) {
 	if s.shadow {
 		return
 	}
-	emit(s.line.String())
+	shown := s.line.String()
+	s.overwritten = ""
+	if s.screen.active {
+		if redrawn := string(s.screen.cells); redrawn != shown {
+			s.overwritten, shown = shown, redrawn
+		}
+	}
 	s.line.Reset()
+	s.screen = screen{}
+	emit(shown)
 }
 
 // invisible is every character that shows nothing, or something other than

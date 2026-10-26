@@ -1,0 +1,29 @@
+[nodemon] 3.1.4
+[nodemon] to restart at any time, enter `rs`
+[nodemon] watching path(s): *.*
+[nodemon] watching extensions: js,mjs,cjs,json
+[nodemon] starting `node server.js`
+Server listening on port 3000
+GET / 200 6.204 ms - 1274
+GET /styles.css 304 1.022 ms - -
+GET /notices 200 4.123 ms - 512
+POST /notices/reload 202 0.871 ms - 15
+node:internal/fs/utils:351
+    throw err;
+    ^
+
+Error: ENOENT: no such file or directory, open '/app/data/notices.json'
+    at Object.openSync (node:fs:573:18)
+    at Object.readFileSync (node:fs:452:35)
+    at loadNotices (/app/server.js:9:22)
+    at Timeout._onTimeout (/app/server.js:21:19)
+    at listOnTimeout (node:internal/timers:573:17)
+    at process.processTimers (node:internal/timers:514:7) {
+  errno: -2,
+  code: 'ENOENT',
+  syscall: 'open',
+  path: '/app/data/notices.json'
+}
+
+Node.js v20.11.0
+[nodemon] app crashed - waiting for file changes before starting...

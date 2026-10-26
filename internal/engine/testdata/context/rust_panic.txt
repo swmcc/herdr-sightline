@@ -1,0 +1,24 @@
+   Compiling notices v0.1.0 (/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.31s
+     Running `target/debug/notices`
+[2026-10-26T10:00:00Z INFO  notices] listening on http://127.0.0.1:8080
+[2026-10-26T10:00:01Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET / HTTP/1.1" 200 512 "-" "curl/8.7.1" 0.000412
+[2026-10-26T10:00:01Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET /notices HTTP/1.1" 200 2048 "-" "curl/8.7.1" 0.000903
+[2026-10-26T10:00:02Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET /notices/7 HTTP/1.1" 200 311 "-" "curl/8.7.1" 0.000521
+thread 'actix-rt|system:0|arbiter:0' panicked at src/handlers.rs:27:41:
+called `Option::unwrap()` on a `None` value
+stack backtrace:
+   0: rust_begin_unwind
+             at /rustc/eeb90cda1969383f56a2637cbd3037bdf598841c/library/std/src/panicking.rs:665:5
+   1: core::panicking::panic_fmt
+             at /rustc/eeb90cda1969383f56a2637cbd3037bdf598841c/library/core/src/panicking.rs:74:14
+   2: core::panicking::panic
+             at /rustc/eeb90cda1969383f56a2637cbd3037bdf598841c/library/core/src/panicking.rs:148:5
+   3: core::option::unwrap_failed
+             at /rustc/eeb90cda1969383f56a2637cbd3037bdf598841c/library/core/src/option.rs:2015:5
+   4: notices::handlers::show
+             at ./src/handlers.rs:27:41
+note: Some details are omitted, run with `RUST_BACKTRACE=full` for a verbose backtrace.
+[2026-10-26T10:00:02Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET /notices/42 HTTP/1.1" 500 0 "-" "curl/8.7.1" 0.001907
+[2026-10-26T10:00:03Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET /notices HTTP/1.1" 200 2048 "-" "curl/8.7.1" 0.000877
+[2026-10-26T10:00:04Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET / HTTP/1.1" 200 512 "-" "curl/8.7.1" 0.000398

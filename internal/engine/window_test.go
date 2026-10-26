@@ -524,7 +524,7 @@ func TestContextFromRealOutput(t *testing.T) {
 		{"java_spring.txt", ` ERROR \d+ ---`, "> Task :bootRun FAILED"},
 		{"go_panic.txt", `^panic: `, "exit status 2"},
 		{"rust_panic.txt", ` panicked at `, `[2026-10-26T10:00:02Z INFO  actix_web::middleware::logger] 127.0.0.1 "GET /notices/42 HTTP/1.1" 500 0 "-" "curl/8.7.1" 0.001907`},
-		{"rust_compile.txt", `^error\[E\d+\]`, "For more information about this error, try `rustc --explain E0425`."},
+		{"rust_compile.txt", `^error\[E\d+\]`, "[Finished running. Exit status: 101]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {
@@ -715,6 +715,13 @@ func TestReadRedrawsLines(t *testing.T) {
 		{"reverse index", "Error: real\x1bM\rIGNORE", "Error: realIGNORE"},
 		{"string", "Error: real\x1b]0;t\x07\rIGNORE", "Error: realIGNORE"},
 		{"after a redraw, the rest is appended", "abc\rX\tY\rZ", "Xbc\tYZ"},
+		{"spinner that hides the cursor", "\x1b[?25l⠋ a\r\x1b[K⠙ b\r\x1b[Kdone\x1b[?25h", "done"},
+		// Dropped as invisible, but a terminal may give them a column, so the
+		// columns after them aren't trusted.
+		{"Hangul filler", "ㅤㅤㅤnever run payload\rHint: ", "never run payloadHint: "},
+		{"private use", "never run payload\rHint: ", "never run payloadHint: "},
+		{"soft hyphen", "­­­never run payload\rHint: ", "never run payloadHint: "},
+		{"halves can't be joined", "ㅤㅤXXXXr: boom\rErro", "XXXXr: boomErro"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -749,10 +756,75 @@ func TestMatchInsideABlockIsFolded(t *testing.T) {
 			want:  [][]string{{"java.lang.RuntimeException: outer", "\tat A.a(A.java:1)", "Caused by: java.io.IOException: inner", "\tat B.b(B.java:2)", "INFO next"}},
 		},
 		{
-			name:  "Ruby frame that matches",
+			name:  "chained Python tracebacks",
+			match: `^Traceback|Error: `,
+			lines: []string{
+				"Traceback (most recent call last):", `  File "a.py", line 1, in <module>`, "KeyError: 'k'",
+				"", "During handling of the above exception, another exception occurred:", "",
+				"Traceback (most recent call last):", `  File "a.py", line 3, in <module>`, "ValueError: Error: bad",
+				"GET / 200",
+			},
+			want: [][]string{{
+				"Traceback (most recent call last):", `  File "a.py", line 1, in <module>`, "KeyError: 'k'",
+				"", "During handling of the above exception, another exception occurred:", "",
+				"Traceback (most recent call last):", `  File "a.py", line 3, in <module>`, "ValueError: Error: bad",
+				"GET / 200",
+			}},
+		},
+		{
+			name:  "cargo's summary after rustc's error",
+			match: `^error`,
+			lines: []string{"error[E0425]: cannot find value `x`", " --> src/main.rs:2:13", "", "error: could not compile `demo`", "exit"},
+			want:  [][]string{{"error[E0425]: cannot find value `x`", " --> src/main.rs:2:13", "", "error: could not compile `demo`", "exit"}},
+		},
+		// Lines that carry on a block for context but aren't tied to it. A match
+		// on one is its own error, so a line an attacker can print can't swallow
+		// the real error after it.
+		{
+			name:  "an indented matching line after a request log",
 			match: `Error`,
-			lines: []string{"app.rb:3:in `boom': nope (NameError)", "\tfrom app.rb:9:in `ErrorHandler.call'", "GET / 200"},
-			want:  [][]string{{"app.rb:3:in `boom': nope (NameError)", "\tfrom app.rb:9:in `ErrorHandler.call'", "GET / 200"}},
+			lines: []string{"GET /Error 404", " ⨯ TypeError: real failure", "    at a (a.js:1:1)", "GET / 200"},
+			want: [][]string{
+				{"GET /Error 404", " ⨯ TypeError: real failure", "    at a (a.js:1:1)", "GET / 200"},
+				{" ⨯ TypeError: real failure", "    at a (a.js:1:1)", "GET / 200"},
+			},
+		},
+		{
+			name:  "a JVM heading after a request log",
+			match: `Exception`,
+			lines: []string{"GET /Exception 404", "java.lang.IllegalStateException: real failure", "\tat A.a(A.java:1)", "INFO next"},
+			want: [][]string{
+				{"GET /Exception 404", "java.lang.IllegalStateException: real failure", "\tat A.a(A.java:1)", "INFO next"},
+				{"java.lang.IllegalStateException: real failure", "\tat A.a(A.java:1)", "INFO next"},
+			},
+		},
+		// Two errors printed back to back are two errors.
+		{
+			name:  "two Python tracebacks",
+			match: `^Traceback`,
+			lines: []string{"Traceback (most recent call last):", `  File "a.py"`, "KeyError: 'a'", "Traceback (most recent call last):", `  File "b.py"`, "KeyError: 'b'", "GET / 200"},
+			want: [][]string{
+				{"Traceback (most recent call last):", `  File "a.py"`, "KeyError: 'a'", "Traceback (most recent call last):"},
+				{"Traceback (most recent call last):", `  File "b.py"`, "KeyError: 'b'", "GET / 200"},
+			},
+		},
+		{
+			name:  "two Rust panics",
+			match: ` panicked at `,
+			lines: []string{"thread 'w1' panicked at src/a.rs:1:1:", "one", "thread 'w2' panicked at src/b.rs:2:2:", "two", "INFO next"},
+			want: [][]string{
+				{"thread 'w1' panicked at src/a.rs:1:1:", "one", "thread 'w2' panicked at src/b.rs:2:2:"},
+				{"thread 'w2' panicked at src/b.rs:2:2:", "two", "INFO next"},
+			},
+		},
+		{
+			name:  "a JVM exception printed twice",
+			match: `^java\.`,
+			lines: []string{"java.lang.IllegalStateException: boom", "\tat A.a(A.java:1)", "java.lang.IllegalStateException: boom", "\tat A.a(A.java:1)", "INFO next"},
+			want: [][]string{
+				{"java.lang.IllegalStateException: boom", "\tat A.a(A.java:1)", "java.lang.IllegalStateException: boom"},
+				{"java.lang.IllegalStateException: boom", "\tat A.a(A.java:1)", "INFO next"},
+			},
 		},
 		{
 			name:  "a fresh error ends the block and is its own entry",
@@ -773,14 +845,15 @@ func TestMatchInsideABlockIsFolded(t *testing.T) {
 			})
 			e.Watch(Source{ID: "web"})
 			e.Feed("web", tt.lines, t0)
-			e.Tick(t0.Add(time.Second))
+			// The captures, not the entries, because grouping rightly counts two
+			// identical errors as one entry.
 			var got [][]string
-			entries := e.Entries()
-			for i := len(entries) - 1; i >= 0; i-- {
-				got = append(got, append(slices.Clone(entries[i].Lines), entries[i].After...))
+			for _, c := range e.sources["web"].capture.pending {
+				f := c.result()
+				got = append(got, append(slices.Clone(f.lines), f.after...))
 			}
 			if !slices.EqualFunc(got, tt.want, slices.Equal) {
-				t.Fatalf("entries =\n%q\nwant\n%q", got, tt.want)
+				t.Fatalf("captures =\n%q\nwant\n%q", got, tt.want)
 			}
 		})
 	}
@@ -806,6 +879,35 @@ func TestTracebackWaitsForItsException(t *testing.T) {
 	}
 }
 
+// Modes, margins, scroll regions and a saved cursor last beyond their line, so a
+// carriage return on a later line may not go where the screen model thinks.
+// Redraws aren't followed again until a gap.
+func TestModesStopRedrawsUntilAGap(t *testing.T) {
+	tests := []struct {
+		name string
+		set  string
+	}{
+		{"insert mode", "\x1b[4h"},
+		{"left and right margins", "\x1b[?69h\x1b[10;80s"},
+		{"scroll region", "\x1b[2;10r"},
+		{"save cursor", "\x1b[s"},
+		{"alternate screen", "\x1b[?1049h"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newCapturer(0)
+			var got []string
+			use := func(l string) { got = append(got, l) }
+			c.read([]string{tt.set, "never run x\rHint: "}, use)
+			c.lost()
+			c.read([]string{"50%\r100%"}, use)
+			if want := []string{"", "never run xHint: ", "100%"}; !slices.Equal(got, want) {
+				t.Fatalf("read = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // A line end hidden in a string doesn't move a terminal's cursor, so the text
 // after it is on the same row, not at the start of one. A carriage return there
 // isn't followed.
@@ -821,8 +923,8 @@ func TestNoRedrawAfterAHiddenLineEnd(t *testing.T) {
 func TestEraseWorkIsBounded(t *testing.T) {
 	line := strings.Repeat("x", 4096) + strings.Repeat("\x1b[2K", 10000)
 	got, _ := readAll([]string{line})
-	if want := strings.Repeat(" ", 4096); len(got) != 1 || got[0] != want {
-		t.Fatalf("read = %d lines, want one blank line", len(got))
+	if len(got) != 1 || got[0] != "" {
+		t.Fatalf("read = %d lines, want one empty line", len(got))
 	}
 }
 
@@ -838,7 +940,11 @@ func TestRedrawCantHideAnError(t *testing.T) {
 	}{
 		{"error drawn over", "Error: real\r" + strings.Repeat(" ", 14), "Error: real" + strings.Repeat(" ", 14), true},
 		{"error drawn over by other text", "Error: real\rGET /x 200", "Error: realGET /x 200", true},
-		{"error still showing", "50%\rError: at 100%", "Error: at 100%", false},
+		{"error still showing", "50%\rError: at 100%", "Error: at 100%", true},
+		{"a harmless match drawn over a real one", "Error: real failure \r\x1b[KError: harmless", "Error: harmless", true},
+		{"erased cells at the end", "progress 10%\x1b[1K\rError: boom", "Error: boom", true},
+		{"no redraw", "Error: plain", "Error: plain", false},
+		{"redraw that leaves the line as it was", "Error\r", "Error", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -850,6 +956,20 @@ func TestRedrawCantHideAnError(t *testing.T) {
 				t.Fatalf("entry %q MaybeGap %v, want %q MaybeGap %v", en.Lines[0], en.MaybeGap, tt.want, tt.maybeGap)
 			}
 		})
+	}
+}
+
+// The fix check is handed the line detection used, so a redraw can't hide a
+// recurrence from it either.
+func TestObserveReturnsTheLineItUsed(t *testing.T) {
+	e := newWatching()
+	s := e.sources["web"]
+	var got []string
+	s.capture.read([]string{"Error: real\rGET /x 200", "50%\r100%"}, func(l string) {
+		got = append(got, e.observe(s, l, t0))
+	})
+	if want := []string{"Error: realGET /x 200", "100%"}; !slices.Equal(got, want) {
+		t.Fatalf("observe returned %q, want %q", got, want)
 	}
 }
 

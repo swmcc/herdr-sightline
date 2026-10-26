@@ -119,8 +119,7 @@ func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {
 	// finished before these lines arrived.
 	e.Tick(now)
 	s.capture.read(lines, func(line string) {
-		e.observe(s, line, now)
-		e.sawLine(id, line, now)
+		e.sawLine(id, e.observe(s, line, now), now)
 	})
 	e.finishCaptures(now)
 }

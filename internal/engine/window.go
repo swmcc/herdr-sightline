@@ -106,7 +106,7 @@ func (c *capturer) gap() {
 // escape sequence in progress is forgotten too.
 func (c *capturer) lost() {
 	c.gap()
-	c.scrub = scrubber{}
+	c.scrub = scrubber{noRedraw: c.scrub.noRedraw}
 	c.shadow = newShadow()
 	c.diverged = false
 }
@@ -353,7 +353,10 @@ func (b *block) next(sh shape) (carried, tied bool) {
 			b.open = false
 			return false, false
 		}
-		tied = true
+		// Straight after the match it carries the block, but only a chained
+		// traceback is tied. The matched line could be a request log an
+		// attacker wrote, and the real traceback after it must stay its own.
+		tied = chained
 	case sh.kind == shapeJVMHeading:
 		if b.frames {
 			// The same goes for a JVM exception printed again after its frames.
@@ -655,7 +658,8 @@ type scrubber struct {
 	// noRedraw stops redraws being followed on any line from here on. It's set
 	// by sequences whose effect lasts beyond their line (modes, margins, scroll
 	// regions, a saved cursor), because then a carriage return may not go where
-	// the screen model thinks. Only a gap clears it.
+	// the screen model thinks. A gap doesn't clear it, because the terminal is
+	// still in whatever mode it was. Only a full reset (ESC c) does.
 	noRedraw bool
 	screen   screen
 	// overwritten is every character of the line just emitted, in the order
@@ -799,7 +803,10 @@ func (s *scrubber) csiFinal(r rune) {
 	setsMode := r == 'h' || r == 'l'
 	switch {
 	case s.state == scrubCSIIgnore:
+		// Too long to read, but a terminal may still act on its first
+		// parameters, setting a mode among them.
 		s.untrack()
+		s.noRedraw = true
 	case r == 'm':
 	case s.csiPrivate && setsMode && s.csiPlain && harmlessModes[s.csiParam]:
 	case setsMode, r == 'r', r == 's':
@@ -860,8 +867,12 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 			s.control(r, emit, hid)
 		default:
 			// The final byte of a two byte escape, or junk. Neither is shown,
-			// but some move the cursor.
+			// but some move the cursor. ESC c resets the terminal, modes and
+			// all, so redraws can be followed again from the next line.
 			s.untrack()
+			if r == 'c' {
+				s.noRedraw = false
+			}
 			s.state = scrubText
 		}
 
@@ -1061,7 +1072,9 @@ func (s *scrubber) endLine(emit func(string)) {
 	shown := s.line.String()
 	s.overwritten = ""
 	if s.screen.active {
-		if redrawn := strings.TrimRight(string(s.screen.cells), " "); redrawn != shown {
+		// Comparing without trailing spaces on either side, so a line that ends
+		// in a space and a carriage return (CRLF output) isn't taken for a redraw.
+		if redrawn := strings.TrimRight(string(s.screen.cells), " "); redrawn != strings.TrimRight(shown, " ") {
 			s.overwritten, shown = shown, redrawn
 		}
 	}

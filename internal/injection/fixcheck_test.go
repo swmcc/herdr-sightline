@@ -110,11 +110,24 @@ func TestAttackerCantMakeAnErrorFixed(t *testing.T) {
 				e.Feed(paneID, []string{`127.0.0.1 - - "GET /x?built%20in%201s&ready in 3ms HTTP/1.1" 404 0`}, now)
 			},
 		},
+		{
+			// Django logs the path on a line of its own before the request.
+			"fake recompile in Django's not found line",
+			func(e *engine.Engine, now time.Time) {
+				e.Feed(paneID, []string{"Not Found: /compiled/successfully", "Not Found: /x&ready in 3ms"}, now)
+			},
+		},
+		{
+			"fake recompile in a Rails routing error",
+			func(e *engine.Engine, now time.Time) {
+				e.Feed(paneID, []string{`ActionController::RoutingError (No route matches [GET] "/compiled/successfully"):`}, now)
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := settleWith(t, tt.attack); got == engine.StateFixed {
-				t.Fatalf("an attacker made the error read as fixed")
+			if got := settleWith(t, tt.attack); got != engine.StateUnverified {
+				t.Fatalf("state = %v, want unverified", got)
 			}
 		})
 	}
@@ -134,7 +147,11 @@ func TestFakeRecompileInAFloodIsntFixed(t *testing.T) {
 	adapterPoll(t, w, e, now)
 	now = now.Add(2 * time.Second)
 	adapterPoll(t, w, e, now)
-	id := e.Entries()[0].ID
+	entries := e.Entries()
+	if len(entries) != 1 {
+		t.Fatalf("want the error caught once, got %+v", entries)
+	}
+	id := entries[0].ID
 	e.MarkSent(id, "claude", now)
 	now = now.Add(time.Second)
 	e.AgentFinished("claude", now)
@@ -149,7 +166,7 @@ func TestFakeRecompileInAFloodIsntFixed(t *testing.T) {
 		now = now.Add(time.Second)
 		adapterPoll(t, w, e, now)
 	}
-	if got := e.Entries()[0].State; got == engine.StateFixed {
-		t.Fatal("a fake recompile in a flood made the error read as fixed")
+	if got := e.Entries()[len(e.Entries())-1].State; got != engine.StateUnverified {
+		t.Fatalf("after a fake recompile in a flood the state = %v, want unverified", got)
 	}
 }

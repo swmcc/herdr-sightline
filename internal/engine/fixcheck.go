@@ -160,7 +160,7 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 			// Anyone who can reach the server can put words in its request
 			// log ("GET /compiled/successfully 404"), so a request line is
 			// never a sign that something ran.
-			signal = request == "" && ranSignals.MatchString(l)
+			signal = request == "" && ranSignal(l)
 			read = true
 		}
 		if f.trigger != "" {
@@ -291,6 +291,26 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	`^(?:\d+ (?:doctests?|propert(?:y|ies)), )*\d+ tests?, \d+ failures?\b`, // ExUnit
 	`^test result: (?:ok|failed)\. \d+ passed\b`,                            // cargo test
 }, "|"))
+
+// ranSignal reports whether l says something ran. A match that starts inside a
+// URL's path or query ("/compiled/successfully", "?x=1&ready in 3ms") doesn't
+// count, because anyone who can reach the server chooses those, and servers
+// print them on lines that aren't request lines too (Django's "Not Found: /x",
+// Rails' routing errors). It can't stop every forgery: a server that logs text
+// an attacker chose, spaces and all, can still print a line that looks like a
+// recompile. That's why fixed is only ever a hint.
+func ranSignal(l string) bool {
+	for _, m := range ranSignals.FindAllStringIndex(l, -1) {
+		if m[0] == 0 || !strings.ContainsRune(urlChars, rune(l[m[0]-1])) {
+			return true
+		}
+	}
+	return false
+}
+
+// urlChars are the characters that, straight before a signal, mean it's part
+// of a URL rather than a tool's own words.
+const urlChars = "/-_.%=&?+~"
 
 // requestLine finds the method, path and status of an HTTP request in a log
 // line, in the forms dev servers print: "GET /notices 500 in 30ms",

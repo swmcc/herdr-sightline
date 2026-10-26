@@ -19,6 +19,10 @@ import (
 //   - The header says what's in the block and how many lines of output there
 //     are, and the closing line says the block has ended.
 //   - The fence is longer than any run of backticks inside it.
+//   - No "@" from the pane reaches the agent, so pane text can't mention a
+//     file for the agent to read (see noMentions).
+//   - The message always starts with the "S" of "Sightline", never a "!" or
+//     "/" that an agent's prompt box might take as a shell or slash command.
 //   - Lines are scrubbed of escapes and invisible characters. Each line is
 //     capped and so is the whole message. When the cap bites, the header says
 //     how many lines were left out.
@@ -108,7 +112,7 @@ func newDraft(en Entry, opts Options) *draft {
 	d.aboutRun = longestRun(d.about, '`')
 	add := func(group []string, isError bool) {
 		for _, l := range group {
-			text := prefixed(capLine(cleanLine(l)))
+			text := prefixed(capLine(noMentions(cleanLine(l))))
 			d.lines = append(d.lines, paneLine{text: text, run: longestRun(text, '`'), isError: isError})
 		}
 	}
@@ -309,6 +313,20 @@ func label(s, allowed string, limit int) string {
 		s = string(r[:limit]) + "..."
 	}
 	return s
+}
+
+// fullwidthAt stands in for every "@" in pane output. It looks the same to a
+// person but isn't an "@".
+const fullwidthAt = "＠"
+
+// noMentions turns every "@" in a line of pane output into a fullwidth one.
+// Some agents read "@path" in a prompt as "include this file" (Claude Code
+// does, and "@server:resource" fetches an MCP resource), so a pane line like
+// "at x (@~/.ssh/id_ed25519)" could make the agent read a secret. Pasted text
+// may not be exempt, so no "@" from a pane reaches the agent. The pane's name
+// and command don't need this: their allowlist turns "@" into "?".
+func noMentions(l string) string {
+	return strings.ReplaceAll(l, "@", fullwidthAt)
 }
 
 // capLine shortens a very long line and says so, so the cut is visible. A line

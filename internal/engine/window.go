@@ -164,6 +164,9 @@ type capture struct {
 	block   block // whether the error block is still going
 	due     time.Time
 	arrival int // from arrivals, to break ties between equal times
+	// limit is ContextLines when the capture started, so Reconfigure can't
+	// change it part way through.
+	limit int
 }
 
 // result is what the capture files: its context with any blank lines at the end
@@ -211,14 +214,14 @@ func (e *Engine) observe(s *source, line string, now time.Time) string {
 	// feed and from the fix check.
 	folded := false
 	for _, p := range c.pending {
-		if !p.block.open || len(p.after) >= e.opts.ContextLines {
+		if !p.block.open || len(p.after) >= p.limit {
 			continue
 		}
 		p.after = append(p.after, kept)
 		if _, tied := p.block.next(sh); tied {
 			folded = true
 		}
-		if len(p.after) >= e.opts.ContextLines {
+		if len(p.after) >= p.limit {
 			// Full, so anything after it matching starts its own capture.
 			p.block.open = false
 		}
@@ -238,6 +241,7 @@ func (e *Engine) observe(s *source, line string, now time.Time) string {
 				block:   startBlock(sh),
 				due:     now.Add(e.opts.CaptureWait),
 				arrival: e.arrivals.take(),
+				limit:   e.opts.ContextLines,
 			})
 			c.missed = false
 		}

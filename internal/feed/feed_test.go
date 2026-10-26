@@ -3,7 +3,9 @@ package feed
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -681,8 +683,69 @@ func TestConfigChangeKeepsEntries(t *testing.T) {
 	if len(h.model.entries) != 1 {
 		t.Error("a config change lost the entries")
 	}
-	if !strings.Contains(h.model.View(), "apply when the feed is reopened") {
-		t.Errorf("view doesn't say the change is waiting:\n%s", h.model.View())
+	if h.model.status != "Reloaded sightline.toml." {
+		t.Errorf("status = %q, want it to say the config was reloaded", h.model.status)
+	}
+	// The new presets apply straight away: a Node error no longer matches.
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{"ReferenceError: notices is not defined"}}})
+	h.clock.Advance(2 * time.Second)
+	h.update(tickMsg{})
+	if len(h.model.entries) != 1 {
+		t.Errorf("got %d entries, want the Node error ignored under the go preset alone", len(h.model.entries))
+	}
+}
+
+// TestReloadedIgnoreRuleAppliesStraightAway is what #14 needs: a new ignore rule
+// dismisses a new entry it matches and leaves a sent one alone.
+func TestReloadedIgnoreRuleAppliesStraightAway(t *testing.T) {
+	h := newHarness(t)
+	h.catchError()
+	h.run(h.press("enter"))
+	if got := h.model.entries[0].State; got != engine.StateSent {
+		t.Fatalf("state = %v, want sent", got)
+	}
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{"ReferenceError: notices is not defined"}}})
+	h.clock.Advance(2 * time.Second)
+	h.update(tickMsg{})
+	if len(h.model.entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(h.model.entries))
+	}
+
+	cfg := config.Default()
+	cfg.Ignores = []config.Ignore{{Regex: regexp.MustCompile(`Error`)}}
+	h.update(configMsg{config.Update{Config: cfg}})
+
+	states := map[string]engine.State{}
+	for _, en := range h.model.engine.Entries() {
+		states[en.Lines[0][:strings.IndexByte(en.Lines[0], ':')]] = en.State
+	}
+	if states["ReferenceError"] != engine.StateDismissed {
+		t.Errorf("new entry is %v, want dismissed by the new rule", states["ReferenceError"])
+	}
+	if states["TypeError"] != engine.StateSent {
+		t.Errorf("sent entry is %v, want it left alone", states["TypeError"])
+	}
+	if want := "Reloaded sightline.toml. Its ignore rules dismissed 1 entry."; h.model.status != want {
+		t.Errorf("status = %q, want %q", h.model.status, want)
+	}
+}
+
+func TestBrokenConfigKeepsTheLastGoodOne(t *testing.T) {
+	h := newHarness(t)
+	h.catchError()
+	cfg := config.Default()
+	cfg.Ignores = []config.Ignore{{Regex: regexp.MustCompile(`Error`)}}
+	// Whatever config comes with the error (config.Watch sends the last good
+	// one), nothing changes until the file is fixed.
+	h.update(configMsg{config.Update{Config: cfg, Err: errors.New("line 3: bad regex")}})
+	if got := h.model.entries[0].State; got != engine.StateNew {
+		t.Errorf("state = %v, a broken file mustn't change anything", got)
+	}
+	if !strings.Contains(h.model.View(), "line 3: bad regex") {
+		t.Errorf("view doesn't show the config error:\n%s", h.model.View())
+	}
+	if !strings.Contains(h.model.status, "last good config") {
+		t.Errorf("status = %q, want it to say the last good config is in use", h.model.status)
 	}
 }
 

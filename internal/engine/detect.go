@@ -51,10 +51,8 @@ func (e *Engine) startsError(line string) (name string, ok bool) {
 	if strings.TrimSpace(line) == "" {
 		return "", false
 	}
-	for _, m := range e.opts.Ignores {
-		if m.Match(line) {
-			return "", false
-		}
+	if e.ignored(line) {
+		return "", false
 	}
 	for _, m := range e.opts.Matchers {
 		if m.Match(line) {
@@ -62,4 +60,14 @@ func (e *Engine) startsError(line string) (name string, ok bool) {
 		}
 	}
 	return "", false
+}
+
+// ignored reports whether an ignore rule matches line.
+func (e *Engine) ignored(line string) bool {
+	for _, m := range e.opts.Ignores {
+		if m.Match(line) {
+			return true
+		}
+	}
+	return false
 }

@@ -59,10 +59,9 @@ type Model struct {
 	now    func() time.Time
 	self   string // the feed's own pane, never watched
 
-	engine     *engine.Engine
-	cfg        config.Config
-	cfgErr     error
-	cfgPending bool // sightline.toml changed but the engine still has the old one
+	engine *engine.Engine
+	cfg    config.Config
+	cfgErr error
 
 	tracker   *herdr.AgentTracker
 	synced    bool
@@ -159,18 +158,25 @@ func engineOptions(cfg config.Config) (engine.Options, error) {
 	}, nil
 }
 
-// applyConfig takes a new sightline.toml. Pins apply straight away. The engine
-// can't change its options, and making a new one would lose every entry, so
-// patterns and settings only apply straight away while the feed is empty.
-// Otherwise the feed says they apply after a restart.
-func (m *Model) applyConfig(u config.Update) {
+// applyConfig takes sightline.toml, first when the feed starts and then each
+// time it changes. Everything applies straight away, without losing entries
+// (see engine.Reconfigure for when each setting takes effect). A broken file
+// keeps whatever config is running and shows the error. It returns how many new
+// entries the ignore rules dismissed.
+func (m *Model) applyConfig(u config.Update) (dismissed int) {
 	m.cfgErr = u.Err
 	opts, err := engineOptions(u.Config)
 	if err != nil {
 		m.cfgErr = err
-		if m.engine != nil {
-			return
+	}
+	if m.engine != nil {
+		if m.cfgErr != nil {
+			return 0
 		}
+		m.cfg = u.Config
+		return m.engine.Reconfigure(opts)
+	}
+	if err != nil {
 		// The feed needs an engine whatever the file says.
 		u.Config = config.Default()
 		if opts, err = engineOptions(u.Config); err != nil {
@@ -178,14 +184,20 @@ func (m *Model) applyConfig(u config.Update) {
 		}
 	}
 	m.cfg = u.Config
-	if m.engine != nil && (len(m.engine.Entries()) > 0 || m.engine.Dropped() > 0) {
-		m.cfgPending = true
-		return
-	}
 	m.engine = engine.New(opts)
-	m.cfgPending = false
-	for _, pane := range m.watching {
-		m.engine.Watch(m.source(pane))
+	return 0
+}
+
+// reloadConfig applies a change to sightline.toml and says so.
+func (m *Model) reloadConfig(u config.Update) {
+	n := m.applyConfig(u)
+	switch {
+	case m.cfgErr != nil:
+		m.status = "sightline.toml has a problem, so the last good config is still in use."
+	case n > 0:
+		m.status = fmt.Sprintf("Reloaded sightline.toml. Its ignore rules dismissed %s.", plural(n, "entry", "entries"))
+	default:
+		m.status = "Reloaded sightline.toml."
 	}
 }
 
@@ -230,7 +242,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.listed, m.listErr = msg.panes, msg.err
 		m.applyWatchList()
 	case configMsg:
-		m.applyConfig(msg.update)
+		m.reloadConfig(msg.update)
 	case checkedMsg:
 		cmd = m.checked(msg)
 	case sentMsg:

@@ -58,6 +58,7 @@ type fakeHerdr struct {
 	status  map[string]herdr.AgentStatus // agent pane to its status
 	seq     map[string]uint64
 	kind    map[string]string // agent pane to its kind, claude if not set
+	term    map[string]string // agent pane to its terminal id, if it moved
 	text    string            // what pane.read returns for the watched pane
 	prompts []promptCall
 	reads   atomic.Int64
@@ -75,6 +76,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 		status: map[string]herdr.AgentStatus{agentPane: herdr.AgentIdle},
 		seq:    map[string]uint64{agentPane: 10},
 		kind:   map[string]string{},
+		term:   map[string]string{},
 		text:   "ready",
 	}
 	f.srv.Handle("pane.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
@@ -89,7 +91,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 			if pane == otherAgent {
 				tab = "w1:t3"
 			}
-			panes = append(panes, map[string]any{"pane_id": pane, "workspace_id": "w1", "tab_id": tab, "agent": f.kindOf(pane), "agent_status": st})
+			panes = append(panes, map[string]any{"pane_id": pane, "terminal_id": f.terminalOf(pane), "workspace_id": "w1", "tab_id": tab, "agent": f.kindOf(pane), "agent_status": st})
 		}
 		return map[string]any{"type": "pane_list", "panes": panes}, nil
 	})
@@ -149,6 +151,28 @@ func (f *fakeHerdr) kindOf(pane string) string {
 		return k
 	}
 	return "claude"
+}
+
+// terminalOf is the terminal id of pane, which follows it when it moves. The
+// caller holds f.mu.
+func (f *fakeHerdr) terminalOf(pane string) string {
+	if t, ok := f.term[pane]; ok {
+		return t
+	}
+	return "term-" + pane
+}
+
+// movePane gives an agent's pane a new id, as moving it to another workspace
+// does, without sending the event.
+func (f *fakeHerdr) movePane(from, to string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.status[to], f.seq[to], f.term[to] = f.status[from], f.seq[from], f.terminalOf(from)
+	if k, ok := f.kind[from]; ok {
+		f.kind[to] = k
+	}
+	delete(f.status, from)
+	delete(f.seq, from)
 }
 
 // setKind puts another kind of agent in pane.
@@ -705,6 +729,15 @@ func TestAgentGoneEndsTheWait(t *testing.T) {
 			gone:  func(h *harness) { h.herdr.setKind(agentPane, "codex") },
 			syncs: 2,
 		},
+		{
+			// The new agent being idle mustn't count as the old one finishing.
+			name: "snapshots showed another kind, idle, in its pane",
+			gone: func(h *harness) {
+				h.herdr.setKind(agentPane, "codex")
+				h.herdr.setStatus(agentPane, herdr.AgentIdle)
+			},
+			syncs: 2,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -750,6 +783,36 @@ func TestAgentGoneEndsTheWait(t *testing.T) {
 				t.Errorf("after sending again = %v %q, want sent with no note", en.State, en.Note)
 			}
 		})
+	}
+}
+
+// A pane that moved without the feed hearing of it is followed by its terminal
+// id, not taken for an agent that went away.
+func TestAgentPaneMovedUnheardIsFollowed(t *testing.T) {
+	h := newHarness(t)
+	h.catchError()
+	h.run(h.press("enter"))
+	h.herdr.setStatus(agentPane, herdr.AgentWorking)
+	h.sync()
+
+	const moved = "w1:p7"
+	h.herdr.movePane(agentPane, moved)
+	for range 3 {
+		h.clock.Advance(3 * time.Second)
+		h.sync()
+	}
+	if en, _ := h.model.entry(h.model.selected); en.State != engine.StateSent {
+		t.Fatalf("entry = %v %q, want still sent", en.State, en.Note)
+	}
+	if _, ok := h.model.awaiting[moved]; !ok {
+		t.Fatal("the wait didn't follow the pane")
+	}
+
+	h.herdr.setStatus(moved, herdr.AgentIdle)
+	h.clock.Advance(3 * time.Second)
+	h.sync()
+	if _, ok := h.model.awaiting[moved]; ok {
+		t.Error("the moved agent finishing wasn't noticed")
 	}
 }
 

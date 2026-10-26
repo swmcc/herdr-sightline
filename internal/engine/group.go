@@ -36,6 +36,8 @@ func (e *Engine) group(src Source, f found) {
 		if f.matchedAt.After(r.entry.LastSeen) {
 			r.entry.LastSeen = f.matchedAt
 		}
+		// The context is the latest occurrence, so the source details must be too.
+		r.entry.Source = src
 		r.entry.Lines = f.lines
 		r.entry.Before = f.before
 		r.entry.After = f.after
@@ -69,6 +71,9 @@ func (e *Engine) repeatOf(key groupKey, f found) *record {
 		return nil
 	}
 	if r.entry.State.open() {
+		if e.pastSettle(r, f.matchedAt) {
+			return nil
+		}
 		return r
 	}
 	if r.entry.State == StateDismissed && f.matchedAt.Sub(r.entry.LastSeen) <= e.opts.Cooldown {

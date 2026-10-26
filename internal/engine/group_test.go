@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,5 +99,26 @@ func TestRepeatUpdatesLastSeen(t *testing.T) {
 	en := only(t, a)
 	if want := enginetest.Start().Add(5 * time.Second); !en.LastSeen.Equal(want) || !en.FirstSeen.Equal(enginetest.Start()) {
 		t.Fatalf("FirstSeen %v LastSeen %v, want LastSeen %v", en.FirstSeen, en.LastSeen, want)
+	}
+}
+
+func TestRepeatRefreshesTheSource(t *testing.T) {
+	a := newAdapter(t)
+	a.Print(web, "Error: again")
+	a.Advance(time.Second)
+	a.Watch(web, "web", "npm run dev")
+	a.Print(web, "Error: again")
+	a.Advance(time.Second)
+
+	en := only(t, a)
+	if en.Count != 2 || en.Source.Command != "npm run dev" {
+		t.Fatalf("count %d source %+v, want 2 and the new command", en.Count, en.Source)
+	}
+	msg, err := a.Engine.Message(en.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "running `npm run dev`") {
+		t.Fatalf("message still names the old command:\n%s", msg)
 	}
 }

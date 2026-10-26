@@ -40,52 +40,74 @@ func keyOf(r *record) groupKey {
 // let a deep, slightly different call path split one failure in two.
 const maxFrames = 3
 
-// maxFingerprintLine bounds how much of each line is fingerprinted. Output is
-// untrusted and a line can be any length. Lines that agree for this long are the
-// same error for grouping's purposes.
-const maxFingerprintLine = 1024
+// maxLeadIn is how many lines that aren't frames may come between the error line
+// and its first frame. Go puts a signal line, a blank line and a goroutine header
+// there, and a Rails boot failure puts a bundler line and the raw exception. Any
+// further away and the frames are someone else's.
+const maxLeadIn = 3
+
+// Output is untrusted and a line can be any length. Each line is cut to
+// maxScannedLine before it's looked at, then to maxFingerprintLine once the
+// volatile parts are out. Cutting only after normalising means a timestamp or PID
+// that changes length can't move where the cut falls.
+const (
+	maxScannedLine     = 4096
+	maxFingerprintLine = 1024
+)
 
 // fingerprint says which failure f is. Two errors with the same fingerprint from
 // the same source are the same failure. It's also what the fix check (#12) uses to
 // tell the same error coming back from a different one.
+//
+// It only sees the lines the window captured after the error, so a Python
+// traceback longer than ContextLines loses its exception line and its innermost
+// frames, and different exceptions from deep in one framework can share a
+// fingerprint. A look ahead of its own would need the window's help (#8).
 func fingerprint(f found) string {
 	if len(f.lines) == 0 {
 		return ""
 	}
-	first := clip(f.lines[0])
+	first := unprefix(cut(f.lines[0], maxScannedLine))
 	rest := append(append([]string(nil), f.lines[1:]...), f.after...)
 	parts := append([]string{normalise(first)}, frames(rest, pythonTraceback.MatchString(first))...)
 	return strings.Join(parts, "\n")
 }
 
 var (
+	// linePrefix is what a multiplexer puts in front of every line: docker
+	// compose's "web-1  | " or the "    | " of a Python exception group. It's the
+	// same on every line, so it's taken off before anything else is matched.
+	linePrefix = regexp.MustCompile(`^\s*(?:[\w.\-]+\s+)?\| ?`)
 	// pythonTraceback starts a Python traceback. Python prints the innermost frame
 	// last and the exception after it, so a traceback is read differently.
 	pythonTraceback = regexp.MustCompile(`Traceback \(most recent call last\):\s*$`)
-	// pythonException is the line that ends a traceback: "ValueError: bad input".
-	pythonException = regexp.MustCompile(`^[A-Za-z_][\w.]*(?:Error|Exception|Exit|Interrupt|Warning)\b`)
+	// pythonException is the line that ends a traceback: "ValueError: bad input",
+	// "django.core.exceptions.ImproperlyConfigured" or a bare "StopIteration".
+	pythonException = regexp.MustCompile(`^[A-Za-z_][\w.]*(?::|$)`)
+	// goHeader is the line before a Go panic's frames: "goroutine 7 [running]:".
+	goHeader = regexp.MustCompile(`^goroutine \d+ \[.*\]:$`)
 )
 
+// unprefix takes off a multiplexer's prefix (see linePrefix).
+func unprefix(l string) string {
+	return strings.TrimPrefix(l, linePrefix.FindString(l))
+}
+
 // frames picks out the stack frames from the lines after an error, normalised.
-// Lines that aren't frames are skipped rather than ending the search, because
-// traces mix frames with source lines (Python) and headers (Go).
+// The frames have to start within maxLeadIn lines, and the first line that can't
+// be part of a trace ends them, so frames from unrelated output that happens to
+// follow never get in.
 //
 // Usually that's the first few frames, nearest the error. In a Python traceback
 // it's the last few, which are the nearest, plus the exception line that ends it,
 // because the line that matched may only have been the traceback's header.
 func frames(lines []string, python bool) []string {
 	var out []string
-	n := 0 // frames started, as a Go frame takes two lines
+	n := 0      // frames started, as a Go frame takes two lines
+	leadIn := 0 // lines before the first frame that weren't frames
 	afterGoFunc := false
 	for _, l := range lines {
-		l = clip(l)
-		if pythonTraceback.MatchString(l) {
-			python = true
-			continue
-		}
-		if python && pythonException.MatchString(l) {
-			return append(last(out, maxFrames), normalise(l))
-		}
+		l = unprefix(cut(l, maxScannedLine))
 		if afterGoFunc && goFileFrame.MatchString(l) {
 			// The second line of a Go frame. The function is on the line above, so
 			// it's clearly the same frame and the line number can go.
@@ -101,14 +123,40 @@ func frames(lines []string, python bool) []string {
 		} else {
 			f, ok = frame(l)
 		}
-		if !ok {
+		if ok {
+			if !python && n == maxFrames {
+				break
+			}
+			out = append(out, normalise(f))
+			n++
 			continue
 		}
-		if !python && n == maxFrames {
-			break
+		if n == 0 {
+			// Still looking for the trace. A Traceback header starts one.
+			if pythonTraceback.MatchString(l) {
+				python = true
+				continue
+			}
+			if leadIn++; leadIn > maxLeadIn {
+				break
+			}
+			continue
 		}
-		out = append(out, normalise(f))
-		n++
+		// Inside a trace. Python shows the source line and carets indented under
+		// each frame, and Go leaves a blank line between goroutines.
+		if python {
+			if strings.TrimSpace(l) != "" && strings.TrimLeft(l, " \t") == l {
+				if pythonException.MatchString(l) {
+					return append(last(out, maxFrames), normalise(l))
+				}
+				break
+			}
+			continue
+		}
+		if strings.TrimSpace(l) == "" || goHeader.MatchString(l) {
+			continue
+		}
+		break
 	}
 	if python {
 		return last(out, maxFrames)
@@ -201,7 +249,7 @@ var volatile = []struct {
 	{regexp.MustCompile(`(?i)\b((?:x-)?(?:request|req|trace|span|correlation)[_-]?id)(["']?\s*[=:]\s*["']?)[\w\-.]+`), "$1$2<id>"},
 	{regexp.MustCompile(`0x[0-9a-fA-F]+`), "0x<hex>"},
 	// Long runs of hex or digits with at least one digit: trace ids, request
-	// ids, git shas, big counters. Words made of a to f alone are left be.
+	// ids, git shas, big counters. Words made of a to f alone are left alone.
 	{regexp.MustCompile(`\b[a-fA-F]*\d[0-9a-fA-F]{7,}\b`), "<id>"},
 
 	// Where it's running.
@@ -209,58 +257,68 @@ var volatile = []struct {
 	{regexp.MustCompile(`(localhost|<ip>|://[^/\s:]+|\]|::):\d{1,5}\b`), "$1:<port>"},
 	{regexp.MustCompile(`(?i)\b(port)(\s*[:=]?\s*)\d{1,5}\b`), "$1$2<port>"},
 	{regexp.MustCompile(`(?i)\b(pid)(\s*[:=#]?\s*)\d+\b`), "$1$2<pid>"},
-	{regexp.MustCompile(`#\d+\]`), "#<pid>]"},                // Ruby's Logger: "[2026-01-01T09:00:00 #12345]"
-	{regexp.MustCompile(`(\w)\[\d+\]:`), "$1[<pid>]:"},       // syslog: "node[12345]:"
-	{regexp.MustCompile(`(^\s*|\| )\[\d+\] `), "$1[<pid>] "}, // puma, alone or under docker compose: "[12345] ! Unable to load application"
+	// Ruby's Logger: "E, [2026-01-01T09:00:00.123456 #12345] ERROR"
+	{regexp.MustCompile(`(<time> #)\d+\]`), "$1<pid>]"},
+	// syslog, after the time and host: "Jan  1 09:00:00 box node[12345]: "
+	{regexp.MustCompile(`^(<time> \S+ [\w.\-/]+)\[\d+\]:`), "$1[<pid>]:"},
+	// puma at the start of a line: "[12345] ! Unable to load application"
+	{regexp.MustCompile(`^(\s*)\[\d+\] `), "$1[<pid>] "},
 	{regexp.MustCompile(`\bgoroutine \d+\b`), "goroutine <n>"},
 
 	// How long and how often.
 	{regexp.MustCompile(`\b(?:\d+(?:\.\d+)?(?:ns|µs|us|ms|h|m|s))+\b`), "<duration>"},
 	{regexp.MustCompile(`(?i)\b\d+(?:\.\d+)?\s?(?:seconds?|secs?|minutes?|mins?|hours?|milliseconds?)\b`), "<duration>"},
-	{regexp.MustCompile(`(?i)\b\d+ (retries|retry|attempts?|tries|times|restarts?)\b`), "<n> $1"},
+	{regexp.MustCompile(`(?i)\b\d+ (retries|retry|attempts?|tries|restarts?)\b`), "<n> $1"},
 	{regexp.MustCompile(`(?i)\b(attempt|retry|try|restart)(\s*#?)\d+(?:\s*(?:of|/)\s*\d+)?`), "$1$2<n>"},
 }
 
-// tmpPath matches a path under a temp directory. The directory is random, but the
-// file name usually says what it is, so tmpBase keeps it when it can.
-var tmpPath = regexp.MustCompile(`(?:/private)?/var/folders/[^\s:'"()]+|/tmp/[^\s:'"()]+|\b[A-Za-z]:\\[^\s:'"()]*\\Temp\\[^\s:'"()]+`)
+// tmpPath matches a path under a temp directory, at the start of a path rather
+// than inside a project's own tmp directory. The directory is random, but the file
+// name usually says what it is, so tmpBase keeps it when it can.
+var tmpPath = regexp.MustCompile(`(^|[\s'"(=:])((?:/private)?/var/folders/[^\s:'"()]+|/tmp/[^\s:'"()]+|[A-Za-z]:\\[^\s:'"()]*\\Temp\\[^\s:'"()]+)`)
 
 // normalise swaps the volatile parts of a line for placeholders and evens out
 // the spacing, so two copies of the same error read the same.
 func normalise(l string) string {
-	l = clip(l)
-	l = tmpPath.ReplaceAllStringFunc(l, func(p string) string {
-		return "<tmp>/" + tmpBase(p)
+	l = cut(l, maxScannedLine)
+	l = tmpPath.ReplaceAllStringFunc(l, func(m string) string {
+		sub := tmpPath.FindStringSubmatch(m)
+		return sub[1] + "<tmp>/" + tmpBase(sub[2])
 	})
 	for _, v := range volatile {
 		l = v.re.ReplaceAllString(l, v.with)
 	}
-	return strings.Join(strings.Fields(l), " ")
+	return cut(strings.Join(strings.Fields(l), " "), maxFingerprintLine)
 }
 
-// tmpBase is the last element of a temp path, minus anything that looks random.
+// tmpExt is a file extension that looks chosen rather than random.
+var tmpExt = regexp.MustCompile(`^\.[a-z]{1,5}$`)
+
+// tmpBase is the last element of a temp path, or a placeholder if it looks random.
+// Temp names often are ("tmp.Xy12ab", "go-build1234", "tmpk3j_x9.json"), so the
+// name is kept only with a plain extension, no digits and no "tmp" at the start,
+// which is about as far as a guess should go.
 func tmpBase(p string) string {
-	p = strings.ReplaceAll(p, `\`, "/")
-	base := path.Base(p)
-	// Temp file names are often random too ("tmp.Xy12ab", "go-build1234"). Keep
-	// the name only if it has an extension and no digits before it, which is
-	// about as far as a guess should go.
-	ext := path.Ext(base)
-	stem := strings.TrimSuffix(base, ext)
-	if ext == "" || strings.ContainsAny(stem, "0123456789") {
+	base := path.Base(strings.ReplaceAll(p, `\`, "/"))
+	if !tmpExt.MatchString(path.Ext(base)) || strings.ContainsAny(base, "0123456789") || strings.HasPrefix(base, "tmp") {
 		return "<file>"
 	}
 	return base
 }
 
-// clip cuts l to maxFingerprintLine bytes without splitting a character.
-func clip(l string) string {
-	if len(l) <= maxFingerprintLine {
+// cut shortens l to at most n bytes without splitting a character. It backs off
+// no further than one character's worth, so bytes that aren't valid UTF-8 can't
+// make it throw the whole line away.
+func cut(l string, n int) string {
+	if len(l) <= n {
 		return l
 	}
-	i := maxFingerprintLine
-	for i > 0 && !utf8.RuneStart(l[i]) {
+	i := n
+	for i > n-utf8.UTFMax && !utf8.RuneStart(l[i]) {
 		i--
+	}
+	if !utf8.RuneStart(l[i]) {
+		i = n
 	}
 	return l[:i]
 }

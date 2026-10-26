@@ -726,6 +726,96 @@ func TestReadRedrawsLines(t *testing.T) {
 	}
 }
 
+// A match on a line that carries on an open capture's block is folded into that
+// capture, not filed as an error of its own. A match on a line that ends the
+// block, or that comes after it, is still its own error.
+func TestMatchInsideABlockIsFolded(t *testing.T) {
+	tests := []struct {
+		name  string
+		match string
+		lines []string
+		want  [][]string // Lines then After of each entry, oldest first
+	}{
+		{
+			name:  "Python exception line after a matched traceback",
+			match: `^Traceback|Error: `,
+			lines: []string{"Traceback (most recent call last):", `  File "a.py", line 1, in <module>`, "ValueError: Error: bad", "GET / 200"},
+			want:  [][]string{{"Traceback (most recent call last):", `  File "a.py", line 1, in <module>`, "ValueError: Error: bad", "GET / 200"}},
+		},
+		{
+			name:  "JVM cause",
+			match: `Exception`,
+			lines: []string{"java.lang.RuntimeException: outer", "\tat A.a(A.java:1)", "Caused by: java.io.IOException: inner", "\tat B.b(B.java:2)", "INFO next"},
+			want:  [][]string{{"java.lang.RuntimeException: outer", "\tat A.a(A.java:1)", "Caused by: java.io.IOException: inner", "\tat B.b(B.java:2)", "INFO next"}},
+		},
+		{
+			name:  "Ruby frame that matches",
+			match: `Error`,
+			lines: []string{"app.rb:3:in `boom': nope (NameError)", "\tfrom app.rb:9:in `ErrorHandler.call'", "GET / 200"},
+			want:  [][]string{{"app.rb:3:in `boom': nope (NameError)", "\tfrom app.rb:9:in `ErrorHandler.call'", "GET / 200"}},
+		},
+		{
+			name:  "a fresh error ends the block and is its own entry",
+			match: `^Error`,
+			lines: []string{"Error: one", "    at a (a.js:1:1)", "Error: two", "GET / 200"},
+			want: [][]string{
+				{"Error: one", "    at a (a.js:1:1)", "Error: two"},
+				{"Error: two", "GET / 200"},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := New(Options{
+				Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile(tt.match)}},
+				ContextLines: 20,
+				CaptureWait:  time.Second,
+			})
+			e.Watch(Source{ID: "web"})
+			e.Feed("web", tt.lines, t0)
+			e.Tick(t0.Add(time.Second))
+			var got [][]string
+			entries := e.Entries()
+			for i := len(entries) - 1; i >= 0; i-- {
+				got = append(got, append(slices.Clone(entries[i].Lines), entries[i].After...))
+			}
+			if !slices.EqualFunc(got, tt.want, slices.Equal) {
+				t.Fatalf("entries =\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+}
+
+// A Python traceback that arrives in pieces stays open until its exception line,
+// which is what tells one traceback from another.
+func TestTracebackWaitsForItsException(t *testing.T) {
+	e := New(Options{
+		Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile(`^Traceback`)}},
+		ContextLines: 20,
+		CaptureWait:  time.Second,
+	})
+	e.Watch(Source{ID: "web"})
+	e.Feed("web", []string{"Traceback (most recent call last):", `  File "a.py", line 1, in <module>`}, t0)
+	e.Feed("web", []string{"    main()", `  File "a.py", line 5, in main`}, t0.Add(300*time.Millisecond))
+	e.Feed("web", []string{"    raise KeyError(k)", "KeyError: 'notices'", "GET / 200", "GET / 200"}, t0.Add(600*time.Millisecond))
+	e.Tick(t0.Add(time.Second))
+	after := onlyEntry(t, e).After
+	want := []string{`  File "a.py", line 1, in <module>`, "    main()", `  File "a.py", line 5, in main`, "    raise KeyError(k)", "KeyError: 'notices'", "GET / 200"}
+	if !slices.Equal(after, want) {
+		t.Fatalf("After = %q, want %q", after, want)
+	}
+}
+
+// A line end hidden in a string doesn't move a terminal's cursor, so the text
+// after it is on the same row, not at the start of one. A carriage return there
+// isn't followed.
+func TestNoRedrawAfterAHiddenLineEnd(t *testing.T) {
+	got, missed := readAll([]string{"before\x1b]0;", "\x07XYZ\rQ"})
+	if want := []string{"before", "XYZQ"}; !slices.Equal(got, want) || !missed {
+		t.Fatalf("read = %q (missed %v), want %q flagged", got, missed, want)
+	}
+}
+
 // Erasing over and over on a long line can't make reading slow. Past a budget
 // the line stops being followed.
 func TestEraseWorkIsBounded(t *testing.T) {

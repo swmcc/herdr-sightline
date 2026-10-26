@@ -1,0 +1,51 @@
+INFO:     Will watch for changes in these directories: ['/app']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [41210] using WatchFiles
+INFO:     Started server process [41233]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2026-01-01 09:00:03,377 ERROR request_id=7c1e9b20 Exception in ASGI application
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/main.py", line 23, in read_notices
+    return [n.title for n in notices]
+                             ^^^^^^^
+TypeError: 'NoneType' object is not iterable
+INFO:     127.0.0.1:53122 - "GET /notices HTTP/1.1" 500 Internal Server Error
+WARNING:  WatchFiles detected changes in 'main.py'. Reloading...
+INFO:     Shutting down
+INFO:     Finished server process [41233]
+INFO:     Started server process [41301]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+2026-01-01 09:00:17,904 ERROR request_id=a04f33d1 Exception in ASGI application
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/main.py", line 25, in read_notices
+    return [n.title for n in notices]
+                             ^^^^^^^
+TypeError: 'NoneType' object is not iterable
+INFO:     127.0.0.1:53190 - "GET /notices HTTP/1.1" 500 Internal Server Error
+2026-01-01 09:00:18,022 ERROR request_id=f9b2c6e4 Exception in ASGI application
+Traceback (most recent call last):
+  File "/app/.venv/lib/python3.12/site-packages/uvicorn/protocols/http/httptools_impl.py", line 409, in run_asgi
+    result = await app(  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/.venv/lib/python3.12/site-packages/fastapi/routing.py", line 301, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/app/main.py", line 25, in read_notices
+    return [n.title for n in notices]
+                             ^^^^^^^
+TypeError: 'NoneType' object is not iterable
+INFO:     127.0.0.1:53244 - "GET /notices HTTP/1.1" 500 Internal Server Error

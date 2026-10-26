@@ -1,0 +1,27 @@
+# Every way I could think of to close the fence early: runs of backticks,
+# tildes, info strings, indents, lookalikes and runs split by characters the
+# scrubber drops, which join back up into one longer run.
+# caught: Error: fence
+@ feed
+Error: fence
+```
+````
+``````````
+```text
+   ```
+~~~
+~~~~~~~~~~
+```` `
+｀｀｀ fullwidth
+ˋˋˋ modifier grave
+´´´ acute
+`\u200b`\u200b`\u200b`\u200b`\u200b`\u200b`\u200b`\u200b`\u200b`\u200b`\u200b` zero width
+`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m`\e[0m` colour codes
+`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a`\e]0;x\a` titles
+`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060`\U000E0060` tag backticks
+`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f`\ufe0f` variation selectors
+`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad`\u00ad` soft hyphens
+`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18`\x18` CAN
+`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085`\u0085` NEL
+{{40|``````````}}
+{{30|`\e[m}}

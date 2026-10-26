@@ -253,6 +253,19 @@ Sightline:
 - caps how much it sends
 - shows you exactly what will be sent before you send it (`v` to view)
 
+What that protects against, and what it doesn't:
+
+- **It can** keep pane text inside a clearly labelled data block that the pane can't
+  close or forge. It strips escape codes and invisible characters. It keeps out text
+  your terminal hid from you, or flags the error as possibly incomplete when it can't
+  be sure. It refuses to send without a keypress, and a request log can't make an
+  error read as fixed.
+- **It can't** stop a model from being persuaded by text it's shown. The label says
+  "this is data", but a model can still choose to follow it. Read what you send.
+- **It can't** see what herdr's terminal hid. If a pane hides the error coming back
+  (in a terminal title, say) then Sightline doesn't see it either. `✓ fixed` only
+  ever means the error stopped showing.
+
 Don't watch panes that print secrets. Sightline can't tell a stack trace from an API
 key that happens to be on the line above it.
 

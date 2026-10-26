@@ -1,0 +1,13 @@
+# Raw 8-bit C1 bytes (0x80 to 0x9f), which aren't valid UTF-8. herdr 0.9.1
+# shows each as U+FFFD and doesn't act on it, so what follows stays visible.
+# Sightline does the same: it must not hide text the person can see, and the
+# replacement characters are visible, so they're allowed.
+# shown: SHOWN-osc
+# shown: SHOWN-csi
+# shown: SHOWN-dcs
+@ feed
+Error: raw A\x9dSHOWN-osc\x07B
+Error: raw A\x9b31mSHOWN-csi\x9bmB
+Error: raw A\x90SHOWN-dcs\x9cB
+Error: raw A\x85SHOWN-nel B
+Error: lone bytes A\xc2B \x80 \x9f \xe2\x80 C

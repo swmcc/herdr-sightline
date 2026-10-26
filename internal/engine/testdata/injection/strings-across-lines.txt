@@ -1,0 +1,23 @@
+# Control strings that stay open across lines and across Feed calls. A terminal
+# hides every line inside, errors and all. Any line Sightline shows while a
+# terminal would still be hiding must come flagged.
+# hidden: HIDDEN
+# caught: Error: after the strings
+@ feed
+GET / 200
+A\e]0;HIDDEN title starts
+HIDDEN Error: inside an OSC across lines
+@ feed
+HIDDEN still inside, in the next Feed call\aB visible again
+C\ePHIDDEN dcs
+@ wait 2s
+@ feed
+HIDDEN Error: inside a DCS after a wait
+HIDDEN closing\e
+\\D visible after a split ST
+E\u009dHIDDEN c1 osc
+HIDDEN Error: inside a C1 OSC
+\u009cHIDDEN a C1 ST doesn't end it\aF visible
+@ wait 2s
+@ feed
+Error: after the strings

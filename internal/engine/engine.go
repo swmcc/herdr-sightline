@@ -28,8 +28,8 @@ type Options struct {
 	MaxEntries   int           // entries kept before older ones are dropped (#41)
 }
 
-// maxContextLines bounds ContextLines, and so the size of a message, until #11
-// adds a cap on the whole message.
+// maxContextLines bounds ContextLines, and so the memory and work each source
+// costs. The message has its own cap, maxMessageBytes in message.go.
 const maxContextLines = 200
 
 // MaxEntries is 200 when it isn't set and is kept between 10 and 10,000. See

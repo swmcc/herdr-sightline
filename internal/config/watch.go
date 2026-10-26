@@ -35,7 +35,12 @@ type stamp struct {
 //
 // A change is only used once the file has read the same for two checks in a row,
 // so a save that's still being written isn't caught half way. That costs one
-// interval of delay.
+// interval of delay. A state that doesn't last two checks may be skipped, and one
+// that does is reported even if the writer wasn't finished. An editor that
+// truncates the file and then stalls for longer than that shows up as an empty
+// file, which means the defaults, until the rest arrives. Most editors save by
+// writing a new file and renaming it over the old one, which never shows a half
+// written state.
 //
 // A broken file comes back as an Update with Err set. Watch never stops because
 // of a bad file, so fixing it and saving again is enough.

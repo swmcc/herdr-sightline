@@ -18,7 +18,8 @@ const SocketEnv = "HERDR_SOCKET_PATH"
 
 // Error codes herdr returns that callers are likely to want to act on.
 const (
-	CodePaneNotFound = "pane_not_found"
+	CodePaneNotFound   = "pane_not_found"
+	CodeInvalidRequest = "invalid_request"
 )
 
 // DialFunc opens one connection to herdr. It's the seam between the client and
@@ -124,7 +125,7 @@ type response struct {
 	Error  *Error          `json:"error"`
 }
 
-// result is the common head of every successful reply. The type names which
+// resultHead is the common head of every successful reply. The type names which
 // variant came back.
 type resultHead struct {
 	Type string `json:"type"`

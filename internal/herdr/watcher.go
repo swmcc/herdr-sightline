@@ -62,8 +62,17 @@ type Delta struct {
 	// have been missed.
 	Gap bool
 	// Initial marks the first read of a pane. Lines holds whatever was already
-	// there, which the caller may want to treat as history rather than news.
+	// there, last line included unless it's blank, which the caller may want to
+	// treat as history rather than news.
 	Initial bool
+	// Ambiguous means the window has slid and the end of the previous snapshot
+	// matches more than one place in this one. That happens when a pane keeps
+	// printing the same block of lines, such as a crash loop with no
+	// timestamps. Lines then holds the fewest new lines that fit, possibly none,
+	// so a repeat of the same output can go unseen. A caller that cares (the fix
+	// check) should treat it as "can't tell" and look for other signs, such as
+	// a scroll event.
+	Ambiguous bool
 }
 
 // DiffSnapshots returns the complete lines in curr that weren't complete in
@@ -73,9 +82,8 @@ type Delta struct {
 // an exact prefix of it, or something was cleared. When curr is truncated the
 // window has slid, so the diff looks for the longest run at the start of curr
 // that matches the end of prev. Sliding pins the run to the start of curr, so
-// repeated lines are only ambiguous when the whole overlap repeats (a pane
-// printing the same line hundreds of times). Then new copies of that line can't
-// be told from old ones and are undercounted, which is fine for finding errors.
+// repeated lines only confuse it when the window repeats as a whole. Then
+// Ambiguous is set.
 func DiffSnapshots(prev, curr Snapshot) Delta {
 	old := prev.complete()
 	now := curr.complete()
@@ -87,36 +95,40 @@ func DiffSnapshots(prev, curr Snapshot) Delta {
 		return Delta{Lines: now, Gap: true}
 	}
 
-	m := overlap(old, now)
-	if !anchored(old, now[:m]) {
+	// If prev held the whole history, its first line has since scrolled out of
+	// a truncated read, so all of old can't legitimately match.
+	limit := len(old)
+	if !prev.Truncated {
+		limit--
+	}
+	runs := overlaps(old, now, limit)
+	if len(runs) == 0 {
 		return Delta{Lines: now, Gap: true}
 	}
-	return Delta{Lines: now[m:]}
+	return Delta{Lines: now[runs[0]:], Ambiguous: len(runs) > 1}
 }
 
-// overlap returns the largest m where the first m lines of now are the last m
-// lines of old.
-func overlap(old, now []string) int {
-	for m := min(len(old), len(now)); m > 0; m-- {
+// overlaps returns the values of m up to limit, largest first, where the first
+// m lines of now are the last m lines of old and the run is good enough to
+// trust. It stops at two, which is enough to know the match is ambiguous.
+//
+// All of old matching (only allowed when prev was truncated) is always trusted.
+// Otherwise a run of one line, or of nothing but blank lines, could easily be a
+// coincidence after a clear.
+func overlaps(old, now []string, limit int) []int {
+	var runs []int
+	for m := min(limit, len(now)); m > 0 && len(runs) < 2; m-- {
+		if m < len(old) && (m < 2 || !slices.ContainsFunc(now[:m], notBlank)) {
+			continue
+		}
 		if slices.Equal(now[:m], old[len(old)-m:]) {
-			return m
+			runs = append(runs, m)
 		}
 	}
-	return 0
+	return runs
 }
 
-// anchored reports whether a matched run is good enough to trust. All of old
-// matching is always enough. Otherwise a run of one line, or of nothing but
-// blank lines, could easily be a coincidence after a clear.
-func anchored(old, run []string) bool {
-	if len(run) == len(old) {
-		return true
-	}
-	if len(run) < 2 {
-		return false
-	}
-	return slices.ContainsFunc(run, func(s string) bool { return strings.TrimSpace(s) != "" })
-}
+func notBlank(s string) bool { return strings.TrimSpace(s) != "" }
 
 func hasPrefix(lines, prefix []string) bool {
 	return len(lines) >= len(prefix) && slices.Equal(lines[:len(prefix)], prefix)
@@ -136,6 +148,8 @@ type PaneReader interface {
 // because herdr drops the empty cursor line after it. The cost is that a line
 // which stalls part way for that long is reported twice: once as it was, and
 // again in full when it's finished. Blank last lines are never reported early.
+// The first read is the exception: its last line is included in the Initial
+// delta, since that's all history anyway.
 //
 // A PaneWatcher isn't safe for concurrent use. Give each pane's watcher one
 // owner.
@@ -203,7 +217,10 @@ func (w *PaneWatcher) next(curr Snapshot) Delta {
 	} else {
 		w.pending, w.seen, w.flushed = last, 1, false
 	}
-	if !w.flushed && w.SettleReads > 0 && w.seen >= w.SettleReads && strings.TrimSpace(last) != "" {
+	// The first read's last line goes out with the rest of the first read, so
+	// stale output is never later mistaken for news by settling.
+	settled := d.Initial || (w.SettleReads > 0 && w.seen >= w.SettleReads)
+	if !w.flushed && settled && notBlank(last) {
 		d.Lines = append(slices.Clip(d.Lines), last)
 		w.flushed = true
 	}

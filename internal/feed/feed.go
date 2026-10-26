@@ -22,6 +22,7 @@ package feed
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -53,13 +54,14 @@ type Options struct {
 	Program []tea.ProgramOption
 }
 
-// Run shows the feed until the person quits or ctx ends. Every goroutine it
-// starts has stopped by the time it returns.
-func Run(ctx context.Context, opts Options) error {
+// Run shows the feed until the person quits or ctx ends. Every loop it starts,
+// the config watch included, has stopped by the time it returns. A check or send
+// still in flight ends with the context a moment later.
+func Run(parent context.Context, opts Options) error {
 	if opts.Client == nil {
 		return errors.New("feed: no herdr client")
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	now := opts.Now
 	if now == nil {
@@ -86,11 +88,17 @@ func Run(ctx context.Context, opts Options) error {
 	l.startShared(opts.StateDir, opts.Watch, updates)
 
 	_, err := p.Run()
+	// Bubble Tea wraps every reason the loop ends (a panic, a broken input
+	// as well as a cancelled context) in ErrProgramKilled. Only the caller's
+	// own cancel is a clean stop.
+	stopped := parent.Err() != nil
 	cancel()
 	l.wait()
-	if errors.Is(err, tea.ErrProgramKilled) {
-		// The context ended, which is how a caller asks the feed to stop.
+	if stopped {
 		return nil
 	}
-	return err
+	if err != nil {
+		return fmt.Errorf("feed: %w", err)
+	}
+	return nil
 }

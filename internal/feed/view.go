@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
@@ -32,17 +33,50 @@ const linesShown = 2
 // terminal. The engine already strips escapes from output, but titles, labels
 // and errors come from elsewhere. Control characters are shown as \x1b and so
 // on rather than acted on.
+//
+// Bytes that aren't valid UTF-8 are shown the same way, since a lone 0x9b is
+// an escape to some terminals.
 func clean(s string) string {
-	if !strings.ContainsFunc(s, unicode.IsControl) {
+	if utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl) {
 		return s
 	}
 	var b strings.Builder
-	for _, r := range s {
-		if unicode.IsControl(r) {
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case unicode.IsControl(r):
 			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			b.WriteRune(r)
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// tabWidth is where tab stops fall when the view draws a tab.
+const tabWidth = 8
+
+// expandTabs draws tabs as spaces up to the next tab stop, the way a terminal
+// would. Shown as \x09 a tab would look just like a pane that printed those
+// four characters, which isn't what the agent gets.
+func expandTabs(s string) string {
+	if !strings.Contains(s, "\t") {
+		return s
+	}
+	var b strings.Builder
+	col := 0
+	for _, r := range s {
+		if r == '\t' {
+			n := tabWidth - col%tabWidth
+			b.WriteString(strings.Repeat(" ", n))
+			col += n
 			continue
 		}
 		b.WriteRune(r)
+		col += runewidth.RuneWidth(r)
 	}
 	return b.String()
 }
@@ -296,7 +330,7 @@ func (m *Model) viewLines() []string {
 	w := max(m.width, 20)
 	var out []string
 	for _, l := range strings.Split(m.viewText, "\n") {
-		l = clean(l)
+		l = clean(expandTabs(l))
 		for runewidth.StringWidth(l) > w {
 			part := runewidth.Truncate(l, w, "")
 			if part == "" {
@@ -318,10 +352,10 @@ func (m *Model) messageView() string {
 	end := min(top+h, len(lines))
 
 	head := fmt.Sprintf("Exactly what enter sends · %s", plural(len(m.viewText), "byte", "bytes"))
-	if en, ok := m.entry(m.viewID); ok {
-		if t, ask := m.targetFor(en); ask == "" {
-			head = fmt.Sprintf("Exactly what enter sends to %s · %s", clean(t.Label), plural(len(m.viewText), "byte", "bytes"))
-		}
+	// The agent named here is the one enter checks against, so the header
+	// can't say one agent while enter sends to another.
+	if m.viewTarget.PaneID != "" {
+		head = fmt.Sprintf("Exactly what enter sends to %s · %s", clean(m.viewTarget.Label), plural(len(m.viewText), "byte", "bytes"))
 	}
 	out := []string{faint.Render(fit(head, w)), ""}
 	out = append(out, lines[top:end]...)

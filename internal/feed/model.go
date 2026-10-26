@@ -46,6 +46,8 @@ type await struct {
 	seqKnown bool
 	// sawWorking says the agent has been seen working since the last send.
 	sawWorking bool
+	// since is when the last send was made.
+	since time.Time
 }
 
 // Model is the feed. It owns the engine and is its only caller, so every engine
@@ -80,7 +82,10 @@ type Model struct {
 
 	picked  map[engine.EntryID]herdr.Target // agents chosen with t
 	sending map[engine.EntryID]bool         // a check or send is in flight
-	armed   engine.EntryID                  // enter was pressed once on a sent entry
+	armed   engine.EntryID                  // enter was pressed once on an entry that needs a second
+	// maybeSent are entries whose send failed in a way that may still have
+	// delivered it, with who to.
+	maybeSent map[engine.EntryID]string
 
 	entries  []engine.Entry // what the list shows, newest first
 	selected engine.EntryID
@@ -89,6 +94,7 @@ type Model struct {
 	viewID     engine.EntryID
 	viewText   string
 	viewTop    int
+	viewTarget herdr.Target // who the view said enter sends to
 	pickID     engine.EntryID
 	pickList   []herdr.Target
 	pickCursor int
@@ -102,21 +108,22 @@ type Model struct {
 // the program starts.
 func newModel(ctx context.Context, client *herdr.Client, now func() time.Time, self string, first config.Update) *Model {
 	m := &Model{
-		ctx:      ctx,
-		client:   client,
-		now:      now,
-		self:     self,
-		tracker:  herdr.NewAgentTracker(),
-		panes:    map[string]herdr.Pane{},
-		gone:     map[string]bool{},
-		movedTo:  map[string]string{},
-		paneErrs: map[string]error{},
-		awaiting: map[string]*await{},
-		labels:   map[string]string{},
-		picked:   map[engine.EntryID]herdr.Target{},
-		sending:  map[engine.EntryID]bool{},
-		width:    80,
-		height:   24,
+		ctx:       ctx,
+		client:    client,
+		now:       now,
+		self:      self,
+		tracker:   herdr.NewAgentTracker(),
+		panes:     map[string]herdr.Pane{},
+		gone:      map[string]bool{},
+		movedTo:   map[string]string{},
+		paneErrs:  map[string]error{},
+		awaiting:  map[string]*await{},
+		labels:    map[string]string{},
+		picked:    map[engine.EntryID]herdr.Target{},
+		sending:   map[engine.EntryID]bool{},
+		maybeSent: map[engine.EntryID]string{},
+		width:     80,
+		height:    24,
 	}
 	m.applyConfig(first)
 	return m
@@ -154,7 +161,14 @@ func (m *Model) applyConfig(u config.Update) {
 	opts, err := engineOptions(u.Config)
 	if err != nil {
 		m.cfgErr = err
-		return
+		if m.engine != nil {
+			return
+		}
+		// The feed needs an engine whatever the file says.
+		u.Config = config.Default()
+		if opts, err = engineOptions(u.Config); err != nil {
+			panic(fmt.Sprintf("the default config doesn't build an engine: %v", err))
+		}
 	}
 	m.cfg = u.Config
 	if m.engine != nil && (len(m.engine.Entries()) > 0 || m.engine.Dropped() > 0) {
@@ -182,19 +196,25 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		m.engine.Tick(m.now())
 	case deltaMsg:
-		m.delta(msg)
+		if m.fromCurrentLoop(msg.pane, msg.gen) {
+			m.delta(msg)
+		}
 	case paneGoneMsg:
-		m.dropPane(msg.pane, "closed")
+		if m.fromCurrentLoop(msg.pane, msg.gen) {
+			m.dropPane(msg.pane, "closed")
+		}
 	case paneErrMsg:
-		if m.isWatching(msg.pane) {
+		if m.fromCurrentLoop(msg.pane, msg.gen) {
 			m.paneErrs[msg.pane] = msg.err
 		}
 	case snapshotMsg:
 		m.snapshot(msg)
 	case eventMsg:
-		m.event(msg.ev)
+		m.event(msg.ev, msg.global)
 	case eventsDownMsg:
 		m.eventsErr = fmt.Errorf("%s: %w", msg.what, msg.err)
+	case eventsUpMsg:
+		m.eventsErr = nil
 	case watchListMsg:
 		m.listed, m.listErr = msg.panes, msg.err
 		m.applyWatchList()
@@ -209,19 +229,29 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// fromCurrentLoop reports whether a message about pane came from the loop
+// watching it now, rather than one stopped earlier.
+func (m *Model) fromCurrentLoop(pane string, gen uint64) bool {
+	return m.isWatching(pane) && m.loops != nil && m.loops.current(pane, gen)
+}
+
 // refresh copies the entries out of the engine and keeps the selection on the
 // same entry where it can.
 func (m *Model) refresh() {
+	last := max(m.cursor(), 0)
 	m.entries = m.entries[:0]
 	for _, en := range m.engine.Entries() {
 		if en.State != engine.StateDismissed {
 			m.entries = append(m.entries, en)
 		}
 	}
+	// If the selected entry went (dismissed, or dropped by the cap), select
+	// the one now in its place rather than jumping to the newest, so a flood of
+	// new errors can't put one under the cursor just before enter.
 	if m.cursor() < 0 {
 		m.selected = ""
 		if len(m.entries) > 0 {
-			m.selected = m.entries[0].ID
+			m.selected = m.entries[min(last, len(m.entries)-1)].ID
 		}
 	}
 	if m.mode == modeView {
@@ -296,16 +326,22 @@ func (m *Model) snapshot(msg snapshotMsg) {
 			agentPanes = append(agentPanes, p.ID)
 		}
 	}
+	// agent.list is fetched after pane.list, so it's the newer of the two and
+	// a pane's own status only counts for an agent agent.list doesn't have.
+	inAgents := map[string]bool{}
 	for _, a := range msg.snap.Agents {
+		inAgents[a.PaneID] = true
 		if !slices.Contains(agentPanes, a.PaneID) {
 			agentPanes = append(agentPanes, a.PaneID)
 		}
-		m.agentStatus(a.PaneID, a.Status, a.StateChangeSeq, true, now)
 	}
 	for _, p := range msg.snap.Panes {
-		if p.Agent != "" || p.DisplayAgent != "" {
-			m.agentStatus(p.ID, p.AgentStatus, 0, false, now)
+		if (p.Agent != "" || p.DisplayAgent != "") && !inAgents[p.ID] {
+			m.agentStatus(p.ID, p.AgentStatus, 0, false, msg.snap.Taken, now)
 		}
+	}
+	for _, a := range msg.snap.Agents {
+		m.agentStatus(a.PaneID, a.Status, a.StateChangeSeq, true, msg.snap.Taken, now)
 	}
 	for _, pane := range m.watching {
 		m.engine.Watch(m.source(pane))
@@ -317,10 +353,12 @@ func (m *Model) snapshot(msg snapshotMsg) {
 
 // agentStatus notes what an agent that has been sent errors is doing, and tells
 // the engine when it has finished: idle or done after being seen working, or
-// after its state change counter moved on since the send.
-func (m *Model) agentStatus(pane string, status herdr.AgentStatus, seq uint64, haveSeq bool, now time.Time) {
+// after its state change counter moved on since the send. seen is when herdr
+// was asked. Anything asked before the last send says nothing about it, so a
+// slow snapshot can't finish a send it never saw.
+func (m *Model) agentStatus(pane string, status herdr.AgentStatus, seq uint64, haveSeq bool, seen, now time.Time) {
 	a, ok := m.awaiting[pane]
-	if !ok {
+	if !ok || seen.Before(a.since) {
 		return
 	}
 	switch status {
@@ -339,12 +377,12 @@ func (m *Model) agentStatus(pane string, status herdr.AgentStatus, seq uint64, h
 }
 
 // event handles one herdr event.
-func (m *Model) event(ev herdr.Event) {
+func (m *Model) event(ev herdr.Event, global bool) {
 	now := m.now()
 	m.tracker.Observe(ev, now)
 	switch ev.Kind {
 	case herdr.EventAgentStatusChanged:
-		m.agentStatus(ev.PaneID, ev.AgentStatus, 0, false, now)
+		m.agentStatus(ev.PaneID, ev.AgentStatus, 0, false, now, now)
 	case herdr.EventPaneClosed:
 		m.dropPane(ev.PaneID, "closed")
 		delete(m.awaiting, ev.PaneID)
@@ -355,7 +393,9 @@ func (m *Model) event(ev herdr.Event) {
 	case herdr.EventPaneMoved:
 		m.paneMoved(ev.PreviousPaneID, ev.PaneID)
 	case herdr.EventReconnected:
-		m.eventsErr = nil
+		if global {
+			m.eventsErr = nil
+		}
 		if m.loops != nil {
 			m.loops.requestSync()
 		}
@@ -382,8 +422,14 @@ func (m *Model) paneMoved(from, to string) {
 			m.picked[id] = t
 		}
 	}
-	if m.isWatching(from) {
-		m.stopWatching(from)
+	// A read of the old id can lose the race with this event and find the pane
+	// gone first. Then it was dropped as closed, but it only moved.
+	if m.isWatching(from) || m.gone[from] {
+		delete(m.gone, from)
+		if m.isWatching(from) {
+			m.stopWatching(from)
+		}
+		m.status = ""
 		m.applyWatchList()
 		// Output printed while the pane moved can't be seen by the new watcher,
 		// whose first read is skipped.
@@ -563,6 +609,12 @@ func (m *Model) openView(id engine.EntryID) {
 		return
 	}
 	m.mode, m.viewID, m.viewText, m.viewTop = modeView, id, text, 0
+	m.viewTarget = herdr.Target{}
+	if en, ok := m.entry(id); ok {
+		if t, ask := m.targetFor(en); ask == "" {
+			m.viewTarget = t
+		}
+	}
 }
 
 func (m *Model) viewKey(k tea.KeyMsg) tea.Cmd {
@@ -639,12 +691,15 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 		m.status = fmt.Sprintf("Not sent: %v", err)
 		return nil
 	}
-	if fromView && text != viewed {
-		m.viewText = text
-		m.status = "The message changed while you were reading it. Check it again, then press enter to send."
+	target, ask := m.targetFor(en)
+	if fromView && (text != viewed || target.PaneID != m.viewTarget.PaneID) {
+		// The view promised these bytes to this agent. If either changed (a
+		// pane can change its own title, and a pin can follow it), show the
+		// new version rather than send something that wasn't on screen.
+		m.openView(id)
+		m.status = "The message or its agent changed while you were reading it. Check it again, then press enter to send."
 		return nil
 	}
-	target, ask := m.targetFor(en)
 	if ask != "" {
 		m.status = fmt.Sprintf("Not sent: %s. Press t to pick an agent.", ask)
 		return nil
@@ -654,15 +709,31 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 		m.status = fmt.Sprintf("Not sent to %s: %s.", label, blockedNote)
 		return nil
 	}
-	if (en.State == engine.StateSent || en.State == engine.StateFixed) && m.armed != id {
+	if confirm := m.needsConfirm(en, target); confirm != "" && m.armed != id {
 		m.armed = id
-		m.status = fmt.Sprintf("Already sent to %s. Press enter again to send it again.", clean(m.agentLabel(en.Agent)))
+		m.status = confirm + " Press enter again to send."
 		return nil
 	}
 	m.armed = ""
 	m.sending[id] = true
 	m.status = fmt.Sprintf("Checking %s before sending...", label)
-	return checkTarget(m.ctx, m.client, id, target, text)
+	return checkTarget(m.ctx, m.client, m.now, id, target, text)
+}
+
+// needsConfirm says why a send needs a second enter, or "" if it doesn't.
+func (m *Model) needsConfirm(en engine.Entry, target herdr.Target) string {
+	_, picked := m.picked[en.ID]
+	switch {
+	case m.maybeSent[en.ID] != "":
+		return fmt.Sprintf("This may already have reached %s.", clean(m.maybeSent[en.ID]))
+	case en.State == engine.StateSent || en.State == engine.StateFixed:
+		return fmt.Sprintf("Already sent to %s.", clean(m.agentLabel(en.Agent)))
+	case !target.SameTab && !picked:
+		// Only a pin can choose an agent in another tab, and a pin can match
+		// a terminal title, which the watched pane sets itself.
+		return fmt.Sprintf("%s is in another tab.", clean(target.Label))
+	}
+	return ""
 }
 
 // checkedMsg is a fresh look at the target pane just before sending.
@@ -674,15 +745,18 @@ type checkedMsg struct {
 	found    bool
 	seq      uint64
 	seqKnown bool
-	err      error
+	// checkedAt is when the check began, just before the send. Agent statuses
+	// asked for before it say nothing about this send.
+	checkedAt time.Time
+	err       error
 }
 
 // checkTarget looks the target up again. Pane ids can go stale, the agent in a
 // pane can change and an agent can become blocked between the last snapshot
 // and the keypress.
-func checkTarget(ctx context.Context, client *herdr.Client, id engine.EntryID, target herdr.Target, text string) tea.Cmd {
+func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time, id engine.EntryID, target herdr.Target, text string) tea.Cmd {
 	return func() tea.Msg {
-		msg := checkedMsg{id: id, target: target, text: text}
+		msg := checkedMsg{id: id, target: target, text: text, checkedAt: now()}
 		panes, err := client.ListPanes(ctx)
 		if err != nil {
 			msg.err = err
@@ -722,7 +796,8 @@ func (m *Model) checked(msg checkedMsg) tea.Cmd {
 	case p.Agent == "" && p.DisplayAgent == "":
 		delete(m.picked, msg.id)
 		return refuse("its pane isn't running an agent any more")
-	case msg.target.Kind != "" && p.Agent != msg.target.Kind:
+	case msg.target.Kind != "" && p.Agent != msg.target.Kind,
+		msg.target.Kind == "" && p.Agent != "":
 		delete(m.picked, msg.id)
 		return refuse(fmt.Sprintf("its pane now runs %s instead", clean(p.Agent)))
 	case p.AgentStatus == herdr.AgentBlocked:
@@ -751,14 +826,21 @@ func (m *Model) sent(sm sentMsg) {
 	msg := sm.checked
 	delete(m.sending, msg.id)
 	label := clean(msg.target.Label)
+	var refused *herdr.Error
 	switch {
-	case errors.Is(sm.promptErr, herdr.ErrTimeout):
-		m.status = fmt.Sprintf("herdr didn't answer, so it may or may not have reached %s. Check before sending again.", label)
+	case errors.As(sm.promptErr, &refused):
+		// herdr answered and said no, so nothing was typed.
+		m.status = fmt.Sprintf("Not sent to %s: %v", label, sm.promptErr)
 		return
 	case sm.promptErr != nil:
-		m.status = fmt.Sprintf("Not sent to %s: %v", label, clean(sm.promptErr.Error()))
+		// Anything else may have failed after herdr had the request: a lost
+		// reply, a timeout, a cancel. So it may have been typed, and the next
+		// enter asks first.
+		m.maybeSent[msg.id] = msg.target.Label
+		m.status = fmt.Sprintf("It may or may not have reached %s (%v). Check before sending again.", label, sm.promptErr)
 		return
 	}
+	delete(m.maybeSent, msg.id)
 	pane := msg.target.PaneID
 	m.engine.MarkSent(msg.id, pane, m.now())
 	m.labels[pane] = msg.target.Label
@@ -770,7 +852,7 @@ func (m *Model) sent(sm sentMsg) {
 	if !slices.Contains(a.keys, pane) {
 		a.keys = append(a.keys, pane)
 	}
-	a.seq, a.seqKnown, a.sawWorking = msg.seq, msg.seqKnown, false
+	a.seq, a.seqKnown, a.sawWorking, a.since = msg.seq, msg.seqKnown, false, msg.checkedAt
 	m.status = fmt.Sprintf("Sent to %s.", label)
 }
 

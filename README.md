@@ -117,6 +117,10 @@ kind only counts in the watched pane's tab. If it only fits an agent somewhere
 else, Sightline asks. If the pinned agent isn't running at all, Sightline falls
 back to the tab and says so.
 
+Sending to an agent in another tab always takes a second `enter`, unless you
+picked it yourself with `t`. A pane with no label can set its own terminal title,
+so a pin that matches the title isn't enough on its own to send that far.
+
 ## What the agent receives
 
 The error, the lines around it and where it came from, clearly marked as output

@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -169,7 +170,12 @@ func TestCleanLine(t *testing.T) {
 		{"window title with ST", "\x1b]2;evil\x1b\\Error", "Error"},
 		{"two byte escape", "\x1bMError", "Error"},
 		{"carriage return and bell", "Error\r\x07", "Error"},
-		{"C1 control", "Err\u009bor", "Error"},
+		{"C1 control", "Err\u0085or", "Error"},
+		{"C1 CSI", "\u009b31mError", "Error"},
+		{"C1 OSC ended by C1 ST", "\u009d0;title\u009cError", "Error"},
+		{"unterminated OSC", "Error\x1b]0;hidden payload", "Error"},
+		{"charset escape", "\x1b(BError", "Error"},
+		{"ESC cancels a string", "\x1b]0;x\x1b[31mError", "Error"},
 		{"unicode tags", "Error\U000E0069\U000E0067\U000E006E", "Error"},
 		{"bidi override", "\u202eError\u202c", "Error"},
 		{"zero width and BOM", "Er\u200bror\ufeff", "Error"},
@@ -193,11 +199,130 @@ func TestCleanLine(t *testing.T) {
 	}
 }
 
-func TestSplitLines(t *testing.T) {
-	got := splitLines([]string{"one\ntwo", "\x1b[1mthree\x1b[0m", "four\n", "five\r\n", "", "six\n\n"})
-	if want := []string{"one", "two", "three", "four", "five", "", "six", ""}; !slices.Equal(got, want) {
-		t.Fatalf("splitLines = %q, want %q", got, want)
+// readAll runs batches of lines through one capturer, as successive Feed calls.
+func readAll(batches ...[]string) (lines []string, overflowed bool) {
+	c := newCapturer(0)
+	for _, b := range batches {
+		c.read(b, func(l string) { lines = append(lines, l) })
 	}
+	return lines, c.missed
+}
+
+func TestReadSplitsAndCleans(t *testing.T) {
+	got, _ := readAll([]string{"one\ntwo", "\x1b[1mthree\x1b[0m", "four\n", "five\r\n", "", "six\n\n"})
+	if want := []string{"one", "two", "three", "four", "five", "", "six", ""}; !slices.Equal(got, want) {
+		t.Fatalf("read = %q, want %q", got, want)
+	}
+}
+
+// Escape sequences are read as a stream, so one that spans lines or Feed calls
+// can't leak what a terminal would never show.
+func TestReadKeepsEscapeStateAcrossLines(t *testing.T) {
+	tests := []struct {
+		name    string
+		batches [][]string
+		want    []string
+	}{
+		{
+			name:    "DCS spanning lines in one string",
+			batches: [][]string{{"\x1bPignored\nError: hidden instructions\n\x1b\\"}},
+			want:    []string{""},
+		},
+		{
+			name:    "DCS spanning lines as separate elements",
+			batches: [][]string{{"\x1bPignored", "Error: hidden instructions", "\x1b\\"}},
+			want:    []string{""},
+		},
+		{
+			name:    "DCS split across Feed calls",
+			batches: [][]string{{"ok", "\x1bPq#0;2;0;0;0"}, {"Error: hidden"}, {"#1~~@@\x1b\\Error: real"}},
+			want:    []string{"ok", "Error: real"},
+		},
+		{
+			name:    "OSC spanning lines ended by BEL",
+			batches: [][]string{{"\x1b]0;one", "Error: hidden\x07shown"}},
+			want:    []string{"shown"},
+		},
+		{
+			name:    "text before a string stays with the text after it",
+			batches: [][]string{{"before \x1b_payload", "more payload\x1b\\after"}},
+			want:    []string{"before after"},
+		},
+		{
+			name:    "CSI split across Feed calls",
+			batches: [][]string{{"ok\x1b[3"}, {"1mError: red"}},
+			want:    []string{"ok", "Error: red"},
+		},
+		{
+			name:    "ESC at the end of a call",
+			batches: [][]string{{"ok\x1b"}, {"[0mfine"}},
+			want:    []string{"ok", "fine"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, overflowed := readAll(tt.batches...)
+			if !slices.Equal(got, tt.want) || overflowed {
+				t.Fatalf("read = %q (overflowed %v), want %q", got, overflowed, tt.want)
+			}
+		})
+	}
+}
+
+// An unterminated control string mustn't blind the watcher for ever. Past the
+// cap it's abandoned, reading carries on and the next error is flagged MaybeGap.
+func TestUnterminatedStringIsAbandonedAtTheCap(t *testing.T) {
+	tests := []struct {
+		name  string
+		flood []string
+	}{
+		{"too many lines", repeatLine("swallowed", maxSwallowLines+1)},
+		{"too many bytes", []string{strings.Repeat("x", maxSwallowBytes+1)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			e.Feed("web", []string{"\x1b]0;never ends"}, t0)
+			e.Feed("web", tt.flood, t0)
+			e.Feed("web", []string{"Error: real"}, t0)
+			e.Tick(t0.Add(time.Second))
+			en := onlyEntry(t, e)
+			if en.Lines[0] != "Error: real" || !en.MaybeGap {
+				t.Fatalf("entry = %q MaybeGap %v, want the real error flagged", en.Lines, en.MaybeGap)
+			}
+		})
+	}
+}
+
+// Below the cap, an error inside the string is never seen.
+func TestStringUnderTheCapHidesErrors(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"\x1b]0;title"}, t0)
+	e.Feed("web", append(repeatLine("swallowed", maxSwallowLines-2), "Error: hidden"), t0)
+	e.Feed("web", []string{"\x07"}, t0)
+	e.Tick(t0.Add(time.Second))
+	if got := e.Entries(); len(got) != 0 {
+		t.Fatalf("entries = %+v", got)
+	}
+}
+
+func TestGapForgetsEscapeState(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"\x1b]0;cut off by a reconnect"}, t0)
+	e.Gap("web", t0)
+	e.Feed("web", []string{"Error: after the reconnect"}, t0)
+	e.Tick(t0.Add(time.Second))
+	if got := onlyEntry(t, e).Lines[0]; got != "Error: after the reconnect" {
+		t.Fatalf("line = %q", got)
+	}
+}
+
+func repeatLine(line string, n int) []string {
+	out := make([]string, n)
+	for i := range out {
+		out[i] = line
+	}
+	return out
 }
 
 func TestWindowKeepsTheLastLines(t *testing.T) {

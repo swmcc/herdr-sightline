@@ -103,10 +103,10 @@ func (e *Engine) Feed(id SourceID, lines []string, now time.Time) {
 	// Anything already due, including a settle period that has ended, was
 	// finished before these lines arrived.
 	e.Tick(now)
-	for _, line := range splitLines(lines) {
+	s.capture.read(lines, func(line string) {
 		e.observe(s, line, now)
 		e.sawLine(id, line, now)
-	}
+	})
 	e.finishCaptures(now)
 }
 
@@ -120,7 +120,7 @@ func (e *Engine) Gap(id SourceID, now time.Time) {
 	}
 	// Captures already due were complete before the gap.
 	e.Tick(now)
-	s.capture.gap()
+	s.capture.lost()
 }
 
 // Tick moves waits and timers on to now. The adapter calls it regularly, whether

@@ -104,3 +104,43 @@ func TestFixCheck(t *testing.T) {
 		})
 	}
 }
+
+// A repeat that matches after the settle period has ended belongs to a new
+// entry, whenever the next Tick happens to run.
+func TestRepeatAfterSettleIsNewWhateverTheTicks(t *testing.T) {
+	tests := []struct {
+		name  string
+		ticks []time.Duration
+	}{
+		{"tick at 31s then 31.5s", []time.Duration{500 * time.Millisecond, 500 * time.Millisecond}},
+		{"tick only at 31.5s", []time.Duration{time.Second}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAdapter(t)
+			a.Print(web, "Error: boom")
+			a.Advance(time.Second)
+			first := only(t, a).ID
+			a.Send(first, "claude")
+			a.Finish("claude")
+
+			// Settle ends 30s after Finish. The repeat matches at 30.5s and is due
+			// at 31.5s.
+			a.Run([]enginetest.Step{{Wait: 30500 * time.Millisecond, Source: web, Lines: []string{"Error: boom"}}})
+			for _, d := range tt.ticks {
+				a.Advance(d)
+			}
+
+			entries := a.Engine.Entries()
+			if len(entries) != 2 {
+				t.Fatalf("want 2 entries, got %d: %+v", len(entries), entries)
+			}
+			if entries[0].State != engine.StateNew || entries[0].Count != 1 {
+				t.Fatalf("new entry = %v count %d, want new count 1", entries[0].State, entries[0].Count)
+			}
+			if entries[1].ID != first || entries[1].State != engine.StateUnverified || entries[1].Count != 1 {
+				t.Fatalf("old entry = %v count %d, want unverified count 1", entries[1].State, entries[1].Count)
+			}
+		})
+	}
+}

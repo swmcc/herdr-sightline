@@ -46,6 +46,13 @@ func (e *Engine) dismissed(r *record) {
 // doesn't need it. #12 uses it to tell a quiet pane from a healthy one.
 func (e *Engine) sawLine(_ SourceID, _ string, _ time.Time) {}
 
+// pastSettle reports whether an error matched at matchedAt came too late to
+// count toward r's settle period. Grouping makes such a repeat a new entry. It's
+// decided by match time, so the outcome never depends on when Tick runs.
+func (e *Engine) pastSettle(r *record, matchedAt time.Time) bool {
+	return r.entry.State == StateSent && r.fix.settling && !matchedAt.Before(r.fix.until)
+}
+
 // recurred is called when an entry's error is seen again at matchedAt.
 func (e *Engine) recurred(r *record, matchedAt time.Time) {
 	// Only a repeat inside the settle period counts. One after it ended, but

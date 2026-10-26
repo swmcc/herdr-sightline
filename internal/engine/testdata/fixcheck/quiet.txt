@@ -1,0 +1,18 @@
+# Healthy lines that don't prove the changed code ran. One per line. Each must
+# leave a sent entry unverified when it's the only thing printed in the settle
+# period.
+GET /health 200 in 3ms
+127.0.0.1 - - [01/Jan/2026:09:00:00 +0000] "GET /notices HTTP/1.1" 200 512
+ ○ Compiling /notices ...
+webpack: Compiling...
+Failed to compile.
+Watching for file changes with StatReloader
+[nodemon] watching path(s): *.*
+[nodemon] waiting for changes before restart
+ok  	github.com/swmcc/app/notices	(cached)
+Determining test suites to run...
+The pass rate is fine
+fail fast is off
+Finished in 0.05 seconds (0.03s async, 0.02s sync)
+ RERUN  src/notices.test.ts x1
+Server is ready.

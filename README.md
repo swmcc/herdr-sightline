@@ -316,7 +316,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Read `sightline.toml` ([#13](https://github.com/swmcc/herdr-sightline/issues/13))
 - [ ] Ignore rules from the feed ([#14](https://github.com/swmcc/herdr-sightline/issues/14))
 - [x] Apply config changes without reopening the feed ([#58](https://github.com/swmcc/herdr-sightline/issues/58))
-- [ ] Recover from a panic in the feed cleanly ([#59](https://github.com/swmcc/herdr-sightline/issues/59))
+- [x] Recover from a panic in the feed cleanly ([#59](https://github.com/swmcc/herdr-sightline/issues/59))
 - [ ] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
 - [x] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
 - [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))

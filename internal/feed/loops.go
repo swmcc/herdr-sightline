@@ -3,6 +3,8 @@ package feed
 import (
 	"context"
 	"errors"
+	"fmt"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -29,6 +31,11 @@ import (
 //
 // The only other goroutines are the Bubble Tea commands that check a target and
 // send a prompt. They run with the root context too, so they end with it.
+//
+// A panic in any of these goroutines, or in the update or view, is caught by
+// faults. It keeps the first panic as an error and cancels the root, so every
+// loop stops and Bubble Tea stops and puts the terminal back. Run returns the
+// error once the WaitGroup is done.
 
 // Timings is how often the loops wake up. Zero values mean the defaults.
 type Timings struct {
@@ -71,6 +78,7 @@ func (t Timings) withDefaults() Timings {
 // WaitGroup is the one thing shared with the goroutines themselves.
 type loops struct {
 	ctx    context.Context
+	faults *faults
 	client *herdr.Client
 	send   func(tea.Msg)
 	now    func() time.Time
@@ -83,9 +91,10 @@ type loops struct {
 	resync chan struct{}                 // asks the sync loop for a snapshot now
 }
 
-func newLoops(ctx context.Context, client *herdr.Client, send func(tea.Msg), now func() time.Time, every Timings) *loops {
+func newLoops(ctx context.Context, f *faults, client *herdr.Client, send func(tea.Msg), now func() time.Time, every Timings) *loops {
 	return &loops{
 		ctx:    ctx,
+		faults: f,
 		client: client,
 		send:   send,
 		now:    now,
@@ -96,11 +105,14 @@ func newLoops(ctx context.Context, client *herdr.Client, send func(tea.Msg), now
 	}
 }
 
-// goLoop runs fn in a goroutine counted in the WaitGroup.
-func (l *loops) goLoop(fn func()) {
+// goLoop runs fn in a goroutine counted in the WaitGroup. name says which loop
+// it is if it panics.
+func (l *loops) goLoop(name string, fn func()) {
 	l.wg.Add(1)
 	go func() {
 		defer l.wg.Done()
+		defer l.faults.catch(name)
+		panicPoint(l.ctx, name)
 		fn()
 	}()
 }
@@ -119,13 +131,25 @@ func (l *loops) deliver(ctx context.Context, msg tea.Msg) {
 // startShared starts the loops that live as long as the feed: the engine tick,
 // the agent sync, the watch list, the config file and herdr's global events.
 func (l *loops) startShared(stateDir string, extra []string, configUpdates <-chan config.Update) {
-	l.goLoop(l.runTick)
-	l.goLoop(l.runSync)
-	l.goLoop(func() { l.runWatchList(stateDir, extra) })
+	l.goLoop("the tick loop", l.runTick)
+	l.goLoop("the sync loop", l.runSync)
+	l.goLoop("the watch list loop", func() { l.runWatchList(stateDir, extra) })
 	if configUpdates != nil {
-		l.goLoop(func() { l.runConfig(configUpdates) })
+		l.goLoop("the config loop", func() {
+			// If forwarding panics, keep reading until Watch closes the
+			// channel, so waiting for this loop still waits for Watch's
+			// goroutine. The catch has to run first: it's what cancels the
+			// root, and Watch only closes the channel once that happens.
+			defer func() {
+				for range configUpdates {
+				}
+			}()
+			defer l.faults.catch("forwarding config updates")
+			panicPoint(l.ctx, "forwarding config updates")
+			l.runConfig(configUpdates)
+		})
 	}
-	l.goLoop(l.runGlobalEvents)
+	l.goLoop("the pane events loop", l.runGlobalEvents)
 }
 
 // requestSync asks the sync loop for a snapshot straight away. It never blocks:
@@ -154,7 +178,7 @@ func (l *loops) watchPane(pane string) {
 	l.gen++
 	gen := l.gen
 	l.panes[pane] = paneLoop{cancel: cancel, gen: gen}
-	l.goLoop(func() { l.runPane(ctx, pane, gen) })
+	l.goLoop("the loop for pane "+pane, func() { l.runPane(ctx, pane, gen) })
 }
 
 // unwatchPane stops a pane's loop. It doesn't wait: the loop sees its context
@@ -187,7 +211,7 @@ func (l *loops) followAgents(panes []string) {
 		}
 		ctx, cancel := context.WithCancel(l.ctx)
 		l.agents[pane] = cancel
-		l.goLoop(func() { l.runAgentStatus(ctx, pane) })
+		l.goLoop("the status loop for agent "+pane, func() { l.runAgentStatus(ctx, pane) })
 	}
 }
 
@@ -470,5 +494,93 @@ func (l *loops) runPane(ctx context.Context, pane string, gen uint64) {
 				}
 			}
 		}
+	}
+}
+
+// faults stops the feed on the first panic in any of its goroutines and keeps
+// that panic for Run to return. Later panics are most likely knock-on effects
+// of the first, so only the first is kept.
+type faults struct {
+	ctx    context.Context    // the root, which carries a test's panic hook
+	cancel context.CancelFunc // cancels the root
+
+	mu    sync.Mutex
+	first error
+}
+
+// fail keeps err if it's the first and stops the feed.
+func (f *faults) fail(err error) {
+	f.mu.Lock()
+	if f.first == nil {
+		f.first = err
+	}
+	f.mu.Unlock()
+	f.cancel()
+}
+
+// err is the first panic, or nil if nothing has panicked.
+func (f *faults) err() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.first
+}
+
+// catch recovers a panic and fails the feed with it. It only works deferred
+// directly, as in defer f.catch("the tick loop"), because that's the only way
+// recover sees the panic.
+func (f *faults) catch(where string) {
+	if r := recover(); r != nil {
+		f.fail(newPanicError(where, r))
+	}
+}
+
+// guard wraps a Bubble Tea command so a panic in it fails the feed rather than
+// reaching Bubble Tea. The command then gives back no message. It doesn't reach
+// inside tea.Batch or tea.Sequence, whose commands Bubble Tea runs itself, so
+// the feed doesn't use them.
+func (f *faults) guard(where string, cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		defer f.catch(where)
+		panicPoint(f.ctx, where)
+		return cmd()
+	}
+}
+
+// panicError is a recovered panic: where it happened, what it was and the
+// stack at that moment.
+type panicError struct {
+	where string
+	value any
+	stack []byte
+}
+
+// newPanicError builds a panicError. Call it from the deferred function that
+// recovered, while the panicking frames are still on the stack.
+func newPanicError(where string, value any) *panicError {
+	return &panicError{where: where, value: value, stack: debug.Stack()}
+}
+
+func (e *panicError) Error() string {
+	// The value could hold pane text, and this ends up on the terminal once
+	// the feed has stopped, so it's cleaned like anything else from a pane.
+	return fmt.Sprintf("%s panicked: %s\n\n%s", clean(e.where), clean(fmt.Sprint(e.value)), e.stack)
+}
+
+// panicError deliberately has no Unwrap. A panic with a *herdr.Error in it
+// would otherwise look like herdr refusing a prompt, which the model reads as
+// nothing typed, when a panic during a send says nothing either way.
+
+// panicKey is the context key for a test's panic hook.
+type panicKey struct{}
+
+// panicPoint is where a test can make the feed panic. It calls the hook a test
+// put in the context, if there is one, with where it is. Outside tests there's
+// never a hook, so it does nothing.
+func panicPoint(ctx context.Context, where string) {
+	if hook, ok := ctx.Value(panicKey{}).(func(string)); ok {
+		hook(where)
 	}
 }

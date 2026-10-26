@@ -1,6 +1,7 @@
 package herdr
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -117,7 +118,7 @@ func (c *Client) Subscribe(ctx context.Context, subs ...Subscription) (<-chan Ev
 // handshake and is now streaming events.
 type subscriptionConn struct {
 	conn net.Conn
-	dec  *json.Decoder
+	r    *bufio.Reader
 	stop func() bool
 }
 
@@ -136,25 +137,28 @@ func (c *Client) openSubscription(ctx context.Context, subs []Subscription) (*su
 	// reader, whichever is running.
 	sc := &subscriptionConn{
 		conn: conn,
-		dec:  json.NewDecoder(conn),
+		r:    bufio.NewReaderSize(conn, readBufferSize),
 		stop: context.AfterFunc(ctx, func() { _ = conn.Close() }),
 	}
 
+	// The handshake gets the same timeout as a request. A timeout here isn't
+	// permanent, so a reconnect that hangs goes round the backoff loop again.
+	_ = conn.SetDeadline(time.Now().Add(c.timeout))
 	params := struct {
 		Subscriptions []Subscription `json:"subscriptions"`
 	}{subs}
-	raw, err := exchange(conn, sc.dec, c.nextID(), method, params)
+	raw, err := exchange(conn, sc.r, MaxEventBytes, c.nextID(), method, params)
 	if err == nil {
 		err = decodeResult(method, raw, "subscription_started", nil)
-	} else if ctxErr := ctx.Err(); ctxErr != nil {
-		err = fmt.Errorf("herdr %s: %w", method, ctxErr)
 	} else {
-		err = fmt.Errorf("herdr %s: %w", method, err)
+		err = c.callError(ctx, method, err)
 	}
 	if err != nil {
 		sc.close()
 		return nil, err
 	}
+	// A running subscription can sit quiet for as long as nothing happens.
+	_ = conn.SetDeadline(time.Time{})
 	return sc, nil
 }
 
@@ -249,8 +253,12 @@ func streamEvents(sc *subscriptionConn, send func(Event) bool) (delivered bool, 
 			Data  json.RawMessage `json:"data"`
 			Error *Error          `json:"error"`
 		}
-		if err := sc.dec.Decode(&env); err != nil {
+		line, err := readLine(sc.r, MaxEventBytes)
+		if err != nil {
 			return delivered, fmt.Errorf("herdr events.subscribe: reading events: %w", err)
+		}
+		if err := json.Unmarshal(line, &env); err != nil {
+			return delivered, fmt.Errorf("herdr events.subscribe: decoding an event: %w", err)
 		}
 		if env.Error != nil {
 			env.Error.Method = "events.subscribe"
@@ -270,8 +278,22 @@ func streamEvents(sc *subscriptionConn, send func(Event) bool) (delivered bool, 
 // subscription events are dotted (pane.agent_status_changed) and lifecycle
 // events use underscores (pane_closed, with the name repeated in data.type).
 // Both map to the same kinds.
+//
+// The kind comes from the name alone and the fields are filled as best they
+// can be, so a pane closing still arrives as EventPaneClosed even if herdr
+// changes the shape of one of its fields.
 func decodeEvent(name string, data json.RawMessage) Event {
 	ev := Event{Kind: EventOther, Name: name, Data: data}
+	switch strings.Replace(name, ".", "_", 1) {
+	case "pane_agent_status_changed":
+		ev.Kind = EventAgentStatusChanged
+	case "pane_scroll_changed":
+		ev.Kind = EventScrollChanged
+	case "pane_closed":
+		ev.Kind = EventPaneClosed
+	case "pane_exited":
+		ev.Kind = EventPaneExited
+	}
 
 	var fields struct {
 		PaneID      string      `json:"pane_id"`
@@ -280,26 +302,17 @@ func decodeEvent(name string, data json.RawMessage) Event {
 		Agent       string      `json:"agent"`
 		Scroll      *ScrollInfo `json:"scroll"`
 	}
-	if len(data) > 0 {
-		if err := json.Unmarshal(data, &fields); err != nil {
-			return ev
-		}
-	}
+	// A field of the wrong type is skipped and the rest still filled, which is
+	// all that's wanted here, so the error is deliberately ignored.
+	_ = json.Unmarshal(data, &fields)
 	ev.PaneID = fields.PaneID
 	ev.WorkspaceID = fields.WorkspaceID
-
-	switch strings.Replace(name, ".", "_", 1) {
-	case "pane_agent_status_changed":
-		ev.Kind = EventAgentStatusChanged
+	switch ev.Kind {
+	case EventAgentStatusChanged:
 		ev.AgentStatus = fields.AgentStatus
 		ev.Agent = fields.Agent
-	case "pane_scroll_changed":
-		ev.Kind = EventScrollChanged
+	case EventScrollChanged:
 		ev.Scroll = fields.Scroll
-	case "pane_closed":
-		ev.Kind = EventPaneClosed
-	case "pane_exited":
-		ev.Kind = EventPaneExited
 	}
 	return ev
 }

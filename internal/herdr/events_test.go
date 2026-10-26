@@ -3,6 +3,7 @@ package herdr_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -115,10 +116,16 @@ func TestSubscribeDecodesEvents(t *testing.T) {
 			want:  herdr.Event{Kind: herdr.EventOther, Name: "tab_created"},
 		},
 		{
-			name:  "data that doesn't fit",
+			name:  "data that isn't an object still keeps its kind",
 			event: "pane_closed",
 			data:  `"not an object"`,
-			want:  herdr.Event{Kind: herdr.EventOther, Name: "pane_closed"},
+			want:  herdr.Event{Kind: herdr.EventPaneClosed, Name: "pane_closed"},
+		},
+		{
+			name:  "a field of the wrong type doesn't lose the rest",
+			event: "pane_closed",
+			data:  `{"type":"pane_closed","pane_id":"w1:p2","workspace_id":7}`,
+			want:  herdr.Event{Kind: herdr.EventPaneClosed, Name: "pane_closed", PaneID: "w1:p2"},
 		},
 	}
 
@@ -344,5 +351,112 @@ func TestSubscribeStopsOnCancel(t *testing.T) {
 			cancel()
 			waitClosed(t, events)
 		})
+	}
+}
+
+func TestSubscribeHandshakeTimesOut(t *testing.T) {
+	srv := herdrtest.New(t)
+	srv.Handle("events.subscribe", silence)
+	c := newClient(t, srv, herdr.WithTimeout(50*time.Millisecond))
+
+	if _, err := c.Subscribe(context.Background(), herdr.PaneClosed()); !errors.Is(err, herdr.ErrTimeout) {
+		t.Errorf("err = %v, want ErrTimeout", err)
+	}
+}
+
+func TestSubscribeRetriesAHungHandshake(t *testing.T) {
+	srv := herdrtest.New(t)
+	c := newClient(t, srv, herdr.WithTimeout(50*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events, err := c.Subscribe(ctx, herdr.PaneClosed())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	first := nextSubscriber(t, srv)
+
+	// The first attempt after the drop is never answered, like a server stuck
+	// part way through a handoff. The next one goes through.
+	attempts := make(chan struct{}, 8)
+	srv.Handle("events.subscribe", func(req herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		attempts <- struct{}{}
+		if len(attempts) == 1 {
+			return silence(req)
+		}
+		return map[string]string{"type": "subscription_started"}, nil
+	})
+	first.Drop()
+
+	if ev := nextEvent(t, events); ev.Kind != herdr.EventReconnected {
+		t.Fatalf("event = %+v, want reconnected", ev)
+	}
+	if n := len(attempts); n != 2 {
+		t.Errorf("subscribe attempts after the drop = %d, want 2", n)
+	}
+}
+
+func TestSubscribeQuietStreamDoesNotTimeOut(t *testing.T) {
+	srv := herdrtest.New(t)
+	c := newClient(t, srv, herdr.WithTimeout(20*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events, err := c.Subscribe(ctx, herdr.PaneClosed())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	sub := nextSubscriber(t, srv)
+
+	// Letting time pass is the point of this test, not a way to synchronise.
+	// If the handshake deadline were left on the connection, the stream would
+	// fail during the wait and the next event would be a reconnect.
+	time.Sleep(100 * time.Millisecond)
+	_ = sub.Push("pane_closed", map[string]string{"pane_id": "w1:p2"})
+	if ev := nextEvent(t, events); ev.Kind != herdr.EventPaneClosed {
+		t.Errorf("event = %+v, want the pane_closed", ev)
+	}
+}
+
+func TestSubscribeEventTooLarge(t *testing.T) {
+	srv := herdrtest.New(t)
+	c := newClient(t, srv)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events, err := c.Subscribe(ctx, herdr.PaneClosed())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	sub := nextSubscriber(t, srv)
+	pushed := make(chan struct{})
+	go func() {
+		defer close(pushed)
+		_ = sub.PushRaw(strings.Repeat("x", herdr.MaxEventBytes+1))
+	}()
+	defer func() { <-pushed }()
+
+	ev := nextEvent(t, events)
+	if ev.Kind != herdr.EventReconnected || !errors.Is(ev.Err, herdr.ErrTooLarge) {
+		t.Errorf("event = %+v, want reconnected because of ErrTooLarge", ev)
+	}
+}
+
+func TestSubscribeEventInTheSameWriteAsTheReply(t *testing.T) {
+	srv := herdrtest.New(t)
+	srv.Handle("events.subscribe", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
+		return herdrtest.Raw(`{"id":"x","result":{"type":"subscription_started"}}` + "\n" +
+			`{"event":"pane_closed","data":{"type":"pane_closed","pane_id":"w1:p3","workspace_id":"w1"}}` + "\n"), nil
+	})
+	c := newClient(t, srv)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	events, err := c.Subscribe(ctx, herdr.PaneClosed())
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	if ev := nextEvent(t, events); ev.Kind != herdr.EventPaneClosed || ev.PaneID != "w1:p3" {
+		t.Errorf("event = %+v, want pane_closed for w1:p3", ev)
 	}
 }

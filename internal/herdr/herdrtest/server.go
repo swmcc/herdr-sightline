@@ -32,6 +32,14 @@ type ErrorBody struct {
 // is, so it should include herdr's "type" field.
 type Handler func(req Request) (result any, err *ErrorBody)
 
+// Raw is a result a Handler can return to have the server write exactly those
+// bytes instead of a reply, newlines and all. That covers replies that are too
+// big, a reply and an event in one write, or (with an empty Raw) a server that
+// never answers. Either way the server then holds the connection until the
+// client hangs up. A non-empty Raw for events.subscribe also counts as a
+// subscription and is delivered on Subscribers.
+type Raw string
+
 // Server is a fake herdr listening on a Unix socket.
 type Server struct {
 	// Path is the socket to dial.
@@ -171,15 +179,30 @@ func (s *Server) serve(conn net.Conn) {
 	}
 
 	sub := &Subscriber{conn: conn}
-	if herr != nil {
+	raw, isRaw := result.(Raw)
+	switch {
+	case herr != nil:
 		_ = sub.write(map[string]any{"id": req.ID, "error": herr})
 		return
-	}
-	if err := sub.write(map[string]any{"id": req.ID, "result": result}); err != nil {
-		return
-	}
-	if req.Method != "events.subscribe" {
-		return
+	case isRaw:
+		if raw != "" {
+			if _, err := conn.Write([]byte(raw)); err != nil {
+				return
+			}
+		}
+		if raw == "" || req.Method != "events.subscribe" {
+			// Say nothing more and wait for the client to give up.
+			for dec.Decode(new(json.RawMessage)) == nil {
+			}
+			return
+		}
+	default:
+		if err := sub.write(map[string]any{"id": req.ID, "result": result}); err != nil {
+			return
+		}
+		if req.Method != "events.subscribe" {
+			return
+		}
 	}
 
 	var params struct {

@@ -9,6 +9,20 @@ import (
 	"github.com/swmcc/herdr-sightline/internal/herdr"
 )
 
+// recordingReader keeps every read it passes on.
+type recordingReader struct {
+	reader herdr.PaneReader
+	reads  []herdr.PaneRead
+}
+
+func (r *recordingReader) ReadPane(ctx context.Context, paneID string, lines int) (herdr.PaneRead, error) {
+	read, err := r.reader.ReadPane(ctx, paneID, lines)
+	if err == nil {
+		r.reads = append(r.reads, read)
+	}
+	return read, err
+}
+
 // TestRealHerdr runs against the herdr this test is running inside. It only
 // reads: it lists panes, reads its own pane and opens a subscription. It never
 // creates, closes or types into a pane.
@@ -62,12 +76,32 @@ func TestRealHerdr(t *testing.T) {
 	}
 	t.Logf("read %d bytes from %s, truncated %v", len(read.Text), self, read.Truncated)
 
-	w := herdr.NewPaneWatcher(c, self)
-	if _, err := w.Poll(ctx); err != nil {
-		t.Fatalf("first Poll: %v", err)
+	// A quiet pane polled twice must give no gap and no lines. This pane is a
+	// terminal that may be redrawing, so the reads are recorded and the check
+	// only applies when the pane really didn't change between them.
+	quietChecked := false
+	for _, p := range panes {
+		rec := &recordingReader{reader: c}
+		w := herdr.NewPaneWatcher(rec, p.ID)
+		if _, err := w.Poll(ctx); err != nil {
+			t.Fatalf("first Poll of %s: %v", p.ID, err)
+		}
+		d, err := w.Poll(ctx)
+		if err != nil {
+			t.Fatalf("second Poll of %s: %v", p.ID, err)
+		}
+		if rec.reads[0] != rec.reads[1] {
+			continue
+		}
+		quietChecked = true
+		t.Logf("checked quiet pane %s", p.ID)
+		if d.Gap || d.Ambiguous || len(d.Lines) > 0 {
+			t.Errorf("second Poll of quiet pane %s = %+v, want nothing new", p.ID, d)
+		}
+		break
 	}
-	if _, err := w.Poll(ctx); err != nil {
-		t.Fatalf("second Poll: %v", err)
+	if !quietChecked {
+		t.Log("no pane stayed still between two polls, so the quiet pane check didn't run")
 	}
 
 	if _, err := c.ReadPane(ctx, "sightline-no-such-pane", 1); !herdr.IsPaneNotFound(err) {

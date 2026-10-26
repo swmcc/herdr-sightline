@@ -83,6 +83,8 @@ type Model struct {
 	picked  map[engine.EntryID]herdr.Target // agents chosen with t
 	sending map[engine.EntryID]bool         // a check or send is in flight
 	armed   engine.EntryID                  // enter was pressed once on an entry that needs a second
+	// armedTarget is the agent that first press was for.
+	armedTarget string
 	// maybeSent are entries whose send failed in a way that may still have
 	// delivered it, with who to.
 	maybeSent map[engine.EntryID]string
@@ -214,6 +216,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventsDownMsg:
 		m.eventsErr = fmt.Errorf("%s: %w", msg.what, msg.err)
 	case eventsUpMsg:
+		// After an outage, catch up on whatever happened while it was down.
+		if m.eventsErr != nil && m.loops != nil {
+			m.loops.requestSync()
+		}
 		m.eventsErr = nil
 	case watchListMsg:
 		m.listed, m.listErr = msg.panes, msg.err
@@ -709,9 +715,12 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 		m.status = fmt.Sprintf("Not sent to %s: %s.", label, blockedNote)
 		return nil
 	}
-	if confirm := m.needsConfirm(en, target); confirm != "" && m.armed != id {
-		m.armed = id
-		m.status = confirm + " Press enter again to send."
+	// A confirm is for one entry going to one agent. If a sync changed the
+	// target between the two presses (a pane can retitle itself to match a
+	// pin), the second press asks again, naming the new agent.
+	if confirm := m.needsConfirm(en, target); confirm != "" && (m.armed != id || m.armedTarget != target.PaneID) {
+		m.armed, m.armedTarget = id, target.PaneID
+		m.status = fmt.Sprintf("%s Press enter again to send it to %s.", confirm, label)
 		return nil
 	}
 	m.armed = ""

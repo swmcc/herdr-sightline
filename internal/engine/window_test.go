@@ -798,6 +798,15 @@ func TestMatchInsideABlockIsFolded(t *testing.T) {
 				{"java.lang.IllegalStateException: real failure", "\tat A.a(A.java:1)", "INFO next"},
 			},
 		},
+		{
+			name:  "a traceback after a request log",
+			match: `Error|^Traceback`,
+			lines: []string{`127.0.0.1 - - "GET /Error HTTP/1.1" 404 -`, "Traceback (most recent call last):", `  File "a.py"`, "KeyError: 'a'", "GET / 200"},
+			want: [][]string{
+				{`127.0.0.1 - - "GET /Error HTTP/1.1" 404 -`, "Traceback (most recent call last):", `  File "a.py"`, "KeyError: 'a'", "GET / 200"},
+				{"Traceback (most recent call last):", `  File "a.py"`, "KeyError: 'a'", "GET / 200"},
+			},
+		},
 		// Two errors printed back to back are two errors.
 		{
 			name:  "two Python tracebacks",
@@ -958,8 +967,9 @@ func TestTracebackWaitsForItsException(t *testing.T) {
 
 // Modes, margins, scroll regions and a saved cursor last beyond their line, so a
 // carriage return on a later line may not go where the screen model thinks.
-// Redraws aren't followed again until a gap.
-func TestModesStopRedrawsUntilAGap(t *testing.T) {
+// Redraws aren't followed again after a gap either, because the terminal is
+// still in that mode. Only a full reset brings them back.
+func TestModesStopRedrawsUntilAReset(t *testing.T) {
 	tests := []struct {
 		name string
 		set  string
@@ -969,6 +979,7 @@ func TestModesStopRedrawsUntilAGap(t *testing.T) {
 		{"scroll region", "\x1b[2;10r"},
 		{"save cursor", "\x1b[s"},
 		{"alternate screen", "\x1b[?1049h"},
+		{"insert mode in a CSI too long to read", "\x1b[4" + strings.Repeat(";0", 40) + "h"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -977,11 +988,39 @@ func TestModesStopRedrawsUntilAGap(t *testing.T) {
 			use := func(l string) { got = append(got, l) }
 			c.read([]string{tt.set, "never run x\rHint: "}, use)
 			c.lost()
-			c.read([]string{"50%\r100%"}, use)
-			if want := []string{"", "never run xHint: ", "100%"}; !slices.Equal(got, want) {
+			c.read([]string{"never run y\rHint: ", "\x1bc", "50%\r100%"}, use)
+			want := []string{"", "never run xHint: ", "never run yHint: ", "", "100%"}
+			if !slices.Equal(got, want) {
 				t.Fatalf("read = %q, want %q", got, want)
 			}
 		})
+	}
+}
+
+// A decoy matching line straight before a real traceback can't fold it in, so
+// the fix check still sees the real error come back.
+func TestDecoyBeforeATracebackCantHideARecurrence(t *testing.T) {
+	trace := []string{"Traceback (most recent call last):", `  File "/app/a.py", line 3, in a`, "KeyError: 'a'"}
+	e := New(Options{
+		Matchers:     []Matcher{windowMatcher{"test", regexp.MustCompile(`Error|^Traceback`)}},
+		ContextLines: 20,
+		CaptureWait:  time.Second,
+		Settle:       30 * time.Second,
+		Cooldown:     time.Minute,
+	})
+	e.Watch(Source{ID: "web"})
+	e.Feed("web", append(slices.Clone(trace), "INFO next"), t0)
+	e.Tick(t0.Add(time.Second))
+	en := onlyEntry(t, e)
+	e.MarkSent(en.ID, "claude", t0.Add(2*time.Second))
+	e.AgentFinished("claude", t0.Add(3*time.Second))
+
+	e.Feed("web", append([]string{"GET /Error 404"}, append(slices.Clone(trace), "INFO next")...), t0.Add(10*time.Second))
+	e.Tick(t0.Add(time.Minute))
+	for _, got := range e.Entries() {
+		if got.ID == en.ID && got.State != StateStillFailing {
+			t.Fatalf("state = %v, want still failing", got.State)
+		}
 	}
 }
 
@@ -1021,6 +1060,7 @@ func TestRedrawCantHideAnError(t *testing.T) {
 		{"a harmless match drawn over a real one", "Error: real failure \r\x1b[KError: harmless", "Error: harmless", true},
 		{"erased cells at the end", "progress 10%\x1b[1K\rError: boom", "Error: boom", true},
 		{"no redraw", "Error: plain", "Error: plain", false},
+		{"CRLF after a trailing space", "Error: boom \r\nnext line", "Error: boom ", false},
 		{"redraw that leaves the line as it was", "Error\r", "Error", false},
 	}
 	for _, tt := range tests {

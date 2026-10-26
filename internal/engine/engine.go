@@ -248,6 +248,13 @@ func (e *Engine) AgentFinished(agent string, now time.Time) {
 	e.agentFinished(agent, now)
 }
 
+// AgentGone tells the engine the agent known as agent has gone: its pane
+// closed or exited, the agent left it or another agent took it over. Entries
+// still waiting on it become unverified, with a Note saying why.
+func (e *Engine) AgentGone(agent string, now time.Time) {
+	e.agentGone(agent, now)
+}
+
 // Dismiss hides an entry. A repeat inside the cooldown stays dismissed.
 func (e *Engine) Dismiss(id EntryID) {
 	if r, ok := e.byID[id]; ok {

@@ -20,6 +20,9 @@ type Entry struct {
 	State       State
 	Agent       string // set by MarkSent
 	MaybeGap    bool   // Gap was called while this entry was being captured
+	// Note says why an entry got its state when the state alone doesn't, such
+	// as NoteAgentGone. It's empty otherwise.
+	Note string
 }
 
 // found is one caught error with its context, handed from the window (#8) to

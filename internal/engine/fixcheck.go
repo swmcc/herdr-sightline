@@ -51,6 +51,15 @@ import (
 // A repeat whose capture was only flagged MaybeGap still counts: its error line
 // was read fresh, it's just the context that may have a hole.
 //
+// # The agent going away
+//
+// If the agent an entry was sent to goes away before it finishes (its pane
+// closed or exited, the agent left the pane or another kind of agent took it
+// over), nothing will ever finish it, so AgentGone ends the wait: the entry is
+// unverified with a Note saying why, and can be sent again. If the agent had
+// already finished and the settle period is running, AgentGone changes nothing.
+// The verdict then depends on the pane's output, not on the agent.
+//
 // Every change to an entry's state after it's caught goes through this file.
 
 // fixState tracks the settle period for one sent entry.
@@ -80,6 +89,7 @@ type fixState struct {
 func (e *Engine) sent(r *record, agent string, _ time.Time) {
 	r.entry.State = StateSent
 	r.entry.Agent = agent
+	r.entry.Note = ""
 	r.fix = fixState{}
 }
 
@@ -100,9 +110,28 @@ func (e *Engine) agentFinished(agent string, now time.Time) {
 	}
 }
 
+// NoteAgentGone is the Note on an entry whose agent went away before it
+// finished.
+const NoteAgentGone = "the agent exited before finishing"
+
+// agentGone ends the wait for every entry sent to agent that it hasn't
+// finished. An entry whose settle period has started carries on, as its
+// verdict comes from the pane's output.
+func (e *Engine) agentGone(agent string, _ time.Time) {
+	for _, r := range e.records {
+		if r.entry.State != StateSent || r.entry.Agent != agent || r.fix.settling {
+			continue
+		}
+		r.entry.State = StateUnverified
+		r.entry.Note = NoteAgentGone
+		r.fix = fixState{}
+	}
+}
+
 // dismissed records that the person dismissed r.
 func (e *Engine) dismissed(r *record) {
 	r.entry.State = StateDismissed
+	r.entry.Note = ""
 	r.fix = fixState{}
 }
 

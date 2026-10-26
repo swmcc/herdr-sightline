@@ -724,3 +724,152 @@ func TestRepeatAfterSettleIsNewWhateverTheTicks(t *testing.T) {
 		})
 	}
 }
+
+// An agent that goes away before finishing ends the wait for what was sent to
+// it. Once it has finished, the settle period carries on without it.
+func TestFixCheckAgentGone(t *testing.T) {
+	tests := []struct {
+		name     string
+		run      func(a *enginetest.Adapter, id engine.EntryID)
+		want     engine.State
+		wantNote string
+	}{
+		{
+			name: "gone while waiting is unverified with a note",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Advance(time.Second)
+				a.Engine.AgentGone("claude", a.Now())
+			},
+			want:     engine.StateUnverified,
+			wantNote: engine.NoteAgentGone,
+		},
+		{
+			name: "gone while waiting stays unverified after a recompile",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Engine.AgentGone("claude", a.Now())
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(time.Minute)
+			},
+			want:     engine.StateUnverified,
+			wantNote: engine.NoteAgentGone,
+		},
+		{
+			name: "a finish after gone changes nothing",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Engine.AgentGone("claude", a.Now())
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(time.Minute)
+			},
+			want:     engine.StateUnverified,
+			wantNote: engine.NoteAgentGone,
+		},
+		{
+			name: "gone during settle keeps the fixed verdict",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Advance(time.Second)
+				a.Engine.AgentGone("claude", a.Now())
+				a.Print(web, recompile)
+				a.Advance(time.Minute)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name: "gone during settle keeps the still failing verdict",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Finish("claude")
+				a.Engine.AgentGone("claude", a.Now())
+				a.Print(web, boom)
+				a.Advance(2 * time.Second)
+			},
+			want: engine.StateStillFailing,
+		},
+		{
+			name: "another agent going leaves it waiting",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Engine.AgentGone("codex", a.Now())
+				a.Advance(time.Minute)
+			},
+			want: engine.StateSent,
+		},
+		{
+			name: "gone before it was sent changes nothing",
+			run: func(a *enginetest.Adapter, _ engine.EntryID) {
+				a.Engine.AgentGone("claude", a.Now())
+			},
+			want: engine.StateNew,
+		},
+		{
+			name: "sent again after gone is checked afresh",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Engine.AgentGone("claude", a.Now())
+				a.Send(id, "codex")
+				a.Finish("codex")
+				a.Advance(time.Second)
+				a.Print(web, recompile)
+				a.Advance(time.Minute)
+			},
+			want: engine.StateFixed,
+		},
+		{
+			name: "sent again after gone waits on the new agent",
+			run: func(a *enginetest.Adapter, id engine.EntryID) {
+				a.Send(id, "claude")
+				a.Engine.AgentGone("claude", a.Now())
+				a.Send(id, "codex")
+				a.Advance(time.Minute)
+			},
+			want: engine.StateSent,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := newAdapter(t)
+			a.Print(web, boom)
+			a.Advance(time.Second)
+			tt.run(a, only(t, a).ID)
+			en := only(t, a)
+			if en.State != tt.want || en.Note != tt.wantNote {
+				t.Fatalf("state = %v, note = %q, want %v, %q", en.State, en.Note, tt.want, tt.wantNote)
+			}
+		})
+	}
+}
+
+// AgentGone only touches entries sent to that agent.
+func TestFixCheckAgentGoneLeavesOtherAgents(t *testing.T) {
+	a := newAdapter(t)
+	a.Print(web, boom, "", "", "Error: other")
+	a.Advance(time.Second)
+	entries := a.Engine.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries, got %d: %+v", len(entries), entries)
+	}
+	toCodex, toClaude := entries[0].ID, entries[1].ID
+	a.Send(toClaude, "claude")
+	a.Send(toCodex, "codex")
+	a.Engine.AgentGone("claude", a.Now())
+
+	for _, en := range a.Engine.Entries() {
+		switch en.ID {
+		case toClaude:
+			if en.State != engine.StateUnverified || en.Note != engine.NoteAgentGone {
+				t.Fatalf("claude's entry = %v %q, want unverified with a note", en.State, en.Note)
+			}
+		case toCodex:
+			if en.State != engine.StateSent || en.Agent != "codex" || en.Note != "" {
+				t.Fatalf("codex's entry = %v %q %q, want still sent to codex", en.State, en.Agent, en.Note)
+			}
+		}
+	}
+}

@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
 )
 
 // Real error lines, the rule suggested for each and a repeat of the same error
@@ -79,14 +82,38 @@ func TestSuggestRule(t *testing.T) {
 			"Error: x\twith a tab   ",
 			`^Error: x\twith a tab\s*$`,
 			"Error: x\twith a tab"},
+		{"padded with non-breaking spaces",
+			" Error: boom ",
+			`^\x{a0}Error: boom\x{a0}$`,
+			""},
+		{"padded with vertical tabs",
+			"\vError: boom\v",
+			`^\x{b}Error: boom\x{b}$`,
+			""},
+		{"carriage return in a path",
+			"error: at foo/bar\rbaz",
+			`^error: at \S+\x{d}baz$`,
+			""},
+		{"unclosed quote",
+			"Error: can't open 'config.yml",
+			`^Error: can't open 'config\.yml$`,
+			""},
+		{"bytes that aren't text",
+			"Error: bad \xff byte\x07 here",
+			`^Error: bad \x{fffd} byte\x{7} here$`,
+			""},
 		{"long line",
 			"FATAL lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis nostrud exercitation ullamco laboris",
 			`^FATAL lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua ut enim ad minim veniam quis`,
 			""},
 		{"line the engine cut",
+			"FATAL boom " + strings.Repeat("x ", 100) + "[1234 more bytes cut]",
+			`^FATAL boom ` + strings.TrimSpace(strings.Repeat("x ", 74)),
+			"FATAL boom " + strings.Repeat("x ", 100) + "and the rest of a very long line"},
+		{"short line with a cut marker it printed itself",
 			"FATAL boom [1234 more bytes cut]",
-			`^FATAL boom`,
-			"FATAL boom and the rest of a very long line"},
+			`^FATAL boom \[\d+ more bytes cut\]$`,
+			""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -135,4 +162,87 @@ func TestCheckRule(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The pane chooses the line, so it can try to steer the suggestion into a rule
+// that hides a whole kind of error. Whatever is suggested must still pass the
+// check and must not match the other error.
+func TestSuggestRuleResistsHostileLines(t *testing.T) {
+	long := strings.Repeat("A", 200)
+	tests := []struct {
+		name   string
+		line   string
+		victim string // another error the rule must not hide
+	}{
+		{"fake cut marker", "Error: [1 more bytes cut]", "Error: connect ECONNREFUSED 127.0.0.1:5432"},
+		{"fake cut marker after panic", "panic: [9 more bytes cut]", "panic: runtime error: index out of range"},
+		{"early space then a long word", "panic: " + long, "panic: runtime error: index out of range"},
+		{"early space after Error", "Error: " + long, "Error: boom"},
+		{"next marker only", " ⨯ ./" + long, " ⨯ Error: Failed to collect page data"},
+		{"go test failure", "--- FAIL: " + long, "--- FAIL: TestOther (0.00s)"},
+		{"prefixed", "web | Error: " + long, "web | Error: something else"},
+		{"path collapses to any word", "Error: /x", "Error: boom"},
+		{"several paths", "Error: /x /y /z", "Error: cannot read property"},
+		{"quote collapses to anything", "Error: 'x'", "Error: 'anything at all'"},
+		{"python key", "KeyError: 'user_id'", "KeyError: 'email'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := suggestRule(tt.line)
+			if ok, note := checkRule(got, tt.line); !ok {
+				t.Errorf("suggestion %s fails its own check: %s", got, note)
+			}
+			if regexp.MustCompile(got).MatchString(tt.victim) {
+				t.Errorf("suggestion %s for %q also hides %q", got, tt.line, tt.victim)
+			}
+			// Typing the broad rule by hand is refused too.
+			if ok, _ := checkRule(`^`+regexp.QuoteMeta(strings.SplitAfter(tt.line, ": ")[0]), tt.line); ok && strings.Contains(tt.line, ": ") {
+				t.Errorf("checkRule let the bare prefix of %q through", tt.line)
+			}
+		})
+	}
+}
+
+// Every character of the rule is drawn, however wide, so what's saved is what
+// was on screen.
+func TestRuleLinesFitTheWidth(t *testing.T) {
+	text := []rune("Error: " + strings.Repeat("错", 30) + " SECRET " + strings.Repeat("误", 30))
+	const w = 40
+	var drawn strings.Builder
+	for _, l := range ruleLines(text, -1, w) {
+		if got := runewidth.StringWidth(l); got > w {
+			t.Errorf("row is %d cells, wider than %d: %q", got, w, l)
+		}
+		drawn.WriteString(strings.TrimPrefix(l, "  "))
+	}
+	if got := strings.TrimSuffix(drawn.String(), " "); got != string(text) {
+		t.Errorf("drawn %q, want all of %q", got, string(text))
+	}
+}
+
+// Whatever a pane prints, the suggestion compiles, is text and matches the line.
+func FuzzSuggestRule(f *testing.F) {
+	for _, s := range []string{
+		"TypeError: Cannot read properties of undefined (reading 'map')",
+		" Error: boom\v",
+		"Error: bad \xff byte",
+		"error: at foo/bar\rbaz",
+		"FATAL boom [12 more bytes cut]",
+		"Error: " + strings.Repeat("错", 100),
+	} {
+		f.Add(s)
+	}
+	f.Fuzz(func(t *testing.T, line string) {
+		got := suggestRule(line)
+		if !utf8.ValidString(got) {
+			t.Fatalf("suggestion %q isn't valid UTF-8", got)
+		}
+		re, err := regexp.Compile(got)
+		if err != nil {
+			t.Fatalf("suggestion %q doesn't compile: %v", got, err)
+		}
+		if !re.MatchString(line) {
+			t.Fatalf("suggestion %q doesn't match %q", got, line)
+		}
+	})
 }

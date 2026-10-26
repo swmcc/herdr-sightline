@@ -241,7 +241,9 @@ Press `n` on any entry to add an ignore rule for it without editing the file. Th
 feed suggests a regex from the error line, with the parts that change between runs
 (numbers, ids, hex, quoted values and paths) made general. Change it as you like.
 It shows whether the rule compiles and still matches the line, and won't save one
-that matches an empty line or ordinary output. Nothing is written until you press
+that matches an empty line, ordinary output or other errors that start the same
+way. If making the parts general would do that, it suggests the line exactly as
+printed instead. Nothing is written until you press
 `enter`. The rule goes at the end of `sightline.toml` as a new `[[ignore]]` table
 and the rest of the file is left exactly as it was. It applies when the feed reloads
 the file a moment later. Press `u` within 30 seconds to take it back out.

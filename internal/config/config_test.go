@@ -63,6 +63,11 @@ func TestParseValid(t *testing.T) {
 				t.Errorf("SettleSeconds = %d, want 12", cfg.SettleSeconds)
 			}
 		}},
+		{"context-at-limit.toml", func(t *testing.T, cfg Config) {
+			if cfg.ContextLines != MaxContextLines {
+				t.Errorf("ContextLines = %d, want %d", cfg.ContextLines, MaxContextLines)
+			}
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {
@@ -126,12 +131,13 @@ func TestParseErrorsPointAtTheLine(t *testing.T) {
 		{"inline-table.toml", []string{"inline-table.toml:1:10: ignore must be a list of tables, use [[ignore]]"}},
 		{"negative.toml", []string{
 			"negative.toml:1:18: settle_seconds must be between 1 and 3600, got 0",
-			"negative.toml:2:17: context_lines must be between 0 and 1000, got -1",
+			"negative.toml:2:17: context_lines must be between 0 and 200, got -1",
 		}},
 		{"too-big.toml", []string{
 			"too-big.toml:1:18: settle_seconds must be between 1 and 3600, got 9223372036854775807",
-			"too-big.toml:2:17: context_lines must be between 0 and 1000, got 1001",
+			"too-big.toml:2:17: context_lines must be between 0 and 200, got 1001",
 		}},
+		{"context-over-limit.toml", []string{"context-over-limit.toml:1:17: context_lines must be between 0 and 200, got 201"}},
 		{"duplicate-watch.toml", []string{`duplicate-watch.toml:6:14: pane "web" is pinned twice`}},
 		{"unknown-preset.toml", []string{`unknown-preset.toml:1:20: unknown preset "cobol"`}},
 		{"wrong-type.toml", []string{"wrong-type.toml:1:18: settle_seconds has the wrong type (got a TOML string)"}},

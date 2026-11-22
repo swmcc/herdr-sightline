@@ -679,7 +679,7 @@ func TestMessageCapHoldsForHugeInput(t *testing.T) {
 	}{
 		{
 			"lots of context",
-			Entry{Before: many(maxContextLines), Lines: []string{"Error: boom"}, After: many(maxContextLines)},
+			Entry{Before: many(MaxContextLines), Lines: []string{"Error: boom"}, After: many(MaxContextLines)},
 			"lines of context were left out.",
 		},
 		{

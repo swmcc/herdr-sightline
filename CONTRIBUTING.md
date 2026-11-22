@@ -107,7 +107,7 @@ the panes with `herdr pane close <id>`.
   A test enforces it. That boundary is what lets Sightline outlive any one tool.
 - **Write tests.** Table driven, with fixtures in `testdata/`.
 - **Error patterns need two fixtures:** real output the pattern must match and healthy
-  output it must not. See [the pattern guide](.claude/workflows/add-pattern.md).
+  output it must not. See [Share an error pattern](#share-an-error-pattern).
 - **Pane output is untrusted.** Anything that changes what reaches an agent gets the
   [injection review](.claude/reviews/injection.md).
 - **Keep `scripts/install.sh` plain POSIX sh.** herdr runs it on machines with nothing
@@ -135,6 +135,73 @@ Start each commit message with an emoji that fits:
 | 🚀 | a release |
 
 Please leave out AI attribution and `Co-Authored-By` footers.
+
+## Share an error pattern
+
+Detection gets better from real output from real projects, so this is one of the most
+useful things you can send.
+
+**Not sure where to start?** [Open a missed error issue](https://github.com/swmcc/herdr-sightline/issues/new?template=missed.yml)
+and paste what the pane printed. That's enough. Everything below is for when you'd
+like to write the pattern too.
+
+### Try it in your own project first
+
+A pattern can live in your repo's `.sightline.toml` before it's a preset (see
+[Project files](README.md#project-files)), so everyone on the project gets it now:
+
+```toml
+# .sightline.toml, next to .git
+[[pattern]]
+name = "phoenix"
+regex = '^\[error\] .+ \*\* \(\w+(\.\w+)*Error\) '
+
+[[ignore]]
+regex = '^\[warning\] Phoenix\.Router: route helpers are deprecated'
+```
+
+Everyone who clones it has to trust the file in their feed before it does anything.
+Keep the rules few and narrow, because they'll be read before they're trusted. An
+ignore rule in a project file has to start with `^` and name the error and its
+message, so it can't hide a whole kind of error.
+
+### Send it upstream as a preset
+
+Once a pattern has been quiet and right for a while, it can go into a built-in preset
+so everyone gets it. A preset pattern needs two fixtures, and nothing goes in without
+both:
+
+1. Open a missed error issue with the output, or comment on one, so there's an issue
+   to link.
+2. Add the pattern to its preset in `internal/engine/presets.go`.
+3. Save real failing output in
+   `internal/engine/testdata/patterns/<preset>/<name>.match.txt`. Strip anything
+   private first.
+4. Save healthy output from the same tool that looks close but isn't a failure in
+   `<name>.nomatch.txt`. Warnings, deprecation notices and log lines that mention the
+   word "error" are good ones.
+5. Run `make check`. The no-match lines are checked against every preset, not just
+   yours, because all presets are on by default.
+
+The [pattern guide](.claude/workflows/add-pattern.md) has the details, including
+traces and grouping.
+
+### Patterns that don't cry wolf
+
+I'd rather Sightline missed an odd error than alerted on a healthy line. A noisy
+pattern is a wrong pattern, because people stop reading the feed.
+
+- **Match the shape, not a word.** `^\S+\.go:\d+:\d+: ` says "a Go compiler error".
+  `error` says nothing, since healthy logs say it all the time.
+- **Anchor it.** Start with `^` wherever the tool prints the error at the start of a
+  line. Process manager labels such as `web-1  | ` are already allowed for.
+- **Leave out the parts that change.** Line numbers, ports, ids and timestamps
+  should be `\d+` or `\S+`, so a repeat groups with the first one.
+- **Mind status lines.** `errors: 0` and `Error: none` aren't errors. Put lines like
+  them in the no-match fixture.
+- **No lookbehind.** Patterns are Go RE2, which runs in linear time on untrusted
+  output but has no lookaround or backreferences.
+- **If you can't find healthy output that comes close, it's probably too broad.**
 
 ## Pull requests
 

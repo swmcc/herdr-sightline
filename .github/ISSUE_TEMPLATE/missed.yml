@@ -1,0 +1,45 @@
+name: 🔎 Missed error
+description: Sightline didn't catch an error, or caught something that wasn't one
+labels: ["🔎 area: detection"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Real output is the best way to make detection better. Paste what the pane printed and I'll turn it into a pattern with its fixtures, or you can, with the steps in [CONTRIBUTING.md](https://github.com/swmcc/herdr-sightline/blob/main/CONTRIBUTING.md#share-an-error-pattern).
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What went wrong
+      options:
+        - It missed an error
+        - It caught something that wasn't an error
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: What printed it
+      description: The tool and its version, such as "vite 5.4.2" or "pytest 8.3"
+      placeholder: vite 5.4.2
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: The output
+      description: The whole error and a few lines either side, as the pane printed it. Remove anything private first (paths, hostnames, tokens and the like).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: healthy
+    attributes:
+      label: Healthy output that looks close
+      description: Optional, but it helps a lot. Lines from the same tool that mention errors or warnings but aren't failures. A new pattern has to leave these alone.
+      render: text
+  - type: textarea
+    id: pattern
+    attributes:
+      label: A pattern, if you have one
+      description: Go RE2 syntax. If it's working for you in a `[[pattern]]` or `.sightline.toml` already, say so.
+      render: toml

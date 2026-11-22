@@ -10,13 +10,17 @@ A [herdr](https://herdr.dev) plugin. When your dev server, test watcher or build
 breaks in one pane, Sightline catches the error and hands it to the coding agent
 working in another, then checks whether the fix actually worked.
 
-> **Status: v0.1 is about to be released.** Everything below works on herdr 0.9.1
-> and later. Queue mode and project presets come next. The [roadmap](#roadmap) and
+> **Status: [v0.1](https://github.com/swmcc/herdr-sightline/releases/tag/v0.1.0) is out.** It needs herdr 0.9.1 or later. Project presets
+> and the new presets for PHP, Elixir, .NET and Swift are on `main` for the next release,
+> and queue mode comes after that. The [roadmap](#roadmap) and
 > [issues](https://github.com/swmcc/herdr-sightline/issues) say where they're up to,
 > and opinions on the design are very welcome.
 
-<!-- demo.gif: agent edits code → dev server pane throws → Sightline catches it →
-     agent fixes it → pane goes clean → "fixed". No hands on the keyboard. -->
+<p align="center">
+  <img src="docs/demo.gif" alt="An agent changes notices.js and breaks a route. Sightline catches the error in the dev server pane, one key sends it to the agent, the agent fixes the route and the entry turns to fixed." width="100%">
+</p>
+
+One keypress, from the error to fixed. The waits are sped up where the clip says so.
 
 ---
 
@@ -470,7 +474,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Prompt injection tests ([#15](https://github.com/swmcc/herdr-sightline/issues/15))
 - [x] Close the remaining ways to forge a fixed verdict ([#69](https://github.com/swmcc/herdr-sightline/issues/69))
 - [x] Tests and CI ([#16](https://github.com/swmcc/herdr-sightline/issues/16))
-- [ ] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
+- [x] Demo clip and README refresh ([#17](https://github.com/swmcc/herdr-sightline/issues/17))
 - [x] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
 - [x] Protect `main` and run the tests on every pull request ([#31](https://github.com/swmcc/herdr-sightline/issues/31))
 - [x] CONTRIBUTING.md and the contribution rules ([#33](https://github.com/swmcc/herdr-sightline/issues/33))

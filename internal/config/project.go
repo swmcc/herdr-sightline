@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp/syntax"
 	"slices"
 	"strconv"
 	"strings"
@@ -65,14 +66,25 @@ var projectKeys = map[string][]string{
 // or it would hide a whole kind of error in that repo.
 var errorHeads = []string{
 	"Error: ", "TypeError: ", "SyntaxError: ", "ReferenceError: ", "RangeError: ",
-	"Uncaught Error: ", "Uncaught TypeError: ", "UnhandledPromiseRejection: ",
+	"Uncaught Error: ", "Uncaught TypeError: ", "[UnhandledPromiseRejection: ",
+	"UnhandledPromiseRejectionWarning: ",
 	"ValueError: ", "KeyError: ", "AttributeError: ", "ModuleNotFoundError: ",
-	"error: ", "ERROR: ", "ERROR ", "FATAL ", "fatal: ", "fatal error: ",
+	"IndexError: ", "RuntimeError: ", "AssertionError: ", "ZeroDivisionError: ",
+	"NameError: ", "ImportError: ", "OSError: ", "FileNotFoundError: ",
+	"PermissionError: ", "ConnectionError: ", "TimeoutError: ",
+	"error: ", "ERROR: ", "ERROR ", "ERROR in ", "FATAL ", "fatal: ", "fatal error: ",
 	"panic: ", "panic: runtime error: ", "thread 'main' panicked at ",
-	"error[E0425]: ", "FAIL ", "FAILED ",
+	"error[E0425]: ", "error TS2304: ", "src/main.c:1:1: error: ",
+	"FAIL ", " FAIL ", "FAILED ", "--- FAIL: ", "test result: FAILED. ",
 	`Exception in thread "main" java.lang.RuntimeException: `,
+	"java.lang.IllegalStateException: ", "org.example.AppException: ",
 	"NoMethodError (undefined method ", "ActionView::Template::Error (",
 }
+
+// labels are the process manager labels the presets match through (see
+// labelPrefix in the engine): docker compose, foreman and turborepo. Every
+// probe is tried bare and behind each one.
+var labels = []string{"", "web-1  | ", "12:00:00 web.1  | ", "web:dev: "}
 
 // projectErrors are the lines an ignore rule from a project is tried against:
 // each head followed by messages that start with every printable character,
@@ -88,12 +100,89 @@ var projectErrors = func() []string {
 		}
 		probes = append(probes, head+"boom", head+"Cannot find module 'x'", head+" x")
 	}
-	return append(probes,
+	probes = append(probes,
 		"Traceback (most recent call last):",
 		"fatal error: all goroutines are asleep - deadlock!",
 		"goroutine 1 [running]:",
+		"Segmentation fault (core dumped)",
+		"bash: foo: command not found",
+		"=================================== FAILURES ===================================",
+		"  3 failing",
 	)
+	var all []string
+	for _, label := range labels {
+		for _, p := range probes {
+			all = append(all, label+p)
+		}
+	}
+	return all
 }()
+
+// minIgnoreHead is the shortest fixed text a project's ignore rule can start
+// with, and minPastHead how much of it must come after a known error head.
+const (
+	minIgnoreHead = 12
+	minPastHead   = 4
+)
+
+// ignoreHead is the fixed text every match of expr starts with, after any ^.
+// It's "" when there's none: the rule starts with a class, a repeat, an
+// alternation or a case insensitive part.
+func ignoreHead(expr string) string {
+	re, err := syntax.Parse(expr, syntax.Perl)
+	if err != nil {
+		return ""
+	}
+	re = re.Simplify()
+	subs := []*syntax.Regexp{re}
+	if re.Op == syntax.OpConcat {
+		subs = re.Sub
+	}
+	var b strings.Builder
+	for i, s := range subs {
+		switch {
+		case i == 0 && (s.Op == syntax.OpBeginLine || s.Op == syntax.OpBeginText):
+		case s.Op == syntax.OpLiteral && s.Flags&syntax.FoldCase == 0:
+			b.WriteString(string(s.Rune))
+		default:
+			return b.String()
+		}
+	}
+	return b.String()
+}
+
+// tooLoose says why a project's ignore rule doesn't name what it hides
+// narrowly enough, or "" when it does. Probes can only ever try some of the
+// lines a rule could hide, so on top of them a project's ignore rule has to
+// start with fixed text of its own: at least minIgnoreHead bytes, and at least
+// minPastHead past any known error head or the last ": " in it. That rules
+// out classes, alternations and case folding at the start, which is where a
+// rule hides a whole kind of error, and it says plainly on screen what each
+// rule is for. A rule from the person's own file has no such limit.
+func tooLoose(expr string) string {
+	head := ignoreHead(expr)
+	if len(head) < minIgnoreHead {
+		return fmt.Sprintf("has to start with at least %d characters of fixed text, with no class, alternation or (?i) before them, so it's plain what it hides", minIgnoreHead)
+	}
+	for _, label := range labels[1:] {
+		if strings.HasPrefix(head, label) || strings.HasPrefix(label, head) {
+			return "starts with a process manager label, so it could hide everything that process prints"
+		}
+	}
+	rest := head
+	if i := strings.LastIndex(head, ": "); i >= 0 {
+		rest = head[i+2:]
+	}
+	for _, h := range errorHeads {
+		if strings.HasPrefix(head, strings.TrimSpace(h)) && len(head) < len(strings.TrimSpace(h))+minPastHead {
+			rest = ""
+		}
+	}
+	if len(strings.TrimSpace(rest)) < minPastHead {
+		return fmt.Sprintf("has to name the message, with at least %d characters of fixed text after the error's own start, so it hides one error and not a kind of them", minPastHead)
+	}
+	return ""
+}
 
 // ParseProject reads a project file. name is only used in error messages.
 //
@@ -172,6 +261,10 @@ func ParseProject(name string, data []byte) (Project, error) {
 			v.fail(key, "[[ignore]] %s matches ordinary output like %q, so it would hide far too much", short(expr), line)
 		case hides >= 0:
 			v.fail(key, "[[ignore]] %s matches common errors like %q, so it could hide real ones", short(expr), projectErrors[hides])
+		default:
+			if why := tooLoose(expr); why != "" {
+				v.fail(key, "[[ignore]] %s %s", short(expr), why)
+			}
 		}
 	}
 	if len(v.errs) > 0 {
@@ -201,13 +294,13 @@ func unreadable(r rune) bool {
 func short(expr string) string {
 	const most = 80
 	if len(expr) <= most {
-		return strconv.Quote(expr)
+		return strconv.QuoteToASCII(expr)
 	}
 	cut := most
 	for cut > 0 && !utf8.RuneStart(expr[cut]) {
 		cut--
 	}
-	return strconv.Quote(expr[:cut]) + "..."
+	return strconv.QuoteToASCII(expr[:cut]) + "..."
 }
 
 // disallowed lists every key the file sets that a project file can't. A key

@@ -44,6 +44,17 @@ func TestParseProjectRefuses(t *testing.T) {
 		{"padded.toml", []string{"has a run of spaces, which could hide part of it on screen"}},
 		{"tab.toml", []string{"has a run of spaces"}},
 		{"bad-name.toml", []string{"needs a name of at most 64 plain characters"}},
+		{"hide-by-length.toml", []string{"[[ignore]]"}},
+		{"hide-compose.toml", []string{"[[ignore]]"}},
+		{"hide-go-tests.toml", []string{"[[ignore]]"}},
+		{"hide-jest.toml", []string{"[[ignore]]"}},
+		{"hide-jvm.toml", []string{"[[ignore]]"}},
+		{"hide-python.toml", []string{"[[ignore]]"}},
+		{"hide-several.toml", []string{"[[ignore]]"}},
+		{"hide-turbo.toml", []string{"[[ignore]]"}},
+		{"hide-two-words.toml", []string{"[[ignore]]"}},
+		{"hide-typescript.toml", []string{"[[ignore]]"}},
+		{"hide-webpack.toml", []string{"[[ignore]]"}},
 		{"bad-regex.toml", []string{"bad regex"}},
 		{"syntax.toml", []string{"syntax.toml:"}},
 		{"unknown-preset.toml", []string{`unknown preset "cobol"`}},
@@ -77,6 +88,7 @@ func TestParseProjectAccepts(t *testing.T) {
 		{file: "ok.toml", presets: []string{"go", "node"}, presetsSet: true,
 			patterns: []string{`^FATAL \[app\] .+`}, ignores: []string{`DeprecationWarning: Buffer\(\) is deprecated`}},
 		{file: "empty.toml"},
+		{file: "narrow.toml", ignores: []string{`^Error: flaky upstream timed out`, `^--- FAIL: TestFlakyNetwork `, `DeprecationWarning: punycode`, `^TypeError: fetch failed \(retrying\)$`}},
 		{file: "no-presets.toml", presets: []string{}, presetsSet: true},
 	}
 	for _, tt := range tests {
@@ -111,7 +123,7 @@ func TestParseProjectLimits(t *testing.T) {
 			if table == "pattern" {
 				fmt.Fprintf(&b, "[[pattern]]\nname = \"p%d\"\nregex = '^FATAL p%d$'\n", i, i)
 			} else {
-				fmt.Fprintf(&b, "[[ignore]]\nregex = '^WARN w%d$'\n", i)
+				fmt.Fprintf(&b, "[[ignore]]\nregex = '^WARN warning number %d$'\n", i)
 			}
 		}
 		return b.String()

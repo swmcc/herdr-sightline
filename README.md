@@ -312,8 +312,13 @@ version or `esc` to leave it. `x` stops trusting it.
   it, the screen says so and starts again from the top.
 - A rule that would match an empty line or ordinary output is refused, and so is an
   ignore rule that matches the start of a common error (`Error: `, `panic: `, a
-  Python traceback and so on) followed by any message. A regex with a run of spaces
-  in it is refused too, since spaces could push the rest of it off the screen.
+  Python traceback and so on) followed by any message, with or without a process
+  manager label in front. A regex with a run of spaces in it is refused too, since
+  spaces could push the rest of it off the screen.
+- A project's ignore rule has to start with at least 12 characters of fixed text,
+  four of them past the error's own start, like `^Error: flaky upstream`. So it
+  can't start with a class, an alternation or `(?i)`, which is how a rule hides a
+  whole kind of error. Your own ignore rules have no such limit.
 - Those checks catch the obvious ways to hide errors, not every one. An ignore rule
   from a repo can still hide a real error, and the trust screen says so. Read the
   rules before you press `y`.

@@ -1,0 +1,12 @@
+# Rules that each hide one known, harmless error.
+[[ignore]]
+regex = '^Error: flaky upstream timed out'
+
+[[ignore]]
+regex = '^--- FAIL: TestFlakyNetwork '
+
+[[ignore]]
+regex = 'DeprecationWarning: punycode'
+
+[[ignore]]
+regex = '^TypeError: fetch failed \(retrying\)$'

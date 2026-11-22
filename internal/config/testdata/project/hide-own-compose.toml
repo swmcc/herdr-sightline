@@ -1,0 +1,3 @@
+# Hide everything this repo's own compose service prints.
+[[ignore]]
+regex = '^my-frontend-1 *\| '

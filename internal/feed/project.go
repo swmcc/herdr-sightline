@@ -131,6 +131,18 @@ func (m *Model) showProject(p project) {
 	m.noteTrustSeen()
 }
 
+// The smallest pane the trust view draws properly. Below this the terminal
+// cuts lines or Bubble Tea drops the body to keep the footer, so the end
+// can't count as seen and nothing can be trusted.
+const (
+	trustMinWidth  = 20
+	trustMinHeight = 8
+)
+
+func (m *Model) tooSmallToTrust() bool {
+	return m.width < trustMinWidth || m.height < trustMinHeight
+}
+
 // trustHeight is how many lines of the trust view fit on screen.
 func (m *Model) trustHeight() int { return max(m.height-4, 1) }
 
@@ -138,7 +150,7 @@ func (m *Model) trustHeight() int { return max(m.height-4, 1) }
 // The model calls it after anything that could scroll or resize the view.
 func (m *Model) noteTrustSeen() {
 	p, ok := m.shownProject()
-	if !ok || p.sum != m.trust.sum {
+	if !ok || p.sum != m.trust.sum || m.tooSmallToTrust() {
 		return
 	}
 	if m.trust.top+m.trustHeight() >= len(m.trustLines(p, max(m.width, 20))) {
@@ -199,6 +211,9 @@ func (m *Model) trustProject(p project) tea.Cmd {
 		return nil
 	case !m.trust.changedAt.IsZero() && m.now().Sub(m.trust.changedAt) < changeSettle:
 		m.status = "The file only just changed. Read the new version, then press y."
+		return nil
+	case m.tooSmallToTrust():
+		m.status = "The pane is too small to show every rule properly. Make it bigger, then read it again."
 		return nil
 	case !m.trust.seenEnd:
 		m.status = "Scroll to the end first (j or space), so every rule has been on screen before you trust it."

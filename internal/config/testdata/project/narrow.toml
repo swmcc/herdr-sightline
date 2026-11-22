@@ -6,7 +6,7 @@ regex = '^Error: flaky upstream timed out'
 regex = '^--- FAIL: TestFlakyNetwork '
 
 [[ignore]]
-regex = 'DeprecationWarning: punycode'
+regex = '^web-1 \| WARN: punycode is deprecated'
 
 [[ignore]]
 regex = '^TypeError: fetch failed \(retrying\)$'

@@ -27,7 +27,7 @@ name = "our-framework"
 regex = '^FATAL \[app\] .+'
 
 [[ignore]]
-regex = 'DeprecationWarning: Buffer\(\) is deprecated'
+regex = '^Error: flaky upstream timed out'
 `
 
 func trustHarness(t *testing.T) (*harness, string) {
@@ -72,7 +72,7 @@ func TestTrustingAProjectFile(t *testing.T) {
 		"presets go (already on, so nothing changes)",
 		"It has 1 preset, 1 error pattern and 1 ignore rule:",
 		`error pattern 1 of 1, "our-framework": "^FATAL \\[app\\] .+"`,
-		`ignore rule 1 of 1: "DeprecationWarning: Buffer\\(\\) is deprecated"`,
+		`ignore rule 1 of 1: "^Error: flaky upstream timed out"`,
 		"That's the end of the list.",
 		"Anyone who can push to this repo can change this file.",
 		"An ignore rule can hide a real error",
@@ -116,7 +116,7 @@ func TestTrustRefusesAFileThatChangedWhileShown(t *testing.T) {
 	h.update(projectsMsg{projects: []project{before}})
 	h.press("p")
 
-	after := projectFrom(t, projectFile+"\n[[ignore]]\nregex = '^WARN flaky test skipped$'\n")
+	after := projectFrom(t, projectFile+"\n[[ignore]]\nregex = '^WARN: flaky test skipped$'\n")
 	h.update(projectsMsg{projects: []project{after}})
 	if !strings.Contains(h.model.status, "The file just changed") {
 		t.Errorf("a change on screen isn't said straight away, status = %q", h.model.status)
@@ -129,7 +129,7 @@ func TestTrustRefusesAFileThatChangedWhileShown(t *testing.T) {
 		t.Errorf("status = %q", h.model.status)
 	}
 	h.clock.Advance(changeSettle)
-	if !strings.Contains(h.model.View(), "^WARN flaky test skipped") {
+	if !strings.Contains(h.model.View(), "^WARN: flaky test skipped") {
 		t.Errorf("the view doesn't show the new rule")
 	}
 	h.run(h.press("y"))
@@ -144,6 +144,29 @@ func TestTrustRefusesAFileThatChangedWhileShown(t *testing.T) {
 	h.update(projectsMsg{projects: []project{again}})
 	if !strings.Contains(h.model.View(), "has changed since you trusted it, so it's ignored") {
 		t.Errorf("the list doesn't say the file changed:\n%s", h.model.View())
+	}
+}
+
+// A pane too small to draw the view properly can't show every rule, so
+// nothing is trusted from it, even after scrolling to the end.
+func TestTrustNeedsARoomyPane(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 12, Height: 40}, {Width: 80, Height: 3}} {
+		h, dir := trustHarness(t)
+		p := projectFrom(t, projectFile)
+		h.update(size)
+		h.update(projectsMsg{projects: []project{p}})
+		h.press("p")
+		for range 50 {
+			h.press("j")
+		}
+		if cmd := h.press("y"); cmd != nil || !strings.Contains(h.model.status, "too small") {
+			t.Errorf("%dx%d: y gave a command or the wrong status %q", size.Width, size.Height, h.model.status)
+		}
+		h.update(tea.WindowSizeMsg{Width: 80, Height: 40})
+		h.run(h.press("y"))
+		if !trusted(t, dir, p) {
+			t.Errorf("%dx%d then 80x40: y didn't trust it (status %q)", size.Width, size.Height, h.model.status)
+		}
 	}
 }
 
@@ -184,7 +207,7 @@ func TestTrustRefuses(t *testing.T) {
 // something else.
 func TestTrustViewShowsHiddenCharacters(t *testing.T) {
 	h, _ := trustHarness(t)
-	data := "[[ignore]]\nregex = \"^WARN \\u202Eeman\\u200B x\\u001b\\\\[2J$\"\n"
+	data := "[[ignore]]\nregex = \"^WARN: \\u202Eeman\\u200B x\\u001b\\\\[2J$\"\n"
 	p := projectFrom(t, data)
 	if p.err != nil {
 		t.Fatal(p.err)
@@ -230,7 +253,7 @@ func TestTrustViewScrollsAndSwitches(t *testing.T) {
 	h, _ := trustHarness(t)
 	var b strings.Builder
 	for i := range 40 {
-		b.WriteString("[[ignore]]\nregex = '^WARN rule number " + strings.Repeat("x", i) + "$'\n")
+		b.WriteString("[[ignore]]\nregex = '^WARN: rule number " + strings.Repeat("x", i) + "$'\n")
 	}
 	one := projectFrom(t, b.String())
 	two := projectFrom(t, projectFile)
@@ -267,7 +290,7 @@ func TestTrustViewScrollsAndSwitches(t *testing.T) {
 // other character outside plain ASCII.
 func TestTrustViewEscapesBlankLetters(t *testing.T) {
 	h, _ := trustHarness(t)
-	p := projectFrom(t, "[[ignore]]\nregex = \"^WARN a\u3164\u3164b \u05d0x\"\n")
+	p := projectFrom(t, "[[ignore]]\nregex = \"^WARN: a\u3164\u3164b \u05d0x\"\n")
 	if p.err != nil {
 		t.Fatal(p.err)
 	}
@@ -282,7 +305,7 @@ func TestTrustViewEscapesBlankLetters(t *testing.T) {
 // The terminal cuts a line wider than the pane, which would hide part of a
 // rule while the end still counted as seen. No line of the view is too wide.
 func TestTrustViewFitsTheWidth(t *testing.T) {
-	long := "^WARN deprecated option in config file please update to the new format before the next release or things break " + strings.Repeat("and more words ", 20)
+	long := "^WARN: deprecated option in config file please update to the new format before the next release or things break " + strings.Repeat("and more words ", 20)
 	p := projectFrom(t, "[[pattern]]\nname = \"a-long-name\"\nregex = '^FATAL "+strings.Repeat("y", 300)+"'\n[[ignore]]\nregex = '"+long+"'\n")
 	if p.err != nil {
 		t.Fatal(p.err)

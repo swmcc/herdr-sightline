@@ -1,0 +1,3 @@
+# Hide every Go index panic.
+[[ignore]]
+regex = 'index out of range'

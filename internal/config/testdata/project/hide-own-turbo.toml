@@ -1,0 +1,3 @@
+# Hide everything this repo's own turborepo task prints.
+[[ignore]]
+regex = '^frontend-app:dev'

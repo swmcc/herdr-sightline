@@ -433,6 +433,99 @@ func TestEveryLineAfterTheCapIsFlagged(t *testing.T) {
 	}
 }
 
+// A UTF-8 C1 control inside an escape, its intermediates or a CSI splits the
+// terminals. xterm acts on it and leaves the sequence, so what follows shows.
+// herdr 0.9.1 ignores it and stays in the sequence, so it eats the next
+// character as the sequence's end or, after ESC, opens a string that hides
+// everything up to its terminator. The scrubber follows xterm, so whatever herdr
+// hides must come flagged.
+func TestC1InsideAnEscapeIsFlagged(t *testing.T) {
+	tests := []struct {
+		name  string
+		feeds [][]string
+		want  bool
+	}{
+		{"NEL after ESC opens an SOS", [][]string{{"\x1b\u0085XQAAAAQ Error: boom"}}, true},
+		{"EPA after ESC opens an SOS", [][]string{{"\x1b\u0097X Error: boom"}}, true},
+		{"NEL after ESC opens an OSC", [][]string{{"\x1b\u0085]0; Error: boom"}}, true},
+		{"NEL after ESC opens a DCS", [][]string{{"\x1b\u0085Pq Error: boom"}}, true},
+		{"the string goes on to the next line", [][]string{{"GET / 200 \x1b\u0085X"}, {"Error: boom"}}, true},
+		{"the string goes on to the next feed", [][]string{{"GET / 200 \x1b\u0085_"}, {"ok"}, {"Error: boom"}}, true},
+		{"ESC eats the character after a NEL", [][]string{{"Error: boom \x1b\u0085S"}}, true},
+		{"an intermediate eats the character after a NEL", [][]string{{"Error: boom \x1b(\u0085S"}}, true},
+		{"a CSI eats the character after a NEL", [][]string{{"Error: boom \x1b[\u0085S"}}, true},
+		{"a CSI with parameters eats the rest of itself", [][]string{{"Error: boom \x1b[1\u0085;31mx"}}, true},
+		{"the escape eats the first character of the next line", [][]string{{"GET / 200 \x1b\u0085"}, {"Error: boom"}}, true},
+		{"a C1 ST after ESC inside an OSC", [][]string{{"\x1b]0;t\x1b\u009cError: boom"}}, true},
+		// herdr is taken to ignore any non-ASCII character inside an escape,
+		// not only a C1, so these are flagged too.
+		{"é after ESC opens an SOS", [][]string{{"\x1béX Error: boom"}}, true},
+		{"invalid UTF-8 after ESC opens an SOS", [][]string{{"\x1b\xffX Error: boom"}}, true},
+		{"an emoji after ESC opens an OSC", [][]string{{"\x1b😀]0; Error: boom"}}, true},
+		{"ESC eats the character after é", [][]string{{"Error: boom \x1béS"}}, true},
+		{"an intermediate eats the character after é", [][]string{{"Error: boom \x1b(éS"}}, true},
+		{"a CSI eats the character after é", [][]string{{"Error: boom \x1b[éS"}}, true},
+		{"a CSI with parameters eats the rest of itself after é", [][]string{{"Error: boom \x1b[1é;31mx"}}, true},
+		{"é after a complete escape", [][]string{{"\x1b[31mé Error: boom\x1b[0m"}}, false},
+		// herdr eats only the 3 and shows "1m", which xterm hides, so herdr
+		// shows more than the message holds and nothing is flagged.
+		{"a C1 CSI after ESC", [][]string{{"\x1b\u009b31mError: boom"}}, false},
+		// Both terminals show these the same, so nothing is flagged.
+		{"a C1 outside any escape", [][]string{{"Error: boom \u0085 next"}}, false},
+		{"a C1 that ends an escape with nothing after it", [][]string{{"Error: boom \x1b\u0085"}}, false},
+		{"colour", [][]string{{"\x1b[31mError: boom\x1b[0m"}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			for _, f := range tt.feeds {
+				e.Feed("web", f, t0)
+			}
+			e.Tick(t0.Add(time.Second))
+			en := onlyEntry(t, e)
+			if en.MaybeGap != tt.want {
+				t.Fatalf("entry %q MaybeGap %v, want %v", en.Lines, en.MaybeGap, tt.want)
+			}
+		})
+	}
+}
+
+// Once the string only herdr opened has closed, the two terminals agree again,
+// so a later C1 that both show the same is no reason to flag.
+func TestC1AfterAStringOnlyHerdrOpenedHasClosed(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"\x1b\u0085Xhidden\x1b\\Error: one"}, t0)
+	e.Feed("web", []string{"ok", "ok", "Error: two \u0085 next"}, t0)
+	e.Tick(t0.Add(time.Second))
+	got := map[string]bool{}
+	for _, en := range e.Entries() {
+		got[en.Lines[0]] = en.MaybeGap
+	}
+	if want := map[string]bool{"XhiddenError: one": true, "Error: two  next": false}; !maps.Equal(got, want) {
+		t.Fatalf("MaybeGap by line = %v, want %v", got, want)
+	}
+}
+
+// A gap is taken to restart the stream, as it is for every other scrubber, so
+// a string only herdr opened is forgotten with the rest of the escape state.
+// herdr's own terminal may well outlive a reconnect, but Sightline can't see
+// it and assumes a fresh start. The first error after it is still flagged,
+// because a line was shown while herdr hid it, but the next one isn't.
+func TestGapForgetsAStringOnlyHerdrOpened(t *testing.T) {
+	e := newWatching()
+	e.Feed("web", []string{"GET / 200 \x1b\u0085X"}, t0)
+	e.Gap("web", t0)
+	e.Feed("web", []string{"Error: one", "ok", "ok", "Error: two"}, t0)
+	e.Tick(t0.Add(time.Second))
+	got := map[string]bool{}
+	for _, en := range e.Entries() {
+		got[en.Lines[0]] = en.MaybeGap
+	}
+	if want := map[string]bool{"Error: one": true, "Error: two": false}; !maps.Equal(got, want) {
+		t.Fatalf("MaybeGap by line = %v, want %v", got, want)
+	}
+}
+
 // When a string is abandoned part way through a line, the rest of that line is
 // dropped, because a terminal would still be hiding it.
 func TestAbandonedStringDropsTheRestOfTheLine(t *testing.T) {

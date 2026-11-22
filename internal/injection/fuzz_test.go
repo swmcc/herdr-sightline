@@ -141,6 +141,10 @@ func FuzzInjection(f *testing.F) {
 		"Error \x80\x85\xb4\x80 \x92\x86",
 		"\x87\x80\x82\x92\x80\x81Error\x83Error\x81\x80",
 		"\x87" + strings.Repeat("\xbf", 3) + "\x80\x81\x92\x81Error \x80",
+		// A UTF-8 C1 after ESC, which xterm acts on and herdr ignores, so only
+		// herdr opens the string that follows (#70).
+		"\xe5\xb2X\x80\x85",
+		"\x1b\x97X\x80\x85",
 	}
 	for _, s := range seeds {
 		f.Add([]byte(s))
@@ -150,6 +154,9 @@ func FuzzInjection(f *testing.F) {
 	// context. This found the bug fixed in #15.
 	f.Add(fuzzSeed("\x1b]0;", strings.Repeat("v\n", 60), strings.Repeat("v\n", 60), pieceElement,
 		pieceCanary, pieceElement, "\x07", "Error: boom ", pieceElement, "Error: boom ", "x", pieceElement, "Error: boom "))
+	// Any other non-ASCII character after ESC, which herdr is taken to drop
+	// in an escape just as it drops a C1 (#70).
+	f.Add(fuzzSeed("\x1b", "é", "X", pieceCanary, "Error: boom "))
 	// A canary drawn over by a decoy, on a line that matches.
 	f.Add(fuzzSeed("Error: boom ", pieceCanary, "\r", "\x1b[2K", pieceElement, "Error: boom ", "x"))
 	for i := range len(fuzzPieces) + pieceText {
@@ -319,6 +326,11 @@ func (r *refTerminal) consume(c rune) bool {
 		default:
 			r.state = refGround
 		}
+		return true
+	}
+	if !r.actsOnC1 && c >= 0x80 && (r.state == refEscape || r.state == refEscInter || r.state == refCSI) {
+		// herdr only decodes UTF-8 in plain text, it's taken, so inside an
+		// escape any other non-ASCII character is dropped as a C1 is.
 		return true
 	}
 	switch r.state {

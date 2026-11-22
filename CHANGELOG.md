@@ -3,7 +3,7 @@
 What changed in each version of Sightline. The full notes for each are on its
 [release page](https://github.com/swmcc/herdr-sightline/releases).
 
-## 0.3.0 · Queue mode and project presets
+## 0.3.0 · Queue mode and project presets (2026-11-22)
 
 This one covers two milestones, v0.2 and v0.3, so there's no 0.2.0.
 
@@ -34,7 +34,7 @@ This one covers two milestones, v0.2 and v0.3, so there's no 0.2.0.
 - Output drawn over on a raw stream (cursor moves, redraws, other character sets) now
   flags the entry as possibly missing output, rather than reaching the agent unseen.
 
-## 0.1.0 · First light
+## 0.1.0 · First light (2026-11-22)
 
 The first release. Watch a pane, catch errors, see them in the feed, send one to an
 agent with a keypress and find out whether the fix worked.

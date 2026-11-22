@@ -49,6 +49,14 @@ type Hold string
 const (
 	HoldGap     Hold = "some output around it may have been missed"
 	HoldMention Hold = "it has an at sign that would be rewritten"
+	// HoldOwnRule is an error only a project file's pattern caught. A repo
+	// chose that pattern, and text a request can put in a log line might match
+	// it, so it waits for a keypress.
+	HoldOwnRule Hold = "only a project file's pattern caught it"
+	// HoldRepeat is an error that already went on its own from the same source.
+	// A repeat after the settle period, or after the verdict, is a new entry,
+	// so without this it could go again and again and never halt the source.
+	HoldRepeat Hold = "the same error already went on its own once"
 )
 
 // AutoSent is one automatic send, for the feed to show what went and when.
@@ -75,6 +83,9 @@ type queueState struct {
 	aliases map[string][]string
 	// last is each agent's latest try, however old.
 	last map[string]time.Time
+	// wentAuto is, for each source, the fingerprints of errors that have gone
+	// on its own, whether or not they arrived. Turning queue mode off forgets.
+	wentAuto map[SourceID]map[string]bool
 }
 
 // autoTry is one automatic send counted against the caps.
@@ -92,6 +103,7 @@ func (e *Engine) SetQueueMode(src SourceID, on bool) {
 	delete(q.halted, src)
 	if !on {
 		delete(q.on, src)
+		delete(q.wentAuto, src)
 		q.order = slices.DeleteFunc(q.order, func(r *record) bool { return r.entry.Source.ID == src })
 		return
 	}
@@ -177,7 +189,7 @@ func (e *Engine) QueueCandidates(src SourceID) []EntryID {
 	}
 	var out []EntryID
 	for _, r := range q.order {
-		if r.entry.Source.ID == src && holdOf(r.entry) == "" {
+		if r.entry.Source.ID == src && e.holdOf(r.entry) == "" {
 			out = append(out, r.entry.ID)
 		}
 	}
@@ -250,7 +262,7 @@ func (e *Engine) AutoSend(ids []EntryID, agent string, now time.Time) (string, e
 	var batch []Entry
 	for _, id := range ids {
 		r, ok := e.byID[id]
-		if !ok || !slices.Contains(e.queue.order, r) || holdOf(r.entry) != "" || slices.ContainsFunc(batch, func(en Entry) bool { return en.ID == id }) {
+		if !ok || !slices.Contains(e.queue.order, r) || e.holdOf(r.entry) != "" || slices.ContainsFunc(batch, func(en Entry) bool { return en.ID == id }) {
 			return "", ErrNotQueued
 		}
 		if len(batch) > 0 && r.entry.Source.ID != batch[0].Source.ID {
@@ -292,7 +304,7 @@ func (e *Engine) AutoStillWanted(ids []EntryID) bool {
 	}
 	for _, id := range ids {
 		r, ok := e.byID[id]
-		if !ok || !slices.Contains(q.order, r) || holdOf(r.entry) != "" {
+		if !ok || !slices.Contains(q.order, r) || e.holdOf(r.entry) != "" {
 			return false
 		}
 		if src := r.entry.Source.ID; !q.on[src] || q.halted[src] {
@@ -367,6 +379,19 @@ func (e *Engine) logAuto(ids []EntryID, agent, text string, now time.Time, unsur
 		}
 	}
 	q.log = append(q.log, AutoSent{Entries: slices.Clone(ids), Source: src, Agent: agent, At: now, Text: text, Unsure: unsure})
+	for _, id := range ids {
+		r, ok := e.byID[id]
+		if !ok {
+			continue
+		}
+		if q.wentAuto == nil {
+			q.wentAuto = map[SourceID]map[string]bool{}
+		}
+		if q.wentAuto[r.entry.Source.ID] == nil {
+			q.wentAuto[r.entry.Source.ID] = map[string]bool{}
+		}
+		q.wentAuto[r.entry.Source.ID][r.entry.Fingerprint] = true
+	}
 	if extra := len(q.log) - maxAutoLog; extra > 0 {
 		q.log = slices.Delete(q.log, 0, extra)
 	}
@@ -430,6 +455,10 @@ func (e *Engine) renameQueue(from, to SourceID) {
 			m[to] = true
 		}
 	}
+	if fps, ok := q.wentAuto[from]; ok {
+		delete(q.wentAuto, from)
+		q.wentAuto[to] = fps
+	}
 }
 
 // unwatchQueue turns queue mode off for a source that's no longer watched.
@@ -455,9 +484,24 @@ func (e *Engine) resumeOnKeypress(r *record) {
 // a fullwidth one the pane printed itself, because a line holding Sightline's
 // own note about "@" would otherwise make AutoSend refuse the batch on every
 // try, and the pane could jam its own queue.
+// holdOf is the package holdOf plus HoldRepeat, which needs to know what has
+// already gone on its own.
+func (e *Engine) holdOf(en Entry) Hold {
+	if h := holdOf(en); h != "" {
+		return h
+	}
+	if e.queue.wentAuto[en.Source.ID][en.Fingerprint] {
+		return HoldRepeat
+	}
+	return ""
+}
+
 func holdOf(en Entry) Hold {
 	if en.MaybeGap {
 		return HoldGap
+	}
+	if en.OwnRule {
+		return HoldOwnRule
 	}
 	for _, group := range [][]string{en.Before, en.Lines, en.After} {
 		for _, l := range group {

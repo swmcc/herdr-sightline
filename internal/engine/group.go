@@ -376,6 +376,7 @@ func (e *Engine) group(src Source, f found) {
 	r := e.add(Entry{
 		Source:      src,
 		Matcher:     f.matcher,
+		OwnRule:     f.ownRule,
 		Fingerprint: key.fingerprint,
 		Lines:       f.lines,
 		Before:      f.before,

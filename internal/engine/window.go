@@ -345,6 +345,7 @@ func (e *Engine) observe(s *source, line string, now time.Time) string {
 			c.pending = append(c.pending, &capture{
 				found: found{
 					matcher:   name,
+					ownRule:   e.onlyOwnRules(s, line),
 					lines:     []string{kept},
 					before:    c.window.snapshot(),
 					matchedAt: now,

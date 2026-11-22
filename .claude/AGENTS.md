@@ -10,8 +10,9 @@ A [herdr](https://herdr.dev) plugin that watches panes like a dev server or test
 watcher, catches errors, shows them in a feed and hands them to a coding agent when
 I press a key. Then it checks whether the fix actually worked.
 
-The [README](../README.md) is the spec. It was written before the code, so if the
-code and the README disagree, one of them is a bug. The plan to build it lives in the
+The [README](../README.md) and the pages in [docs/](../docs/) are the spec. The README
+was written before the code, so if the code and the docs disagree, one of them is a bug.
+The README stays short. The full rules for each feature live in `docs/`. The plan to build it lives in the
 [milestones](https://github.com/swmcc/herdr-sightline/milestones) and
 [issues](https://github.com/swmcc/herdr-sightline/issues).
 
@@ -133,7 +134,8 @@ flags dashes and likely Oxford commas in Markdown.
 - Commit messages start with an emoji that fits the change, for example ✨ feature,
   🐛 fix, 🧪 tests, 📝 docs, 🧹 chore, 🔒 security, 🚀 release.
 - Never add AI attribution, `Co-Authored-By` lines or "generated with" footers.
-- When an issue closes, tick its item in the README roadmap in the same PR.
+- When a change ships, add a line to `CHANGELOG.md` under the next version in the
+  same PR. When a milestone's last issue closes, tick it in the README roadmap.
 
 ## Before every push
 

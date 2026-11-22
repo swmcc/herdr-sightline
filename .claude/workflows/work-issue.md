@@ -4,7 +4,7 @@ Take one issue from open to a pull request.
 
 1. **Read the issue.** `gh issue view <n>`. Read the linked issues too. If it's
    labelled `💭 needs design` and the design isn't settled in the thread, stop and ask.
-2. **Check the README.** It's the spec. Note anything in the issue that disagrees with
+2. **Check the README and `docs/`.** They're the spec. Note anything in the issue that disagrees with
    it and raise it rather than quietly picking one.
 3. **Branch from an up to date `main`.** `git switch main && git pull --rebase`, then
    `git switch -c <n>-<short-name>`.
@@ -13,7 +13,8 @@ Take one issue from open to a pull request.
 6. **Run `make check`.** Fix anything it finds.
 7. **Review.** Use [reviews/go.md](../reviews/go.md). If the change touches the
    message format or delivery, also use [reviews/injection.md](../reviews/injection.md).
-8. **Update the README** if behaviour changed, and tick the issue's roadmap item.
+8. **Update the README or `docs/`** if behaviour changed, and add a line to
+   `CHANGELOG.md` under the next version.
 9. **Commit** with an emoji message. No AI attribution.
 10. **Rebase on `main`, push and open the PR.** Title in plain English, body says what
     changed and why, ending with `Closes #<n>`.

@@ -25,18 +25,19 @@ func TestReadmeExampleMatchesTheFixture(t *testing.T) {
 	}
 }
 
-// The same for queue mode's message for several errors (#19).
+// The same for queue mode's message for several errors (#19), which lives in
+// docs/queue-mode.md.
 func TestReadmeBatchExampleMatchesTheFixture(t *testing.T) {
-	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	readme, err := os.ReadFile(filepath.Join("..", "..", "docs", "queue-mode.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := readmeBlock(string(readme), "## Queue mode", 4)
+	got, err := readmeBlock(string(readme), "## Several errors in one message", 4)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := readFixture(t, "message_batch_readme.txt"); got != want {
-		t.Fatalf("the README's queue mode example doesn't match testdata/message_batch_readme.txt:\n%s", lineDiff(want, got))
+		t.Fatalf("docs/queue-mode.md's example doesn't match testdata/message_batch_readme.txt:\n%s", lineDiff(want, got))
 	}
 }
 

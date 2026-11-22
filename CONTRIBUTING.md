@@ -2,8 +2,9 @@
 
 Thanks for wanting to help. Sightline is a small project and every bit of help shows.
 
-The [README](README.md) is the spec. It was written before the code, so if the two
-disagree, one of them is a bug and I'd like to hear about it. The plan lives in the
+The [README](README.md) and the pages in [docs/](docs/) are the spec. The README was
+written before the code, so if the code and the docs disagree, one of them is a bug and
+I'd like to hear about it. The plan lives in the
 [milestones](https://github.com/swmcc/herdr-sightline/milestones).
 
 ## The short version
@@ -112,7 +113,8 @@ the panes with `herdr pane close <id>`.
   [injection review](.claude/reviews/injection.md).
 - **Keep `scripts/install.sh` plain POSIX sh.** herdr runs it on machines with nothing
   extra installed, so no bash-isms and no Python. `make check` lints and tests it.
-- **Update the README** if behaviour changes, and tick the issue's roadmap item.
+- **Update the README or `docs/`** if behaviour changes, and add a line to the
+  changelog under the next version.
 
 ### Writing style
 
@@ -148,7 +150,7 @@ like to write the pattern too.
 ### Try it in your own project first
 
 A pattern can live in your repo's `.sightline.toml` before it's a preset (see
-[Project files](README.md#project-files)), so everyone on the project gets it now:
+[Project files](docs/project-files.md)), so everyone on the project gets it now:
 
 ```toml
 # .sightline.toml, next to .git

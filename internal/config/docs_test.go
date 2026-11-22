@@ -17,7 +17,7 @@ var tomlBlock = regexp.MustCompile("(?s)```toml\n(.*?)```")
 // accept, or people would copy a file that's refused.
 func TestProjectFileExamplesInTheDocs(t *testing.T) {
 	found := 0
-	for _, doc := range []string{"README.md", "CONTRIBUTING.md"} {
+	for _, doc := range []string{"README.md", "CONTRIBUTING.md", "docs/project-files.md", "docs/configuration.md"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", doc))
 		if err != nil {
 			t.Fatal(err)

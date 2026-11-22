@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -754,17 +755,40 @@ func (m *Model) targetFor(en engine.Entry) (herdr.Target, string) {
 	return c.Target, ""
 }
 
-// pinNote says when an entry's agent was chosen by a pin matching the watched
-// pane's terminal title. The pane sets that title itself, so it's worth seeing.
+// pinNote says when a pin had a hand in an entry's agent. A pin matching the
+// watched pane's terminal title is worth seeing because the pane sets that
+// title itself. A pin whose agent isn't running means the entry fell back to
+// the tab, which the README promises to say, so it's never a surprise where
+// the error lands.
 func (m *Model) pinNote(en engine.Entry) string {
 	if _, ok := m.picked[en.ID]; ok || !m.synced {
 		return ""
 	}
 	c := m.tracker.Choose(m.resolve(string(en.Source.ID)), m.cfg.Pins)
-	if c.Chosen() && c.Rule == herdr.ChosenByPin && c.PinField == herdr.PinByTerminalTitle {
+	switch {
+	case c.UnmatchedPin != nil:
+		return " (pinned agent " + pinnedName(c.UnmatchedPin.Agent) + " isn't running)"
+	case c.Chosen() && c.Rule == herdr.ChosenByPin && c.PinField == herdr.PinByTerminalTitle:
 		return " (pinned by terminal title)"
 	}
 	return ""
+}
+
+// maxPinnedNameCells is the most of a pin's agent the feed shows.
+const maxPinnedNameCells = 32
+
+// pinnedName is how the feed shows the agent a pin names. It comes from the
+// user's own sightline.toml, not from herdr, but it's still cut to a sensible
+// length and kept to visible characters, so it can't push the rest of the
+// line off screen or turn the words around it back to front.
+func pinnedName(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, clean(s))
+	return fit(s, maxPinnedNameCells)
 }
 
 // key handles a keypress for whichever mode the feed is in.

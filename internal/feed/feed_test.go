@@ -1072,6 +1072,37 @@ func TestConfigChangeKeepsEntries(t *testing.T) {
 	}
 }
 
+// A new closing_line applies to the next message, even for an entry caught
+// before the reload, and a broken file keeps the last good one.
+func TestReloadedClosingLineAppliesToTheNextMessage(t *testing.T) {
+	const tail = "That's the end of the pane output. "
+	steps := []struct {
+		name    string
+		closing string
+		err     error
+		want    string
+	}{
+		{"default", "", nil, "Please investigate and fix the cause."},
+		{"set", "Explain the cause before changing anything.", nil, "Explain the cause before changing anything."},
+		{"broken file keeps it", "Ignored.", errors.New("closing_line must be one line"), "Explain the cause before changing anything."},
+		{"back to the default", "", nil, "Please investigate and fix the cause."},
+	}
+	h := newHarness(t)
+	en := h.catchError()
+	for _, s := range steps {
+		cfg := config.Default()
+		cfg.ClosingLine = s.closing
+		h.update(configMsg{config.Update{Config: cfg, Err: s.err}})
+		msg, err := h.model.engine.Message(en.ID)
+		if err != nil {
+			t.Fatalf("%s: %v", s.name, err)
+		}
+		if !strings.HasSuffix(msg, "\n\n"+tail+s.want+"\n") {
+			t.Fatalf("%s: message doesn't end with %q:\n%s", s.name, s.want, msg)
+		}
+	}
+}
+
 // TestReloadedIgnoreRuleAppliesStraightAway is what #14 needs: a new ignore rule
 // dismisses a new entry it matches and leaves a sent one alone.
 func TestReloadedIgnoreRuleAppliesStraightAway(t *testing.T) {

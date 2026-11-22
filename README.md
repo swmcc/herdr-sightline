@@ -157,8 +157,9 @@ pass for those either. The header
 says what the block holds and how many lines of output there are, and the last
 line says where they end.
 
-The closing line ("Please investigate and fix the cause.") is configurable. It's
-kept to one line of at most 200 characters, with backticks turned into apostrophes.
+The closing line ("Please investigate and fix the cause.") is configurable with
+`closing_line` (see [Configuration](#configuration)). It's kept to one line of at
+most 200 characters, with backticks turned into apostrophes.
 
 Each line is cut at 500 characters and the whole message at 16 KiB, so a long
 stack trace or a pane full of noise can't flood the agent. When the cap bites,
@@ -234,6 +235,9 @@ context_lines = 20
 # Built-in pattern sets. All are on by default.
 presets = ["generic", "node", "python", "ruby", "go", "rust", "jvm", "tests"]
 
+# The last line of the message to the agent. One line, at most 200 characters.
+closing_line = "Please investigate and fix the cause."
+
 # Your own patterns.
 [[pattern]]
 name = "my-framework"
@@ -252,8 +256,14 @@ Changes apply as soon as you save. There's no need to reopen the feed and nothin
 in it is lost. Patterns and ignore rules apply to the next line. A new ignore rule
 also dismisses any new entries it matches, but never one you've sent. A new
 `settle_seconds` or `context_lines` applies to the next error or fix check, not one
-already under way. If the file has a mistake in it, the feed shows the error and
-carries on with the last good version.
+already under way. A new `closing_line` applies to the next message. If the file
+has a mistake in it, the feed shows the error and carries on with the last good
+version.
+
+`closing_line` is an instruction to the agent, so Sightline refuses one that has a
+line break or a control or invisible character in it, or is over 200 characters,
+rather than quietly changing it. Backticks are turned into apostrophes and an empty
+one means the default.
 
 Press `n` on any entry to add an ignore rule for it without editing the file. The
 feed suggests a regex from the error line, with the parts that change between runs

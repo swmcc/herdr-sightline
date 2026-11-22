@@ -2,6 +2,7 @@
 settle_seconds = 45
 context_lines = 10
 presets = ["node", "go"]
+closing_line = "Explain the cause before changing anything."
 
 [[pattern]]
 name = "my-framework"

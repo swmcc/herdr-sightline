@@ -172,6 +172,7 @@ func engineOptions(cfg config.Config) (engine.Options, error) {
 		CaptureWait:  captureWait,
 		Settle:       time.Duration(cfg.SettleSeconds) * time.Second,
 		Cooldown:     cooldown,
+		ClosingLine:  cfg.ClosingLine,
 	}, nil
 }
 

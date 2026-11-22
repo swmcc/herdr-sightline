@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
@@ -53,6 +55,9 @@ type Config struct {
 	Ignores []Ignore
 	// Pins send errors from a pane with a given title to a named agent.
 	Pins []Pin
+	// ClosingLine ends the message sent to an agent. Empty means the engine's
+	// default, "Please investigate and fix the cause."
+	ClosingLine string
 }
 
 // Pattern is a custom error pattern from a [[pattern]] table.
@@ -93,6 +98,9 @@ func Path(dir string) string {
 const (
 	MaxSettleSeconds = 3600
 	MaxContextLines  = 1000
+	// MaxClosingLineRunes is the engine's own cap on the closing line. A longer
+	// one would be cut with "...", so it's refused here instead.
+	MaxClosingLineRunes = 200
 )
 
 // MaxFileSize is the most Sightline will read. A real config is a few hundred bytes.
@@ -294,6 +302,7 @@ type fileConfig struct {
 	Pattern       []filePattern `toml:"pattern"`
 	Ignore        []fileIgnore  `toml:"ignore"`
 	Watch         []fileWatch   `toml:"watch"`
+	ClosingLine   *string       `toml:"closing_line"`
 }
 
 type filePattern struct {
@@ -380,6 +389,7 @@ func (v *validator) build(raw fileConfig) Config {
 
 	v.number("settle_seconds", raw.SettleSeconds, 1, MaxSettleSeconds, &cfg.SettleSeconds)
 	v.number("context_lines", raw.ContextLines, 0, MaxContextLines, &cfg.ContextLines)
+	v.closingLine(raw.ClosingLine, &cfg.ClosingLine)
 
 	if raw.Presets != nil {
 		// An empty list is allowed. It switches every preset off.
@@ -441,6 +451,44 @@ func (v *validator) build(raw fileConfig) Config {
 	return cfg
 }
 
+// closingLine checks the closing line. It's an instruction to the agent, so a
+// value that would be changed on the way is refused with the reason rather than
+// quietly changed. The engine makes it safe again whatever it's given (see
+// closingLine in internal/engine/message.go), so this is for the person writing
+// the file, not the only defence. Empty or only spaces means the default.
+// Backticks are allowed because the engine turns them into apostrophes, as the
+// README says.
+func (v *validator) closingLine(value *string, into *string) {
+	if value == nil {
+		return
+	}
+	const key = "closing_line"
+	s := strings.TrimSpace(*value)
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || unicode.In(r, unicode.Zl, unicode.Zp):
+			v.fail(key, "%s must be one line", key)
+			return
+		case invisible(r):
+			v.fail(key, "%s has a control or invisible character (%U), which would be taken out", key, r)
+			return
+		}
+	}
+	if n := utf8.RuneCountInString(s); n > MaxClosingLineRunes {
+		v.fail(key, "%s must be at most %d characters, got %d", key, MaxClosingLineRunes, n)
+		return
+	}
+	*into = s
+}
+
+// invisible reports whether r is a character the engine takes out of a message:
+// controls, format characters (bidi, zero width, tags), private use, variation
+// selectors and every other default ignorable character.
+func invisible(r rune) bool {
+	return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Co, unicode.Cs,
+		unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point)
+}
+
 // compile checks a regex from the table at key. An empty regex would match every
 // line, which is never what anyone means, so it's an error.
 func (v *validator) compile(key, expr, table string) (*regexp.Regexp, bool) {
@@ -474,7 +522,7 @@ type caseError struct {
 // used to catch the wrong case. The decoder's strict mode deals with keys that
 // aren't known at all.
 var schema = map[string][]string{
-	"":        {"settle_seconds", "context_lines", "presets", "pattern", "ignore", "watch"},
+	"":        {"settle_seconds", "context_lines", "presets", "closing_line", "pattern", "ignore", "watch"},
 	"pattern": {"name", "regex"},
 	"ignore":  {"regex"},
 	"watch":   {"pane_title", "agent"},

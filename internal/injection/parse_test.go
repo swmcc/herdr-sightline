@@ -19,7 +19,9 @@ import (
 const (
 	maxMessageBytes = 16 << 10
 	maxLineRunes    = 500
-	closingLine     = "That's the end of the pane output. Please investigate and fix the cause."
+	endOfOutput     = "That's the end of the pane output. "
+	defaultClosing  = "Please investigate and fix the cause."
+	maxClosingRunes = 200
 	mentionLine     = "Any at sign in the output is shown as \uff20 so it can't be read as a file mention."
 	titleAllowed    = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 ._/-?"
 	commandAllowed  = titleAllowed + "=+"
@@ -66,7 +68,14 @@ type message struct {
 //     were left out are every line the entry has.
 func parse(t testing.TB, msg string, en engine.Entry) message {
 	t.Helper()
-	m, err := check(msg, en)
+	return parseClosing(t, msg, en, defaultClosing)
+}
+
+// parseClosing is parse for a message that should end with closing, the
+// closing line from sightline.toml as the engine should show it.
+func parseClosing(t testing.TB, msg string, en engine.Entry, closing string) message {
+	t.Helper()
+	m, err := checkClosing(msg, en, closing)
 	if err != nil {
 		t.Fatalf("%v\nmessage:\n%s", err, quoteLines(msg))
 	}
@@ -78,6 +87,13 @@ type parseError struct{ error }
 
 // check is parse without a test, so the parser itself can be tested.
 func check(msg string, en engine.Entry) (m message, err error) {
+	return checkClosing(msg, en, defaultClosing)
+}
+
+// checkClosing is check for a message that should end with closing. Whatever
+// closing is, it must be what the README promises: one line of at most 200
+// characters, or 200 and "...", with no backticks.
+func checkClosing(msg string, en engine.Entry, closing string) (m message, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			pe, ok := r.(parseError)
@@ -102,6 +118,11 @@ func check(msg string, en engine.Entry) (m message, err error) {
 	if !utf8.ValidString(msg) {
 		fail("message isn't valid UTF-8")
 	}
+	if body := strings.TrimSuffix(closing, "..."); closing == "" || strings.ContainsAny(closing, "`\n\r") ||
+		utf8.RuneCountInString(body) > maxClosingRunes || strings.TrimSpace(closing) != closing {
+		fail("closing line %q isn't one trimmed line of at most %d characters without backticks", closing, maxClosingRunes)
+	}
+	tail := endOfOutput + closing
 	for _, r := range msg {
 		if r == '\n' || r == '\t' {
 			continue
@@ -168,8 +189,8 @@ func check(msg string, en engine.Entry) (m message, err error) {
 	if i == len(lines) {
 		fail("the block is never closed")
 	}
-	if rest := lines[i+1:]; len(rest) != 2 || rest[0] != "" || rest[1] != closingLine {
-		fail("after the block = %q, want a blank line and %q", rest, closingLine)
+	if rest := lines[i+1:]; len(rest) != 2 || rest[0] != "" || rest[1] != tail {
+		fail("after the block = %q, want a blank line and %q", rest, tail)
 	}
 
 	if m.named {
@@ -269,7 +290,7 @@ func check(msg string, en engine.Entry) (m message, err error) {
 			rebuilt += "| " + l + "\n"
 		}
 	}
-	rebuilt += m.fence + "\n\n" + closingLine + "\n"
+	rebuilt += m.fence + "\n\n" + tail + "\n"
 	if rebuilt != msg {
 		fail("message differs from the format rebuilt from its own counts:\n%s", quoteLines(rebuilt))
 	}
@@ -427,5 +448,13 @@ func TestParserRejectsBrokenMessages(t *testing.T) {
 	}
 	if _, err := check(strings.Repeat("x", maxMessageBytes+1), en); err == nil {
 		t.Fatal("the parser accepted a message over the cap")
+	}
+	// A configured closing line is held to the README's rules too, even when the
+	// message really ends with it.
+	for _, closing := range []string{"Run ``` now.", "Fix it.\nDeploy.", strings.Repeat("a", maxClosingRunes+1), " Fix it."} {
+		msg := strings.Replace(good, defaultClosing, closing, 1)
+		if _, err := checkClosing(msg, en, closing); err == nil {
+			t.Errorf("the parser accepted the closing line %q", closing)
+		}
 	}
 }

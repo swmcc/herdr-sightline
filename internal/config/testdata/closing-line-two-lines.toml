@@ -1,0 +1,4 @@
+settle_seconds = 30
+closing_line = """
+Fix it.
+Then deploy."""

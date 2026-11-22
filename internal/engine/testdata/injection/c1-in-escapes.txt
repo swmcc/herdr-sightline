@@ -1,0 +1,31 @@
+# UTF-8 C1 controls inside an escape, its intermediates or a CSI. xterm acts on
+# the C1 and leaves the sequence, so what follows shows. herdr 0.9.1 ignores
+# UTF-8 C1 controls (checked live for #15) and stays in the sequence. After ESC
+# that can open a string that hides everything up to its end, and anywhere in a
+# sequence it eats the next character as the sequence's final byte, one hidden
+# letter at a time. Sightline shows what xterm shows and flags what herdr hides.
+# Found by FuzzInjection (#70).
+#
+# herdr is also taken to ignore any other non-ASCII character inside an escape,
+# as a parser that only decodes UTF-8 in plain text does. That part and the
+# intermediate and CSI cases haven't been checked live. If herdr does otherwise,
+# Sightline only flags more than it needs to.
+# hidden: HIDDEN
+# caught: Error: after
+@ feed
+A\e\u0085XHIDDEN after a NEL opens an SOS Error: x\e\\B
+A\e\u0097XHIDDEN after an EPA opens an SOS Error: y\e\\B
+A\e\u0085]0;HIDDEN after a NEL opens an OSC Error: z\aB
+A\e\u0085PHIDDEN after a NEL opens a DCS Error: w\e\\B
+A\e\u0085_HIDDEN on this line
+HIDDEN on the next line Error: v\e\\B
+\e\u0085H\e\u0085I\e\u0085D\e\u0085D\e\u0085E\e\u0085N eaten by ESC Error: u
+\e(\u0085H\e(\u0085I\e(\u0085D\e(\u0085D\e(\u0085E\e(\u0085N eaten by an intermediate Error: t
+\e[\u0085H\e[\u0085I\e[\u0085D\e[\u0085D\e[\u0085E\e[\u0085N eaten by a CSI Error: s
+\e[1\u0085HIDDEN eaten by a CSI's parameters Error: r
+A\eéXHIDDEN after an e acute opens an SOS Error: q\e\\B
+A\e\xffXHIDDEN after invalid UTF-8 opens an SOS Error: p\e\\B
+\e[éH\e[éI\e[éD\e[éD\e[éE\e[éN eaten by a CSI after an e acute Error: o
+@ wait 2s
+@ feed
+Error: after

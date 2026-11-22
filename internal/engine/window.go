@@ -44,11 +44,18 @@ type capturer struct {
 	scrub scrubber
 	// shadow reads the same output but never abandons a string, so it knows what
 	// a real terminal is still hiding after scrub has given up at the cap.
-	shadow   scrubber
-	diverged bool // shadow hid something on this line that scrub showed
-	window   window
-	pending  []*capture
-	missed   bool // output was swallowed, so flag the next capture MaybeGap
+	shadow scrubber
+	// blind reads it as herdr does (see scrubber.likeHerdr) and never abandons a
+	// string either. scrub and shadow follow xterm, which acts on a C1 inside an
+	// escape, so blind is what knows when herdr is still in one.
+	blind scrubber
+	// blindSynced means blind would be exactly where shadow is, so it isn't
+	// stepped (see stepShadows) and shadow is read in its place.
+	blindSynced bool
+	diverged    bool // shadow or blind hid something on this line that scrub showed
+	window      window
+	pending     []*capture
+	missed      bool // output was swallowed, so flag the next capture MaybeGap
 	// unseen means the line being read isn't all a terminal shows: it was shown
 	// while a terminal would still be hiding output. observe reads and clears it.
 	unseen bool
@@ -66,7 +73,7 @@ func (c *capturer) tookHidden() bool {
 }
 
 func newCapturer(contextLines int) capturer {
-	return capturer{window: window{size: contextLines}, shadow: newShadow()}
+	return capturer{window: window{size: contextLines}, shadow: newShadow(), blind: newBlind(), blindSynced: true}
 }
 
 // read runs lines from the adapter through the scrubber and calls use for each
@@ -77,7 +84,7 @@ func newCapturer(contextLines int) capturer {
 // progress and the next capture are flagged MaybeGap.
 func (c *capturer) read(lines []string, use func(line string)) {
 	emit := func(line string) {
-		c.unseen = c.diverged || c.shadow.hiding()
+		c.unseen = c.diverged || c.shadow.hiding() || !c.blindSynced && c.blind.hiding()
 		if c.unseen {
 			c.missed, c.hid = true, true
 			for _, p := range c.pending {
@@ -107,15 +114,57 @@ func (c *capturer) read(lines []string, use func(line string)) {
 	for _, l := range lines {
 		l = strings.TrimSuffix(strings.TrimSuffix(l, "\n"), "\r")
 		for _, r := range l + "\n" {
-			c.shadow.step(r, discardLine, noGap)
+			inSeq := c.stepShadows(r)
+			shown := c.scrub.line.Len()
 			c.scrub.step(r, emit, c.hidLines)
-			// A line end has just emitted its line, and emit checks the shadow
+			// A line end has just emitted its line, and emit checks the shadows
 			// itself, so it mustn't mark the next line.
-			if r != '\n' && c.shadow.hiding() && !c.scrub.hiding() {
+			if r == '\n' {
+				continue
+			}
+			if c.shadow.hiding() && !c.scrub.hiding() {
+				c.diverged = true
+			}
+			// herdr took r as part of a sequence or a string, but scrub showed
+			// it. That's a string only herdr opened, or the character herdr ate
+			// as the end of an escape that xterm had left at a C1 or some other
+			// non-ASCII character (#70). Only
+			// ESC takes blind into a sequence, and scrub never shows ESC, so
+			// blind's state before r is all that needs checking.
+			if inSeq && c.scrub.line.Len() > shown {
 				c.diverged = true
 			}
 		}
 	}
+}
+
+// stepShadows moves shadow and blind on by r and reports whether blind was in
+// a sequence or a string before it.
+//
+// The two only differ once herdr ignores a character that xterm acts on (see
+// herdrIgnores), so until then blind isn't stepped at all and shadow stands in
+// for it. That keeps a huge line of ordinary text from paying for a third
+// scrubber. At such a character, blind takes shadow's state and goes its own
+// way, until both are back in plain text.
+func (c *capturer) stepShadows(r rune) (inSeq bool) {
+	if c.blindSynced && c.shadow.herdrIgnores(r) {
+		c.blind = c.shadow
+		c.blind.likeHerdr = true
+		c.blindSynced = false
+	}
+	if c.blindSynced {
+		inSeq = c.shadow.inSequence()
+		c.shadow.step(r, discardLine, noGap)
+		return inSeq
+	}
+	inSeq = c.blind.inSequence()
+	c.shadow.step(r, discardLine, noGap)
+	c.blind.step(r, discardLine, noGap)
+	// In plain text nothing else a shadow keeps changes what it does next.
+	if c.blind.state == scrubText && c.shadow.state == scrubText {
+		c.blindSynced = true
+	}
+	return inSeq
 }
 
 func discardLine(string) {}
@@ -143,6 +192,7 @@ func (c *capturer) lost() {
 	c.gap()
 	c.scrub = scrubber{noRedraw: c.scrub.noRedraw}
 	c.shadow = newShadow()
+	c.blind, c.blindSynced = newBlind(), true
 	c.diverged = false
 }
 
@@ -669,6 +719,13 @@ func (e *Engine) fileAll(s *source) {
 // DEC VT500 parser that xterm and VTE are built on, including the controls that
 // act from any state.
 //
+// UTF-8 C1 controls. xterm acts on them, but herdr 0.9.1 ignores them, so after
+// one inside an escape (or, it's assumed, any other non-ASCII character there)
+// the two can disagree about what's shown. Outside a string
+// the scrubber follows xterm, and the blind shadow reads as herdr does, so text
+// herdr would hide still reaches the watcher but comes flagged (see
+// capturer.read).
+//
 // Redrawn lines. A progress bar or spinner rewrites its line with a carriage
 // return, so a terminal shows only the final text. The scrubber follows that, so
 // "50%\r100%" is kept as "100%", not "50%100%". Dropping the text that was drawn
@@ -733,6 +790,9 @@ type scrubber struct {
 	// shadow means only the state is tracked: no text is kept and strings are
 	// never abandoned. Its work per rune is constant, so it can't be made slow.
 	shadow bool
+	// likeHerdr drops what herdr ignores without acting on it (see
+	// herdrIgnores). Only a shadow sets it.
+	likeHerdr bool
 	// csiParam and csiPlain read the current CSI's parameter, for the two that
 	// redraw a line: erase in line and move to a column. csiPlain is false once
 	// anything but a digit has been seen. csiPrivate means it started with '?'.
@@ -923,9 +983,40 @@ func (s *scrubber) csiFinal(r rune) {
 
 func newShadow() scrubber { return scrubber{shadow: true} }
 
+// newBlind is a shadow that reads UTF-8 C1 controls as herdr does.
+func newBlind() scrubber { return scrubber{shadow: true, likeHerdr: true} }
+
+// herdrIgnores reports whether herdr drops r in the scrubber's current state,
+// leaving the state as it is, where xterm would act on it.
+//
+// herdr 0.9.1 ignores UTF-8 C1 controls wherever they come (checked live for
+// #15). Inside an escape, its intermediates or a CSI it's taken to ignore any
+// other non-ASCII character too, as a parser that only decodes UTF-8 in plain
+// text does. That part hasn't been checked live. If it's wrong, blind only
+// flags more, and real output never puts non-ASCII inside an escape.
+func (s *scrubber) herdrIgnores(r rune) bool {
+	if r < 0x80 {
+		return false
+	}
+	if r <= 0x9f {
+		return true
+	}
+	switch s.state {
+	case scrubEsc, scrubEscInter, scrubCSI, scrubCSIIgnore:
+		return true
+	}
+	return false
+}
+
 // hiding reports whether the scrubber is inside a control string.
 func (s *scrubber) hiding() bool {
 	return s.state == scrubOSC || s.state == scrubString || s.state == scrubStringEsc
+}
+
+// inSequence reports whether the scrubber is inside an escape sequence or a
+// control string, so the next character won't be shown as text.
+func (s *scrubber) inSequence() bool {
+	return s.state != scrubText
 }
 
 // write runs text through the scrubber. emit gets each complete, clean line.
@@ -1051,6 +1142,8 @@ func (s *scrubber) anywhere(r rune) bool {
 	}
 	inString := s.state == scrubOSC || s.state == scrubString
 	switch {
+	case s.likeHerdr && s.herdrIgnores(r):
+		// Dropped, and the state doesn't change.
 	case inString && r >= 0x80 && r <= 0x9f:
 		// Inside a string, a C1 control is swallowed with the rest. xterm would
 		// end the string on any of them (ST, CSI, the lot), but herdr 0.9.1

@@ -239,7 +239,10 @@ func (h *Herdr) subscribed(sub *Subscriber) {
 	var wants []subscription
 	// A subscriptions array that doesn't parse wants nothing, so it hears
 	// nothing.
-	_ = json.Unmarshal(sub.Subscriptions, &wants)
+	if json.Unmarshal(sub.Subscriptions, &wants) != nil {
+		// Unmarshal can fill some entries before it fails.
+		wants = nil
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.subs = append(h.subs, listener{sub: sub, wants: wants})

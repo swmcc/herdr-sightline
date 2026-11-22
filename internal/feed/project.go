@@ -305,7 +305,7 @@ func (m *Model) projectNotes() []string {
 	// The header cleans control characters. The rest is done here, since a
 	// path or a rule quoted in an error comes from the repo.
 	for i, n := range notes {
-		notes[i] = visible(clean(n))
+		notes[i] = escapeUnseen(clean(n))
 	}
 	return notes
 }
@@ -354,10 +354,10 @@ func (m *Model) trustView() string {
 // part of a rule is cut off.
 func (m *Model) trustLines(p project, w int) []string {
 	var out []string
-	add := func(s string) { out = append(out, wrap(visible(clean(s)), w)...) }
+	add := func(s string) { out = append(out, wrap(escapeUnseen(clean(s)), w)...) }
 	// Styles are added after wrapping, so their escapes don't count as width.
 	styled := func(style lipgloss.Style, s string) {
-		for _, l := range wrap(visible(clean(s)), w) {
+		for _, l := range wrap(escapeUnseen(clean(s)), w) {
 			out = append(out, style.Render(l))
 		}
 	}
@@ -442,12 +442,12 @@ func (m *Model) trustLines(p project, w int) []string {
 	return out
 }
 
-// visible writes every character that doesn't show as itself as an escape,
+// escapeUnseen writes every character that doesn't show as itself as an escape,
 // \x{202e} for a right to left override say. clean only deals with control
 // characters, but a rule someone else wrote could use a format character or an
 // invisible one to read as something it isn't, and this is where it's read
 // before it's trusted.
-func visible(s string) string {
+func escapeUnseen(s string) string {
 	if !strings.ContainsFunc(s, unseen) {
 		return s
 	}

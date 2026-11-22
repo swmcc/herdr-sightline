@@ -257,6 +257,9 @@ gone yet. It goes when all of these are true:
 - The agent has been idle for 3 seconds and still is when herdr is asked again
   just before sending. Queue mode never interrupts an agent that's working or
   blocked.
+- The agent's pane doesn't have focus. You might be typing in it, so queue mode
+  waits until you move to another pane, and herdr is asked again just before
+  sending.
 - The agent isn't still on an earlier send from Sightline.
 
 Several errors waiting from one pane for the same agent go in one message, at most

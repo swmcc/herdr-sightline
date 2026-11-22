@@ -1227,6 +1227,8 @@ func (m *Model) checked(msg checkedMsg) tea.Cmd {
 		return refuse(fmt.Sprintf("the agent in %s is named %s, the same as this pane's id, so herdr might send it there", msg.nameClash, msg.target.PaneID))
 	case p.AgentStatus == herdr.AgentBlocked:
 		return refuse(blockedNote)
+	case msg.auto && p.Focused:
+		return refuse(focusedNote + ". It'll try again once you move away")
 	case msg.auto && p.AgentStatus != herdr.AgentIdle && p.AgentStatus != herdr.AgentDone:
 		// Queue mode never interrupts an agent at work. The tracker said it
 		// was idle, but herdr has the last word.

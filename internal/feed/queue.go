@@ -187,6 +187,12 @@ func (m *Model) autoTargetForPane(pane string) (herdr.Target, string) {
 
 // agentReady says why queue mode can't send to t at now, or "" if it can.
 func (m *Model) agentReady(t herdr.Target, now time.Time) string {
+	// You may be typing in a pane that has focus, and herdr doesn't say whether
+	// a prompt clears a half typed draft. So queue mode waits until you move
+	// away. checked asks herdr again just before sending.
+	if p, ok := m.panes[t.PaneID]; ok && p.Focused {
+		return focusedNote
+	}
 	if _, ok := m.awaiting[t.PaneID]; ok {
 		return "waiting for it to finish what Sightline sent it"
 	}
@@ -360,3 +366,6 @@ func (m *Model) configAsksQueue(pane string) bool {
 	}
 	return false
 }
+
+// focusedNote is why queue mode waits while the agent's pane has focus.
+const focusedNote = "its pane has focus, and you may be typing in it"

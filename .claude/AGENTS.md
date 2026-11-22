@@ -79,6 +79,10 @@ syntax, so there's no lookbehind. Follow [workflows/add-pattern.md](workflows/ad
 
 I'd rather miss an odd error than cry wolf. A noisy pattern is a wrong pattern.
 
+Real output comes in through the missed error issue template. CONTRIBUTING.md has the
+short version for people, from trying a pattern in a repo's `.sightline.toml` to
+sending it upstream as a preset.
+
 ## Security
 
 Pane output is untrusted. Someone else's request to a dev server can put text in a

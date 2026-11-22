@@ -493,7 +493,7 @@ behaviour.
 
 - [x] Project presets checked into the repo ([#22](https://github.com/swmcc/herdr-sightline/issues/22))
 - [x] Trust prompt for project presets ([#23](https://github.com/swmcc/herdr-sightline/issues/23))
-- [ ] Share error patterns ([#24](https://github.com/swmcc/herdr-sightline/issues/24))
+- [x] Share error patterns ([#24](https://github.com/swmcc/herdr-sightline/issues/24))
 - [x] More built-in presets ([#25](https://github.com/swmcc/herdr-sightline/issues/25))
 
 ### [v0.4 · Windows](https://github.com/swmcc/herdr-sightline/milestone/4)
@@ -507,7 +507,10 @@ Sightline everywhere herdr runs.
 ## Contributing
 
 Ideas and issues are welcome, especially error formats Sightline should recognise.
-Include a sample of the output.
+If it missed an error, or caught something that wasn't one,
+[open a missed error issue](https://github.com/swmcc/herdr-sightline/issues/new?template=missed.yml)
+with the output. [CONTRIBUTING.md](CONTRIBUTING.md#share-an-error-pattern) says how to
+try a pattern in your own repo's `.sightline.toml` and send it upstream as a preset.
 
 Everything starts with an issue, and every pull request is tested and reviewed by
 Copilot automatically. Pull requests from anyone but me also need someone else on the

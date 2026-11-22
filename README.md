@@ -316,10 +316,10 @@ version or `esc` to leave it. `x` stops trusting it.
   manager label in front. A regex with a run of spaces in it is refused too, since
   spaces could push the rest of it off the screen.
 - A project's ignore rule has to start with `^` and at least 12 characters of fixed
-  text that name an error and its message, like `^Error: flaky upstream`. So it can't
-  match anywhere in a line, start with a class, an alternation or `(?i)`, or name
-  only a process manager label, which are the ways a rule hides a whole kind of
-  error. Your own ignore rules have no such limit.
+  text that name an error and its message, like `^Error: flaky upstream`. It can't
+  match anywhere in a line or start with a class, an alternation or `(?i)`. Nor can
+  it name only a process manager label. Those are the ways a rule hides a whole
+  kind of error. Your own ignore rules have no such limit.
 - Those checks catch the obvious ways to hide errors, not every one. An ignore rule
   from a repo can still hide a real error, and the trust screen says so. Read the
   rules before you press `y`.

@@ -1,6 +1,7 @@
 package injection
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -182,6 +183,11 @@ func TestForgedSignalsArentEvidence(t *testing.T) {
 		`"compiled /x in 1ms`,
 		"[ 'listening on http://x' ]",
 		`{"listening on x`,
+		// From Copilot's second review: morgan with trust proxy and an
+		// unquoted request whose method is any token.
+		"compiled-successfully - X /x HTTP/1.1 404 0 - 1 ms",
+		"compiled-successfully - F.O /x HTTP/1.1 404 0 - 1 ms",
+		"compiled-successfully - get /x HTTP/1.1 404 0 - 1 ms",
 	} {
 		t.Run(line, func(t *testing.T) {
 			if got := settleWith(t, func(e *engine.Engine, now time.Time) {
@@ -354,6 +360,39 @@ func TestChosenTriggersArentEvidence(t *testing.T) {
 			name:   "a request with another method that failed isn't the trigger",
 			setup:  []string{"PROPFIND /notices 500 in 3ms"},
 			attack: []string{"PROPFIND /notices 200 in 3ms"},
+			want:   engine.StateUnverified,
+		},
+		// From Copilot's second review: methods of one character or with a
+		// dot in them, and a forwarded address padded so the quoted request
+		// is cut off.
+		{
+			name:   "a request with a one character method owns the next ending",
+			setup:  []string{"[info] GET /notices"},
+			attack: []string{"[info] GET /notices", "[info] X /health", "[info] Sent 200 in 1ms"},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a request with a dotted method owns the next ending",
+			setup:  []string{"[info] GET /notices"},
+			attack: []string{"[info] GET /notices", "[info] F.O /health", "[info] Sent 200 in 1ms"},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a padded forwarded address passing the trigger",
+			setup:  []string{"GET /notices 500 in 30ms"},
+			attack: []string{"GET /notices 200 " + strings.Repeat("a", 5000) + ` - - [01/Jan/2026 09:00:05] "GET / HTTP/1.1" 200 -`},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a padded forwarded address as the trigger",
+			setup:  []string{"GET /search 500 " + strings.Repeat("a", 5000) + ` - - [01/Jan/2026 09:00:05] "GET /x HTTP/1.1" 404 -`},
+			attack: []string{"GET /search 200 in 3ms"},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a padded forwarded address as a recompile",
+			setup:  nil,
+			attack: []string{"compiled successfully " + strings.Repeat("a", 5000) + ` - - [01/Jan/2026 09:00:05] "GET / HTTP/1.1" 404 -`},
 			want:   engine.StateUnverified,
 		},
 		{

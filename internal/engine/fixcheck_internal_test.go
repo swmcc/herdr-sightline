@@ -94,6 +94,29 @@ func TestQuotedFormsComeLast(t *testing.T) {
 	}
 }
 
+// The server's own refusals aren't a request failing, whether they come with
+// the request or as its ending.
+func TestTriggerOfSkipsTheServersOwnRefusals(t *testing.T) {
+	for _, tt := range []struct {
+		before []string
+		want   string
+	}{
+		{[]string{`Started GET "/search" for 1.2.3.4`, "Completed 501 Not Implemented in 1ms"}, ""},
+		{[]string{`Started GET "/search" for 1.2.3.4`, "Completed 505 HTTP Version Not Supported in 1ms"}, ""},
+		{[]string{"[info] GET /search", "[info] Sent 501 in 1ms"}, ""},
+		{[]string{"GET /search 501 in 1ms"}, ""},
+		// The controls.
+		{[]string{`Started GET "/search" for 1.2.3.4`, "Completed 500 Internal Server Error in 1ms"}, "GET /search"},
+		{[]string{`Started GET "/search" for 1.2.3.4`}, "GET /search"},
+	} {
+		t.Run(strings.Join(tt.before, " | "), func(t *testing.T) {
+			if got := triggerOf(Entry{Before: tt.before, Lines: []string{"boom"}}); got != tt.want {
+				t.Fatalf("triggerOf = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestEndedWith(t *testing.T) {
 	tests := []struct {
 		line string

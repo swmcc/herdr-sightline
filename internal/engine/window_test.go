@@ -466,6 +466,8 @@ func TestC1InsideAnEscapeIsFlagged(t *testing.T) {
 		{"an intermediate eats the character after é", [][]string{{"Error: boom \x1b(éS"}}, true},
 		{"a CSI eats the character after é", [][]string{{"Error: boom \x1b[éS"}}, true},
 		{"a CSI with parameters eats the rest of itself after é", [][]string{{"Error: boom \x1b[1é;31mx"}}, true},
+		{"é after ESC inside an OSC opens an SOS", [][]string{{"\x1b]title\x1béXHIDDEN Error: boom"}}, true},
+		{"é after ESC inside a DCS eats a character", [][]string{{"\x1bPq\x1béError: boom"}}, true},
 		{"é after a complete escape", [][]string{{"\x1b[31mé Error: boom\x1b[0m"}}, false},
 		// herdr eats only the 3 and shows "1m", which xterm hides, so herdr
 		// shows more than the message holds and nothing is flagged.

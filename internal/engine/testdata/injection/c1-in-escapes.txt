@@ -26,6 +26,7 @@ HIDDEN on the next line Error: v\e\\B
 A\eéXHIDDEN after an e acute opens an SOS Error: q\e\\B
 A\e\xffXHIDDEN after invalid UTF-8 opens an SOS Error: p\e\\B
 \e[éH\e[éI\e[éD\e[éD\e[éE\e[éN eaten by a CSI after an e acute Error: o
+A\e]title\eéXHIDDEN after ESC and an e acute inside an OSC Error: n\e\\B
 @ wait 2s
 @ feed
 Error: after

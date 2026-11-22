@@ -1002,7 +1002,8 @@ func (s *scrubber) herdrIgnores(r rune) bool {
 		return true
 	}
 	switch s.state {
-	case scrubEsc, scrubEscInter, scrubCSI, scrubCSIIgnore:
+	// An ESC inside a string is an escape too, as it may not be ST.
+	case scrubEsc, scrubEscInter, scrubCSI, scrubCSIIgnore, scrubStringEsc:
 		return true
 	}
 	return false

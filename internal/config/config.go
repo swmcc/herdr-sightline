@@ -22,6 +22,8 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/pelletier/go-toml/v2/unstable"
+
+	"github.com/swmcc/herdr-sightline/internal/engine"
 )
 
 // FileName is the name of the config file inside the plugin's config directory.
@@ -108,7 +110,9 @@ func Path(dir string) string {
 // would overflow a time.Duration or size a buffer to take the feed down later.
 const (
 	MaxSettleSeconds = 3600
-	MaxContextLines  = 1000
+	// MaxContextLines is the engine's own cap. More would be clamped without a
+	// word, so it's refused here instead.
+	MaxContextLines = engine.MaxContextLines
 	// MaxClosingLineRunes is the engine's own cap on the closing line. A longer
 	// one would be cut with "...", so it's refused here instead.
 	MaxClosingLineRunes = 200

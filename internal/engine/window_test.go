@@ -156,7 +156,7 @@ func TestPendingCapturesAreCapped(t *testing.T) {
 }
 
 func TestContextLinesIsClamped(t *testing.T) {
-	tests := []struct{ in, want int }{{-5, 0}, {20, 20}, {100000, maxContextLines}}
+	tests := []struct{ in, want int }{{-5, 0}, {20, 20}, {100000, MaxContextLines}}
 	for _, tt := range tests {
 		if got := New(Options{ContextLines: tt.in}).opts.ContextLines; got != tt.want {
 			t.Errorf("ContextLines %d became %d, want %d", tt.in, got, tt.want)

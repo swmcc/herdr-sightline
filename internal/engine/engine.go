@@ -29,9 +29,10 @@ type Options struct {
 	MaxEntries   int           // entries kept before older ones are dropped (#41)
 }
 
-// maxContextLines bounds ContextLines, and so the memory and work each source
-// costs. The message has its own cap, maxMessageBytes in message.go.
-const maxContextLines = 200
+// MaxContextLines bounds ContextLines, and so the memory and work each source
+// costs. The config refuses anything over it, so the clamp in New is only a
+// backstop. The message has its own cap, maxMessageBytes in message.go.
+const MaxContextLines = 200
 
 // MaxEntries is 200 when it isn't set and is kept between 10 and 10,000. See
 // trim in group.go for which entries go first.
@@ -91,7 +92,7 @@ func New(opts Options) *Engine {
 // clamp keeps opts within the limits New describes. Reconfigure uses it too, so
 // a reload can't get round them.
 func clamp(opts Options) Options {
-	opts.ContextLines = min(max(opts.ContextLines, 0), maxContextLines)
+	opts.ContextLines = min(max(opts.ContextLines, 0), MaxContextLines)
 	if opts.MaxEntries <= 0 {
 		opts.MaxEntries = defaultMaxEntries
 	}

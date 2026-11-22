@@ -350,7 +350,7 @@ Sightline reads `sightline.toml` from its config directory
 settle_seconds = 30
 
 # Lines of output sent before the error, and at most this many after it.
-# The lines after stop early once the stack trace ends.
+# The lines after stop early once the stack trace ends. It can be 0 to 200.
 context_lines = 20
 
 # Built-in pattern sets. All are on by default.

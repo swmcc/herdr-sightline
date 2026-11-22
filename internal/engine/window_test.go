@@ -1352,6 +1352,87 @@ func TestLastingModes(t *testing.T) {
 	}
 }
 
+// A line that isn't followed is kept as printed. If the cursor may have gone
+// back over it and something was then written or erased, a terminal may show
+// something else, so the line is flagged (#95). Healthy output that only
+// moves on, or erases from the end, isn't.
+func TestUnfollowedRedrawsFlag(t *testing.T) {
+	tests := []struct {
+		name   string
+		before []string // read before the error, a minute earlier
+		line   string
+		want   bool
+	}{
+		{"a saved cursor, then a redraw", []string{"\x1b[s"}, "DRAWNOVER\r\x1b[2KError: boom", true},
+		{"margins, then a redraw", []string{"\x1b[?69h"}, "DRAWNOVER\rError: boom", true},
+		{"insert mode, then a backspace", []string{"\x1b[4h"}, "DRAWNOVER\bError: boom", true},
+		{"a tab, then a carriage return", nil, "DRAWNOVER\t\rError: boom", true},
+		{"a wide character, then a column move", nil, "DRAWNOVER ‘x’\x1b[1GError: boom", true},
+		{"cursor back", nil, "DRAWNOVER\x1b[99DError: boom", true},
+		{"cursor back then erasing characters", nil, "DRAWNOVER\x1b[99D\x1b[99X", true},
+		{"a back tab", nil, "DRAWNOVER\x1b[9ZError: boom", true},
+		{"a restored cursor", nil, "\x1b7DRAWNOVER\x1b8Error: boom", true},
+		{"a redraw left short, then untracked", nil, "DRAWNOVER\rError\x1b[1C: boom", true},
+		{"a wide character after a carriage return", nil, "DRAWNOVER\r‘Error: boom", true},
+		{"a tab after a carriage return", nil, "DRAWNOVER\r\tError: boom\x1b[K", true},
+		{"VT52 cursor left", []string{"\x1b[?2l"}, "DRAWNOVER run" + strings.Repeat("\x1bD", 13) + "Error: boom", true},
+		{"VT52 erase after cursor left", []string{"\x1b[?2l"}, "Error: boom DRAWNOVER" + strings.Repeat("\x1bD", 10) + "\x1bK", true},
+		{"the line drawing set", []string{"\x1b(0"}, "Error: boom", true},
+		{"the line drawing set in G1, shifted in", []string{"\x1b)0"}, "\x0eError: boom", true},
+		{"the line drawing set in G1, never shifted in", []string{"\x1b)0"}, "Error: boom", false},
+		{"the line drawing set in G2, locked in", []string{"\x1b*0\x1bn"}, "Error: boom", true},
+		{"locked in, then back with SI", []string{"\x1b*0\x1bn", "\x0f"}, "Error: boom", false},
+		{"G3 in the right half, which SI doesn't undo", []string{"\x1b+0\x1b|", "\x0f"}, "Error: boom", true},
+		{"the line drawing set and back to ASCII", []string{"\x1b(0lqqk\x1b(B"}, "Error: boom", false},
+		{"autowrap off and wide characters", []string{"\x1b[?7l"}, "Error: x" + strings.Repeat("あ", 20) + "DRAWNOVER", true},
+		{"autowrap off and a long line", []string{"\x1b[?7l"}, "Error: boom" + strings.Repeat(" ", 100) + "DRAWNOVER", true},
+		{"a reset clears it all", []string{"\x1b[s", "\x1b(0", "\x1b[?7l", "\x1bc"}, "Error: boom" + strings.Repeat(" ", 100), false},
+		{"autowrap on again", []string{"\x1b[?7l", "\x1b[?7h"}, "Error: boom" + strings.Repeat(" ", 100), false},
+		// Healthy output.
+		{"a compiler's colours and erase to the end", nil, "\x1b[01;31m\x1b[KError: ‘foo’ \x1b[m\x1b[K", false},
+		{"erase to the end after a mode", []string{"\x1b[s"}, "Error: boom\x1b[K", false},
+		{"a carriage return at the end after a mode", []string{"\x1b[s"}, "Error: boom\r\r", false},
+		{"a tab", nil, "Error:\tboom", false},
+		{"cursor forward", nil, "Error:\x1b[3Cboom", false},
+		{"autowrap off and a short line", []string{"\x1b[?7l"}, "Error: boom", false},
+		{"erasing characters at the end", nil, "Error: boom\x1b[5X", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWatching()
+			if len(tt.before) > 0 {
+				e.Feed("web", tt.before, t0.Add(-time.Minute))
+			}
+			e.Feed("web", []string{tt.line, "ok", "ok"}, t0)
+			e.Tick(t0.Add(time.Minute))
+			// A line with the error and one that's only context both count.
+			e.Feed("web", []string{tt.line, "Error: later", "ok", "ok"}, t0.Add(2*time.Minute))
+			e.Tick(t0.Add(3 * time.Minute))
+			entries := e.Entries()
+			if len(entries) == 0 {
+				t.Fatal("nothing caught")
+			}
+			for _, en := range entries {
+				if en.MaybeGap != tt.want {
+					t.Errorf("%q MaybeGap = %v, want %v", en.Lines[0], en.MaybeGap, tt.want)
+				}
+			}
+		})
+	}
+	// Nothing was swallowed, so the fix check isn't told lines were missed.
+	e := newWatching()
+	s := e.sources["web"]
+	s.capture.read([]string{"\x1b[s", "DRAWNOVER\rError: boom"}, func(string) {})
+	if s.capture.hid {
+		t.Error("a flagged redraw told the fix check lines were missed")
+	}
+	// And the flag doesn't carry on to the next line.
+	s.capture.read([]string{"DRAWNOVER\x1b[99DError: boom", "plain"}, func(string) {})
+	if s.capture.unseen {
+		t.Error("the flag carried on to the next line")
+	}
+}
+
 // The fix check is handed the line detection used, so a redraw can't hide a
 // recurrence from it either.
 func TestObserveReturnsTheLineItUsed(t *testing.T) {

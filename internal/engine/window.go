@@ -91,6 +91,16 @@ func (c *capturer) read(lines []string, use func(line string)) {
 				p.maybeGap = true
 			}
 		}
+		if c.scrub.lostRedraw {
+			// The line may not be what a terminal shows (see lostRedraw), so
+			// a capture with it is flagged. Nothing was swallowed, so as with
+			// drawnAbove the fix check isn't told.
+			c.scrub.lostRedraw = false
+			for _, p := range c.pending {
+				p.maybeGap = true
+			}
+			c.unseen = true
+		}
 		if c.scrub.drawnAbove {
 			// Lines already read may have been drawn over or cleared, so
 			// none of them can be trusted to be what a person saw. Nothing
@@ -190,7 +200,7 @@ func (c *capturer) gap() {
 // escape sequence in progress is forgotten too.
 func (c *capturer) lost() {
 	c.gap()
-	c.scrub = scrubber{noRedraw: c.scrub.noRedraw, vt52: c.scrub.vt52, lrMargins: c.scrub.lrMargins}
+	c.scrub = scrubber{noRedraw: c.scrub.noRedraw, vt52: c.scrub.vt52, lrMargins: c.scrub.lrMargins, g0Odd: c.scrub.g0Odd, g13Odd: c.scrub.g13Odd, shiftedOut: c.scrub.shiftedOut, grShifted: c.scrub.grShifted, noWrap: c.scrub.noWrap}
 	c.shadow = newShadow()
 	c.blind, c.blindSynced = newBlind(), true
 	c.diverged = false
@@ -749,9 +759,13 @@ func (e *Engine) fileAll(s *source) {
 // already written (CSI G). Anything else on the line, such as a tab, a character
 // that might be wide, one dropped as invisible that a terminal may still give a
 // column, another cursor movement, a control string or any other escape, stops
-// it following that line, and the rest of the line is kept as printed, with
-// nothing drawn over. A mode, margin, scroll region or saved cursor lasts beyond
-// its line, so it stops redraws being followed at all until a gap.
+// it following that line, and the rest of the line is kept as printed. A mode,
+// margin, scroll region or saved cursor lasts beyond its line, so it stops
+// redraws being followed at all until a full reset (ESC c). If, on a line that
+// isn't followed, the cursor may have gone back and something is then written
+// or erased, a terminal may show other than what's kept, so the line is
+// flagged (see lostRedraw). So is every line while a character set other than
+// ASCII may be in use, and a long one while autowrap may be off.
 //
 // It assumes a line doesn't wrap, which it can't know without the pane's width.
 // A redraw on a wrapped line can drop text a terminal still shows, but only text
@@ -780,6 +794,8 @@ const (
 	ctrlCAN, ctrlSUB = 0x18, 0x1a
 	ctrlESC, ctrlBEL = 0x1b, 0x07
 	ctrlDEL          = 0x7f
+	ctrlSO, ctrlSI   = 0x0e, 0x0f
+	c1SS2, c1SS3     = 0x8e, 0x8f
 	c1DCS, c1SOS     = 0x90, 0x98
 	c1CSI, c1ST      = 0x9b, 0x9c
 	c1RI             = 0x8d
@@ -821,6 +837,26 @@ type scrubber struct {
 	// the screen model thinks. A gap doesn't clear it, because the terminal is
 	// still in whatever mode it was. Only a full reset (ESC c) does.
 	noRedraw bool
+	// lostRedraw means the line isn't being followed (noRedraw, or it was
+	// untracked) and may show other than what's kept as printed: the cursor
+	// may have gone back (screen.back) and something was then written or
+	// erased, or the character set or autowrap may change what's shown. Text
+	// drawn over could then reach an agent unseen, so the capturer flags the
+	// line (#95). It's cleared when the line is read.
+	lostRedraw bool
+	// g0Odd means G0, the character set in use unless shifted, may not be
+	// ASCII (ESC ( 0, the line drawing set, say), so letters may show as other
+	// glyphs. g13Odd means G1, G2 or G3 may not be, which only shows once
+	// shifted in: shiftedOut says SO may have done that. noWrap means
+	// autowrap (mode 7) may be off, so a terminal draws everything past the
+	// right edge on the last cell. A line may then show other than what's
+	// printed, so while a set other than ASCII may be showing every line is
+	// flagged (see oddCharset), and while autowrap may be off every line wider
+	// than narrowColumns is. Like noRedraw, a gap doesn't clear them. ESC c
+	// does, and so do ESC ( B, SI and mode 7 set again for their own.
+	// grShifted says a right half shift may have put G1 to G3 in use too.
+	g0Odd, g13Odd, shiftedOut, grShifted bool
+	noWrap                               bool
 	// drawnAbove means the cursor went to an earlier line, or the screen was
 	// cleared, since the last line was emitted: anything above may have been
 	// drawn over. Only same line redraws are followed, so the capturer treats
@@ -852,9 +888,12 @@ const (
 type screen struct {
 	active    bool // the line has been redrawn, so cells is what's shown
 	untracked bool // the cursor moved in a way that isn't followed
-	cells     []rune
-	cursor    int
-	work      int // cells blanked so far, against maxRedrawWork
+	// back means a carriage return, backspace or column move came while the
+	// line wasn't followed, so the cursor may be back over printed text.
+	back   bool
+	cells  []rune
+	cursor int
+	work   int // cells blanked so far, against maxRedrawWork
 }
 
 // narrow reports whether r is certain to take exactly one column in any
@@ -863,9 +902,40 @@ func narrow(r rune) bool {
 	return r >= 0x20 && r < ctrlDEL || r >= 0x2800 && r <= 0x28ff
 }
 
-// untrack stops following the line. The rest of it is kept as printed.
+// untrack stops following the line. The rest of it is kept as printed. If a
+// redraw being followed had left the cursor short of the end, it's still back
+// over printed text (see screen.back).
 func (s *scrubber) untrack() {
-	s.screen.untracked = true
+	sc := &s.screen
+	if sc.active && !sc.untracked && sc.cursor < len(sc.cells) {
+		sc.back = true
+	}
+	sc.untracked = true
+}
+
+// goBack stops following the line after something that may move the cursor
+// back over it, such as cursor back or a restored cursor. Whatever is written
+// or erased after that flags the line (see lostRedraw).
+func (s *scrubber) goBack() {
+	s.untrack()
+	s.screen.back = true
+}
+
+// lose stops following the line after something that changes what it shows
+// whatever the cursor does, and flags it (see lostRedraw).
+func (s *scrubber) lose() {
+	s.untrack()
+	if !s.shadow {
+		s.lostRedraw = true
+	}
+}
+
+// overwrite flags the line if something changed the cells under the cursor
+// while it may be back over printed text.
+func (s *scrubber) overwrite() {
+	if s.screen.back && !s.shadow {
+		s.lostRedraw = true
+	}
 }
 
 // redraw gets the screen ready for the cursor to move, and reports false if the
@@ -886,6 +956,8 @@ func (s *scrubber) redraw() bool {
 // line would leave blank cells before the next character, so it isn't followed.
 func (s *scrubber) moveTo(col int) {
 	if !s.redraw() {
+		// The line isn't followed, so the cursor may now be back over it.
+		s.screen.back = true
 		return
 	}
 	if col > len(s.screen.cells) {
@@ -898,6 +970,8 @@ func (s *scrubber) moveTo(col int) {
 func (s *scrubber) backspace() {
 	if s.redraw() {
 		s.screen.cursor = max(s.screen.cursor-1, 0)
+	} else {
+		s.screen.back = true
 	}
 }
 
@@ -905,6 +979,12 @@ func (s *scrubber) backspace() {
 // the start to the cursor and 2 the whole line. The cursor doesn't move.
 func (s *scrubber) eraseLine(mode int) {
 	if !s.redraw() {
+		// On a line that isn't followed, erasing before the cursor, or after
+		// it once it may have gone back, hides printed text. Erasing to the
+		// end from the end, as compilers do after every colour, hides nothing.
+		if !s.shadow && (mode != 0 || s.screen.back) {
+			s.lostRedraw = true
+		}
 		return
 	}
 	sc := &s.screen
@@ -917,8 +997,9 @@ func (s *scrubber) eraseLine(mode int) {
 	n := min(sc.cursor+1, len(sc.cells))
 	sc.work += n
 	if sc.work > maxRedrawWork {
-		// Erasing over and over could make each line slow. Keep the rest instead.
-		s.untrack()
+		// Erasing over and over could make each line slow. Keep the rest
+		// instead, but it may have been erased.
+		s.lose()
 		return
 	}
 	for i := range n {
@@ -930,7 +1011,9 @@ func (s *scrubber) eraseLine(mode int) {
 func (s *scrubber) put(r rune) {
 	sc := &s.screen
 	if !narrow(r) {
-		sc.untracked = true
+		// Through untrack, so a redraw that left the cursor short of the end
+		// still counts as back over printed text.
+		s.untrack()
 	}
 	switch {
 	case !sc.active:
@@ -981,7 +1064,7 @@ func (s *scrubber) csiByte(r rune) {
 // harmlessModes are private modes that change nothing about where text lands:
 // cursor keys, cursor blink, showing the cursor, focus reports and bracketed
 // paste. Spinners hide the cursor while they draw.
-var harmlessModes = map[int]bool{1: true, 12: true, 25: true, 1004: true, 2004: true}
+var harmlessModes = map[int]bool{1: true, 12: true, 25: true, 1004: true, 2004: true, 2026: true}
 
 // staysPutModes are private modes that never move the cursor to another line
 // or clear the screen: the harmless ones, reverse video, autowrap, mouse
@@ -996,12 +1079,14 @@ type modeList struct {
 	unknown   bool // a mode that may move the cursor or clear the screen
 	vt52      bool // mode 2, VT52
 	lrMargins bool // mode 69, left and right margins
+	wrap      bool // mode 7, autowrap
 }
 
 func (m *modeList) note(mode int) {
 	m.unknown = m.unknown || !staysPutModes[mode]
 	m.vt52 = m.vt52 || mode == 2
 	m.lrMargins = m.lrMargins || mode == 69
+	m.wrap = m.wrap || mode == 7
 }
 
 // csiFinal acts on the final byte of a CSI. Colour and the harmless modes change
@@ -1063,6 +1148,10 @@ func (s *scrubber) privateFinal(r rune) {
 	if s.csiModes.lrMargins && changes {
 		s.lrMargins = r != 'l'
 	}
+	// A restore may turn autowrap off as well as a reset.
+	if s.csiModes.wrap && changes {
+		s.noWrap = r != 'h'
+	}
 	s.csiAct(r)
 }
 
@@ -1088,6 +1177,21 @@ func (s *scrubber) csiAct(r rune) {
 		s.moveTo(max(s.csiParam, 1) - 1)
 	default:
 		s.untrack()
+		if s.csiInter != 0 {
+			// With an intermediate, such as CSI Ps $ u, it's another
+			// sequence that moves nothing on the line.
+			break
+		}
+		switch r {
+		case 'D', '`', 'Z', 'u':
+			// Cursor back, a column move, a back tab and a restored cursor
+			// can all go back over the line.
+			s.screen.back = true
+		case 'X', 'P', '@', 'b':
+			// Erasing, deleting, inserting or repeating characters at the
+			// cursor only changes what's printed if it may be back.
+			s.overwrite()
+		}
 	}
 }
 
@@ -1170,11 +1274,40 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 			// The final byte of a two byte escape, or junk. Neither is shown,
 			// but some move the cursor. ESC c resets the terminal, modes and
 			// all, so redraws can be followed again from the next line.
-			s.untrack()
+			// A restored cursor (ESC 8) can go back over the line.
+			// So can VT52's cursor left (ESC D), and its erase to the end of
+			// the line (ESC K) then hides what's after the cursor.
+			switch {
+			case r == '8', s.vt52 && r == 'D':
+				s.goBack()
+			case s.vt52 && r == 'K':
+				s.untrack()
+				s.overwrite()
+			case (r == 'N' || r == 'O') && s.g13Odd:
+				// A single shift shows the next character from G2 or G3.
+				s.lose()
+			case r == 'n', r == 'o', r == '~', r == '}', r == '|':
+				// Locking shifts put G2 or G3 in use, as SO does for G1, and
+				// SI goes back to G0. The right half shifts (ESC ~, } and |)
+				// put G1 to G3 in use for other characters, and SI doesn't
+				// undo them.
+				s.untrack()
+				if r == 'n' || r == 'o' {
+					s.shiftedOut = true
+				} else {
+					s.grShifted = true
+				}
+				if s.oddCharset() {
+					s.lose()
+				}
+			default:
+				s.untrack()
+			}
 			// A terminal in VT52 mode ignores ESC c, so it only resets
 			// when VT52 mode can't be on.
 			if r == 'c' && !s.vt52 {
 				s.noRedraw, s.lrMargins = false, false
+				s.g0Odd, s.g13Odd, s.shiftedOut, s.grShifted, s.noWrap = false, false, false, false, false
 			}
 			if r == '<' {
 				s.vt52 = false
@@ -1201,6 +1334,18 @@ func (s *scrubber) step(r rune, emit func(string), hid func()) {
 			// how big a line is drawn.
 			if s.escInter == '#' {
 				s.drawnAbove = true
+			}
+			// A character set other than ASCII (ESC ( 0, the line drawing
+			// set, say) shows letters as other glyphs, so what's printed after
+			// it isn't what a person reads.
+			switch {
+			case s.escInter == '(':
+				s.g0Odd = r != 'B'
+			case s.escInter >= ')' && s.escInter <= '/' && r != 'B':
+				s.g13Odd = true
+			}
+			if s.oddCharset() {
+				s.lose()
 			}
 			s.state = scrubText
 		}
@@ -1296,6 +1441,9 @@ func (s *scrubber) anywhere(r rune) bool {
 		// RI, move the cursor to another line.
 		s.state = scrubText
 		s.untrack()
+		if (r == c1SS2 || r == c1SS3) && s.g13Odd && !s.shadow {
+			s.lostRedraw = true
+		}
 		if r == c1RI {
 			s.drawnAbove = true
 		}
@@ -1382,6 +1530,13 @@ func (s *scrubber) text(r rune, emit func(string)) {
 		s.untrack()
 	case r == '\r', r == '\b', r == '\v', r == '\f':
 		s.cursorControl(r)
+	case r == ctrlSO, r == ctrlSI:
+		// Shift out to G1, or back in to G0. Nothing is shown.
+		s.shiftedOut = r == ctrlSO
+		s.untrack()
+		if s.oddCharset() {
+			s.lose()
+		}
 	case unicode.In(r, invisible...):
 		// Dropped here, but a terminal may still give it a column or two (a
 		// Hangul filler, a private use glyph, a soft hyphen), so the columns
@@ -1396,6 +1551,9 @@ func (s *scrubber) visible(r rune) {
 	s.line.WriteRune(r)
 	s.put(r)
 	s.hiddenBytes, s.hiddenLines = 0, 0
+	// Written where the cursor may have gone back to on a line that isn't
+	// followed, so it may cover printed text (see lostRedraw).
+	s.overwrite()
 }
 
 // endLine emits the line as a terminal shows it. If that's different from what
@@ -1417,9 +1575,36 @@ func (s *scrubber) endLine(emit func(string)) {
 			s.overwritten, shown = shown, redrawn
 		}
 	}
+	if s.oddCharset() || s.noWrap && columns(shown) > narrowColumns {
+		s.lostRedraw = true
+	}
 	s.line.Reset()
 	s.screen = screen{}
 	emit(shown)
+}
+
+// narrowColumns is as narrow as a pane is taken to be while autowrap may be
+// off. herdr splits are often narrower than 80 columns, so a longer line may
+// have been cut short on screen.
+const narrowColumns = 40
+
+// columns is at most how many columns s takes: one for a character that's
+// sure to be narrow, two for anything else.
+func columns(s string) int {
+	n := 0
+	for _, r := range s {
+		if narrow(r) {
+			n++
+		} else {
+			n += 2
+		}
+	}
+	return n
+}
+
+// oddCharset reports whether a character set other than ASCII may be showing.
+func (s *scrubber) oddCharset() bool {
+	return s.g0Odd || s.g13Odd && (s.shiftedOut || s.grShifted)
 }
 
 // invisible is every character that shows nothing, or something other than

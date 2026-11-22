@@ -336,6 +336,26 @@ func TestChosenTriggersArentEvidence(t *testing.T) {
 			attack: []string{`Started GET "/notices" for 127.0.0.1`, `INFO:     Completed 200:0 - "GET / HTTP/1.1" 200 OK`},
 			want:   engine.StateUnverified,
 		},
+		// From Copilot's review: a request with a method that doesn't count
+		// is still a request.
+		{
+			name:   "a request with another method owns the next ending",
+			setup:  []string{"[info] GET /notices"},
+			attack: []string{"[info] GET /notices", "[info] PROPFIND /health", "[info] Sent 200 in 1ms"},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a request with another method near the error makes it unclear",
+			setup:  []string{"[info] GET /notices", "[info] PROPFIND /health"},
+			attack: []string{"[info] GET /notices", "[info] Sent 200 in 1ms"},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a request with another method that failed isn't the trigger",
+			setup:  []string{"PROPFIND /notices 500 in 3ms"},
+			attack: []string{"PROPFIND /notices 200 in 3ms"},
+			want:   engine.StateUnverified,
+		},
 		{
 			name:   "the trigger's own target in full still passes",
 			setup:  []string{`[01/Jan/2026 09:00:00] "GET /notices?page=abc HTTP/1.1" 500 145`},
@@ -427,6 +447,18 @@ func TestStrayEndingMakesTheTriggerUnclear(t *testing.T) {
 			`Started GET "/notices" for 127.0.0.1`,
 			"Completed 500 Internal Server Error in 3ms",
 		}, engine.StateUnverified},
+		// From Copilot's review: an ending before any request ends one whose
+		// start isn't shown, which may be the one that failed.
+		{"ending before any request", []string{
+			"Completed 200 OK in 1ms",
+			`Started GET "/y" for 1.2.3.4`,
+			"Completed 500 Internal Server Error in 3ms",
+		}, engine.StateUnverified},
+		// The control: /y alone, failing, is passed by /y again.
+		{"one request", []string{
+			`Started GET "/y" for 1.2.3.4`,
+			"Completed 500 Internal Server Error in 3ms",
+		}, engine.StateFixed},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			e := engine.New(options(t))

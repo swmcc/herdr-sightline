@@ -198,8 +198,9 @@ to come back:
   request line's own form, so a request someone puts in a query string doesn't.
   A recompile doesn't prove a request bug is gone. If Sightline can't tell which
   of several requests the error came from, it says `? unverified`. With Rails or
-  Phoenix that's whenever two requests are logged near the error, even after a
-  recompile, because their logs don't say which request each `Completed` ends.
+  Phoenix that's whenever two requests, or a request and an ending before it,
+  are logged near the error, even after a recompile, because their logs don't
+  say which request each `Completed` ends.
 
 A request only counts as the error's when the app answered it with a 5xx or it
 was still being handled when the error struck. A bug that only shows for one

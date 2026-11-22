@@ -719,3 +719,44 @@ func TestBatchCapHolds(t *testing.T) {
 		})
 	}
 }
+
+// The automatic send log follows a pane that moves, so a shows where it is now
+// and not the id it had when the send went (#93).
+func TestAutoLogFollowsAPaneThatMoves(t *testing.T) {
+	const moved engine.SourceID = "w2:p1"
+	tests := []struct {
+		name    string
+		deliver func(a *enginetest.Adapter, ids []engine.EntryID, text string)
+	}{
+		{"arrived", func(a *enginetest.Adapter, ids []engine.EntryID, text string) {
+			a.Engine.AutoDelivered(ids, qagent, text, a.Now())
+		}},
+		{"may not have arrived", func(a *enginetest.Adapter, ids []engine.EntryID, text string) {
+			a.Engine.AutoUnsure(ids, qagent, text, a.Now())
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := queueAdapter(t)
+			a.Engine.SetQueueMode(qpane, true)
+			catch(a, qpane, "Error: boom")
+			en := only(t, a)
+			ids := []engine.EntryID{en.ID}
+			text, err := a.Engine.AutoSend(ids, qagent, a.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.deliver(a, ids, text)
+			if !a.Engine.Rename(qpane, moved) {
+				t.Fatal("Rename moved nothing")
+			}
+			log := a.Engine.AutoLog()
+			if len(log) != 1 || log[0].Source != moved {
+				t.Errorf("AutoLog = %+v, want one send from %s", log, moved)
+			}
+			if s, ok := a.Engine.LastAutoSend(en.ID); !ok || s.Source != moved {
+				t.Errorf("LastAutoSend = %+v, %v, want a send from %s", s, ok, moved)
+			}
+		})
+	}
+}

@@ -341,12 +341,16 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 		}
 		return "sent to " + agent + ", waiting for it to finish", "[v] view   [d] dismiss"
 	case engine.StateFixed:
-		return "✓ fixed, it stopped appearing after " + agent + " finished", "[d] dismiss"
+		who = "✓ fixed, it stopped appearing after " + agent + " finished"
+		if en.Auto {
+			who += "." + wentAuto(en)
+		}
+		return who, "[d] dismiss"
 	case engine.StateUnverified:
 		if en.Note != "" {
-			return "? unverified, " + clean(en.Note) + ". Send it again or check it yourself", "[enter] send again   [d] dismiss"
+			return "? unverified, " + clean(en.Note) + "." + wentAuto(en) + " Send it again or check it yourself", "[enter] send again   [d] dismiss"
 		}
-		return "? unverified, nothing ran to prove it either way. Check it yourself", "[enter] send again   [d] dismiss"
+		return "? unverified, nothing ran to prove it either way." + wentAuto(en) + " Check it yourself", "[enter] send again   [d] dismiss"
 	}
 	if en.Queued {
 		return m.queueNote(en), "[enter] send now   [x] unqueue   [ ] move   [d] dismiss"
@@ -359,7 +363,7 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 	if en.State == engine.StateStillFailing {
 		prefix = "✗ still failing after " + agent + " finished. "
 		if en.Auto {
-			prefix = "✗ still failing after " + agent + " finished, so queue mode stopped for this pane. "
+			prefix = "✗ still failing after " + agent + " finished, so queue mode stopped for this pane." + wentAuto(en) + " "
 		}
 		keys = "[enter] send again   [d] dismiss   [n] never"
 	} else {
@@ -375,6 +379,16 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 		who += " (waiting on a prompt, won't send)"
 	}
 	return who, keys
+}
+
+// wentAuto says when en went on its own, as a sentence with a space before it,
+// if its latest send was automatic. It keeps the line saying so after the
+// verdict, as #21 promises.
+func wentAuto(en engine.Entry) string {
+	if !en.Auto {
+		return ""
+	}
+	return " It went on its own at " + en.SentAt.Format(clockFormat) + "."
 }
 
 // viewHeight is how many lines of the message fit on screen.

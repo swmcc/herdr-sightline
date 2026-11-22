@@ -46,7 +46,9 @@ type Prompt struct {
 // pushes events to the subscriptions that asked for them. Anything else can
 // still be set with Handle, as on a plain Server.
 //
-// It's safe to change from the test while a client is talking to it.
+// It's safe to change from the test while a client is talking to it. Events go
+// out after the change is made, so two goroutines changing the same pane at
+// once can deliver their events in either order.
 type Herdr struct {
 	*Server
 
@@ -82,6 +84,7 @@ func NewHerdr(t testing.TB) *Herdr {
 	h.Handle("agent.list", h.agentList)
 	h.Handle("tab.list", h.tabList)
 	h.Handle("agent.prompt", h.agentPrompt)
+	h.Handle("events.subscribe", h.subscribe)
 	h.Server.mu.Lock()
 	h.Server.subscribed = h.subscribed
 	h.Server.mu.Unlock()
@@ -93,7 +96,11 @@ func (h *Herdr) AddPane(p Pane) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if i := h.find(p.ID); i >= 0 {
+		changed := h.panes[i].Agent != p.Agent || h.panes[i].AgentStatus != p.AgentStatus
 		h.panes[i] = p
+		if changed {
+			h.bump(p.ID)
+		}
 		return
 	}
 	h.panes = append(h.panes, p)
@@ -213,7 +220,7 @@ func (h *Herdr) bump(paneID string) {
 	h.seq[paneID] = h.nextSeq
 }
 
-// listening returns the live subscriptions that asked for event about paneID,
+// listening returns the live subscriptions that asked for that event about paneID,
 // forgetting any that have ended. The caller holds mu.
 func (h *Herdr) listening(event, paneID string) []*Subscriber {
 	h.subs = slices.DeleteFunc(h.subs, func(l listener) bool { return l.sub.ended() })
@@ -236,6 +243,25 @@ func (h *Herdr) subscribed(sub *Subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.subs = append(h.subs, listener{sub: sub, wants: wants})
+}
+
+// subscribe refuses a subscription that names a pane that doesn't exist, as
+// herdr does, so a pane closing fails the resubscribe after a restart.
+func (h *Herdr) subscribe(req Request) (any, *ErrorBody) {
+	var params struct {
+		Subscriptions []subscription `json:"subscriptions"`
+	}
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params.Subscriptions) == 0 {
+		return nil, &ErrorBody{Code: "invalid_request", Message: "events.subscribe needs subscriptions"}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, w := range params.Subscriptions {
+		if w.PaneID != "" && h.find(w.PaneID) < 0 {
+			return nil, notFound(w.PaneID)
+		}
+	}
+	return map[string]string{"type": "subscription_started"}, nil
 }
 
 func (h *Herdr) ping(Request) (any, *ErrorBody) {

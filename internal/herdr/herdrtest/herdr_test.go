@@ -185,6 +185,61 @@ func TestHerdrEvents(t *testing.T) {
 	}
 }
 
+// TestHerdrClosedPaneFailsResubscribe checks a subscription to a pane that has
+// gone is refused after a restart, as herdr refuses it.
+func TestHerdrClosedPaneFailsResubscribe(t *testing.T) {
+	h := workspace(t)
+	ctx, c := dial(t, h)
+
+	if _, err := c.Subscribe(ctx, herdr.AgentStatusChanged("w1:p9")); !herdr.IsPaneNotFound(err) {
+		t.Errorf("subscribing to a missing pane: err = %v, want pane not found", err)
+	}
+	events, err := c.Subscribe(ctx, herdr.AgentStatusChanged("w1:p1"))
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	h.ClosePane("w1:p1")
+	h.Restart()
+	if ev := nextEvent(t, events); ev.Kind != herdr.EventFailed || !herdr.IsPaneNotFound(ev.Err) {
+		t.Errorf("after the pane closed and herdr restarted got %+v, want failed with pane not found", ev)
+	}
+}
+
+// TestHerdrEventsNeverBeatTheReply changes the agent over and over while
+// subscriptions start. An event that overtook a subscribe reply would make
+// Subscribe fail.
+func TestHerdrEventsNeverBeatTheReply(t *testing.T) {
+	h := workspace(t)
+	ctx, c := dial(t, h)
+
+	stop := make(chan struct{})
+	changed := make(chan struct{})
+	go func() {
+		defer close(changed)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				h.SetAgentStatus("w1:p1", "working")
+			}
+		}
+	}()
+	defer func() {
+		close(stop)
+		<-changed
+	}()
+
+	for range 50 {
+		subCtx, cancel := context.WithCancel(ctx)
+		if _, err := c.Subscribe(subCtx, herdr.AgentStatusChanged("w1:p1")); err != nil {
+			cancel()
+			t.Fatalf("Subscribe: %v", err)
+		}
+		cancel()
+	}
+}
+
 func TestHerdrRestart(t *testing.T) {
 	h := workspace(t)
 	ctx, c := dial(t, h)

@@ -29,6 +29,22 @@ var (
 // linesShown is how many of an entry's error lines the list shows.
 const linesShown = 2
 
+// visible is clean with every character that shows nothing taken out too, the
+// same set the engine strips from a message: format characters (bidi, zero
+// width, tags), private use, line and paragraph separators, variation
+// selectors and other default ignorables. It's for names put in the middle of
+// the feed's own words, where a bidi override could turn those words back to
+// front.
+func visible(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.In(r, unicode.Cf, unicode.Co, unicode.Zl, unicode.Zp,
+			unicode.Variation_Selector, unicode.Other_Default_Ignorable_Code_Point) {
+			return -1
+		}
+		return r
+	}, clean(s))
+}
+
 // clean makes text from a pane or from herdr safe to put on the feed's own
 // terminal. The engine already strips escapes from output, but titles, labels
 // and errors come from elsewhere. Control characters are shown as \x1b and so
@@ -305,7 +321,7 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 	if m.sending[en.ID] {
 		return "sending…", ""
 	}
-	t, ask := m.targetFor(en)
+	t, ask, note := m.chooseFor(en)
 	prefix := ""
 	if en.State == engine.StateStillFailing {
 		prefix = "✗ still failing after " + agent + " finished. "
@@ -314,9 +330,11 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 		keys = sendKeys
 	}
 	if ask != "" {
-		return prefix + "? asking: " + ask + m.pinNote(en), "[t] pick agent   [d] dismiss"
+		return prefix + "? asking: " + ask + note, "[t] pick agent   [d] dismiss"
 	}
-	who = prefix + "→ " + clean(t.Label) + m.pinNote(en)
+	// The label comes from herdr and the note may follow it, so nothing in it
+	// may turn the note around.
+	who = prefix + "→ " + visible(t.Label) + note
 	if t.Status == herdr.AgentBlocked {
 		who += " (waiting on a prompt, won't send)"
 	}

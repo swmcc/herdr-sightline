@@ -51,10 +51,16 @@ func TestEntrySaysWhenThePinnedAgentIsntRunning(t *testing.T) {
 		},
 		{
 			name: "the pin's agent is shown plainly",
-			pins: []config.Pin{{PaneTitle: "web", Agent: "co\u202edex\x1b[2J" + strings.Repeat("x", 40)}},
-			// The bidi override goes, the escape is shown as text and the
-			// whole is cut to 32 cells.
+			pins: []config.Pin{{PaneTitle: "web", Agent: "co\u202ed\u2028e\ufe0fx\x1b[2J" + strings.Repeat("x", 40)}},
+			// The bidi override, line separator and variation selector go, the
+			// escape is shown as text and the whole is cut to 32 cells.
 			want: "→ claude (tab 2) (pinned agent codex\\x1b[2J" + strings.Repeat("x", 19) + "… isn't running)",
+		},
+		{
+			name:  "herdr's name for the fallback can't turn the note around",
+			pins:  []config.Pin{{PaneTitle: "web", Agent: "codex"}},
+			setup: func(f *fakeHerdr) { f.setKind(agentPane, "claude\u202e") },
+			want:  "→ claude (tab 2) (pinned agent codex isn't running)",
 		},
 	}
 	for _, tt := range tests {
@@ -86,6 +92,9 @@ func TestPickedAgentDropsThePinNote(t *testing.T) {
 	cfg.Pins = []config.Pin{{PaneTitle: "web", Agent: "codex"}}
 	h.model.applyConfig(config.Update{Config: cfg})
 	en := h.catchError()
+	if who, _ := h.model.entryTarget(en); !strings.Contains(who, "pinned agent codex") {
+		t.Fatalf("agent line = %q, want the pin note before picking", who)
+	}
 	h.press("t")
 	h.press("enter")
 	if who, _ := h.model.entryTarget(en); strings.Contains(who, "pinned") {

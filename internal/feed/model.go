@@ -147,6 +147,7 @@ type Model struct {
 	consented   map[string]bool
 	consentPane string
 	autoBusy    bool
+	autoPane    string // the agent pane of the automatic send in flight
 	viewSent    bool
 	viewSentAt  time.Time
 
@@ -293,7 +294,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd = m.key(msg)
 	case tickMsg:
 		m.engine.Tick(m.now())
-		// The only place an automatic send can start. See queue.go.
+		// The only place an automatic send can start. See queue.go. The
+		// list is brought up to date first, so it sees what the tick filed.
+		m.refresh()
 		cmd = m.autoSend()
 	case deltaMsg:
 		if m.fromCurrentLoop(msg.pane, msg.gen) {
@@ -1067,6 +1070,10 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 		m.status = fmt.Sprintf("Not sent to %s: %s.", label, blockedNote)
 		return nil
 	}
+	if m.autoBusy && m.autoPane == target.PaneID {
+		m.status = fmt.Sprintf("Queue mode is sending to %s right now. Press enter again once it has.", label)
+		return nil
+	}
 	// A confirm is for one entry going to one agent. If a sync changed the
 	// target between the two presses (a pane can retitle itself to match a
 	// pin), the second press asks again, naming the new agent.
@@ -1120,6 +1127,15 @@ type checkedMsg struct {
 	found    bool
 	seq      uint64
 	seqKnown bool
+	// agentStatus is the agent's status in agent.list, which is fetched after
+	// pane.list and so the newer of the two. listed says agent.list had it.
+	agentStatus herdr.AgentStatus
+	listed      bool
+	// wantSeq is the state change counter the tracker had when queue mode
+	// chose to send, if it trusted one. A different one now means the agent
+	// did something since, so the idle wait starts again.
+	wantSeq      uint64
+	wantSeqKnown bool
 	// nameClash is the pane of another agent whose herdr name is the target's
 	// pane id, if there is one.
 	nameClash string
@@ -1133,8 +1149,14 @@ type checkedMsg struct {
 // pane can change and an agent can become blocked between the last snapshot
 // and the keypress.
 func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time, ids []engine.EntryID, auto bool, target herdr.Target, text string) tea.Cmd {
+	return checkTargetWith(ctx, client, now, checkedMsg{ids: ids, auto: auto, target: target, text: text})
+}
+
+// checkTargetWith is checkTarget with the fields queue mode sets beforehand.
+func checkTargetWith(ctx context.Context, client *herdr.Client, now func() time.Time, msg checkedMsg) tea.Cmd {
+	target := msg.target
 	return func() tea.Msg {
-		msg := checkedMsg{ids: ids, auto: auto, target: target, text: text, checkedAt: now()}
+		msg.checkedAt = now()
 		panes, err := client.ListPanes(ctx)
 		if err != nil {
 			msg.err = err
@@ -1153,6 +1175,7 @@ func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time
 		for _, a := range agents {
 			if a.PaneID == target.PaneID {
 				msg.seq, msg.seqKnown = a.StateChangeSeq, true
+				msg.agentStatus, msg.listed = a.Status, true
 			}
 			if a.Name == target.PaneID && a.PaneID != target.PaneID {
 				msg.nameClash = a.PaneID
@@ -1208,6 +1231,18 @@ func (m *Model) checked(msg checkedMsg) tea.Cmd {
 		// Queue mode never interrupts an agent at work. The tracker said it
 		// was idle, but herdr has the last word.
 		return refuse(fmt.Sprintf("it's %s, and queue mode only sends to an idle agent. It'll try again later", clean(string(p.AgentStatus))))
+	case msg.auto && (!msg.listed || msg.agentStatus != herdr.AgentIdle && msg.agentStatus != herdr.AgentDone):
+		// agent.list is the newer of the two, and both must say idle.
+		return refuse("herdr doesn't say it's idle, and queue mode only sends to an idle agent. It'll try again later")
+	case msg.auto && msg.wantSeqKnown && (!msg.seqKnown || msg.seq != msg.wantSeq):
+		// A fresh snapshot shows the counter moved, which starts the
+		// tracker's idle wait again (see AgentTracker.IdleSince).
+		if m.loops != nil {
+			m.loops.requestSync()
+		}
+		return refuse("it has done something since it went idle, so queue mode waits a little longer")
+	case msg.auto && !m.autoTargetStill(msg):
+		return refuse("the agent it would go to has changed")
 	}
 	// A permission dialog can still open between this check and the prompt.
 	// The gap is one round trip, and herdr narrows it further by refusing
@@ -1318,7 +1353,7 @@ func (m *Model) doneSending(msg checkedMsg) {
 		delete(m.sending, id)
 	}
 	if msg.auto {
-		m.autoBusy = false
+		m.autoBusy, m.autoPane = false, ""
 	}
 }
 

@@ -73,6 +73,8 @@ type queueState struct {
 	log    []AutoSent // newest last, at most maxAutoLog
 	// aliases are the earlier names of an agent that moved (see FollowAgent).
 	aliases map[string][]string
+	// last is each agent's latest try, however old.
+	last map[string]time.Time
 }
 
 // autoTry is one automatic send counted against the caps.
@@ -193,12 +195,13 @@ func (e *Engine) AutoWait(agent string, now time.Time) string {
 	if e.busy(agent) {
 		return "waiting for the agent to finish what Sightline sent it"
 	}
-	var last time.Time
+	// The latest try is kept apart from the window, so a settle period
+	// longer than the window still spaces the sends out.
+	last := q.last[agent]
 	mine := 0
 	for _, t := range q.tries {
 		if t.agent == agent {
 			mine++
-			last = t.at
 		}
 	}
 	gap := max(e.opts.Settle, minAutoGap)
@@ -269,6 +272,10 @@ func (e *Engine) AutoSend(ids []EntryID, agent string, now time.Time) (string, e
 		return "", ErrNotQueued
 	}
 	e.queue.tries = append(e.queue.tries, autoTry{agent: agent, at: now})
+	if e.queue.last == nil {
+		e.queue.last = map[string]time.Time{}
+	}
+	e.queue.last[agent] = now
 	return text, nil
 }
 
@@ -308,6 +315,12 @@ func (e *Engine) FollowAgent(from, to string) {
 			q.tries[i].agent = to
 		}
 	}
+	if t, ok := q.last[from]; ok {
+		if t.After(q.last[to]) {
+			q.last[to] = t
+		}
+		delete(q.last, from)
+	}
 	if q.aliases == nil {
 		q.aliases = map[string][]string{}
 	}
@@ -319,6 +332,7 @@ func (e *Engine) FollowAgent(from, to string) {
 // sent, as MarkSent does, and marked as sent automatically.
 func (e *Engine) AutoDelivered(ids []EntryID, agent, text string, now time.Time) {
 	e.logAuto(ids, agent, text, now, false)
+	s := e.queue.log[len(e.queue.log)-1]
 	for _, id := range ids {
 		r, ok := e.byID[id]
 		if !ok {
@@ -327,6 +341,7 @@ func (e *Engine) AutoDelivered(ids []EntryID, agent, text string, now time.Time)
 		e.sent(r, agent, now)
 		r.entry.Auto = true
 		r.entry.SentAt = now
+		r.auto = &s
 	}
 	e.pruneQueue()
 }
@@ -367,9 +382,15 @@ func (e *Engine) AutoLog() []AutoSent {
 	return out
 }
 
-// LastAutoSend is the latest automatic send that included id, if it's still
-// in the log, so the feed can show exactly what went.
+// LastAutoSend is the latest automatic send that included id, so the feed can
+// show exactly what went. One that arrived is kept with the entry for as long
+// as the entry is. One that may not have is only in the log.
 func (e *Engine) LastAutoSend(id EntryID) (AutoSent, bool) {
+	if r, ok := e.byID[id]; ok && r.auto != nil {
+		s := *r.auto
+		s.Entries = slices.Clone(s.Entries)
+		return s, true
+	}
 	for _, s := range slices.Backward(e.queue.log) {
 		if slices.Contains(s.Entries, id) {
 			s.Entries = slices.Clone(s.Entries)

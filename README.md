@@ -301,7 +301,8 @@ line saying which agent it goes to and which places in the queue it holds. The
 view of any queued entry follows what would go with it. If that changes while you
 read it, because an error joins or leaves or gets more lines, the view shows the
 new bytes and says so, and queue mode holds that pane back for a tick so nothing
-goes that wasn't on screen first. `enter` in a view that has shown a batch doesn't
+goes that wasn't on screen first. A pane that changes it on every tick waits
+until you close the view. `enter` in a view that has shown a batch doesn't
 send. Press `esc`, then `enter` on the entry to send it now on its own. While queue
 mode is paused or stopped for the pane nothing goes on its own, so `v` shows what
 `enter` would send.

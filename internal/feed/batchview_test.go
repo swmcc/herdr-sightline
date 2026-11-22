@@ -2,7 +2,6 @@ package feed
 
 import (
 	"errors"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,28 +15,28 @@ import (
 // The attacker controls the watched pane's output and tries to get bytes sent
 // that were never on screen.
 
-// recorder keeps every view text that has been on screen, one per update, and
-// checks each prompt queue mode sends was on screen before the update that
-// sent it.
+// recorder keeps the view text on screen after each step, and checks each
+// prompt queue mode sends is exactly what was on screen just before the step
+// that sent it, not an older version.
 type recorder struct {
-	h      *harness
-	frames []string
-	seen   int
+	h     *harness
+	frame string
+	seen  int
 }
 
 func (r *recorder) step(f func()) {
 	r.h.t.Helper()
-	before := slices.Clone(r.frames)
+	before := r.frame
 	f()
 	calls := r.h.herdr.promptCalls()
 	for _, c := range calls[r.seen:] {
-		if !slices.Contains(before, c.Text) {
-			r.h.t.Fatalf("queue mode sent bytes that were never on screen:\n%s", c.Text)
+		if c.Text != before {
+			r.h.t.Fatalf("queue mode sent bytes other than those on screen:\n%s", c.Text)
 		}
 	}
 	r.seen = len(calls)
 	if r.h.model.mode == modeView {
-		r.frames = append(r.frames, r.h.model.viewText)
+		r.frame = r.h.model.viewText
 	}
 }
 

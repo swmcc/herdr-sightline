@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -84,9 +85,11 @@ func TestRequestOf(t *testing.T) {
 // requestOf reads a line with a quoted request only with the forms from
 // quotedForms on, so they must be the quoted ones and the rest must not be.
 func TestQuotedFormsComeLast(t *testing.T) {
-	for i, re := range requestForms {
-		if quoted := strings.Contains(re.String(), "HTTP/"); quoted != (i >= quotedForms) {
-			t.Errorf("requestForms[%d] quoted = %v, but quotedForms is %d", i, quoted, quotedForms)
+	for _, forms := range [][]*regexp.Regexp{requestForms, anyRequestForms} {
+		for i, re := range forms {
+			if quoted := strings.Contains(re.String(), "HTTP/"); quoted != (i >= quotedForms) {
+				t.Errorf("form %d quoted = %v, but quotedForms is %d", i, quoted, quotedForms)
+			}
 		}
 	}
 }

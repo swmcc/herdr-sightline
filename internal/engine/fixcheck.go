@@ -148,7 +148,7 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 	// cost a walk over the entries and no matching.
 	read := false
 	var signal bool
-	var request string
+	var request, other string
 	var status, ended int
 	for _, r := range e.records {
 		f := &r.fix
@@ -163,6 +163,9 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 		if !read {
 			l := unprefix(cut(line, maxScannedLine))
 			request, status = requestOf(l)
+			if request == "" {
+				other, _ = anyRequestOf(l)
+			}
 			ended = endedWith(l)
 			// Anyone who can reach the server can put words in its request
 			// log ("GET /compiled/successfully 404"), so a line that mentions
@@ -184,7 +187,7 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 		case request == f.trigger:
 			f.ran = succeeded(status)
 			f.started = false
-		case request != "":
+		case request != "" || other != "":
 			// Another request started, so the next ending may be its.
 			f.started = false
 		case ended != 0 && f.started:
@@ -380,19 +383,29 @@ const quotedForms = 2
 // {"q"=>"GET /notices 200"}` or Django's "Not Found: /x GET /notices 200")
 // never reads as one. Each has the method, the path and maybe the status as
 // its groups. The query string is part of the path, as a bug may need it.
-var requestForms = func() []*regexp.Regexp {
+//
+// Only the usual methods make a request that counts. anyRequestForms read the
+// same lines with any method ("PROPFIND /x"), so a request like that still
+// ends a wait for an ending and still counts as another request near an
+// error, but never passes or triggers one.
+var (
+	requestForms    = requestFormsFor(`(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) `)
+	anyRequestForms = requestFormsFor(`([A-Z][A-Z0-9_-]+) `)
+)
+
+// requestFormsFor gives the request forms with method as the method's group.
+func requestFormsFor(method string) []*regexp.Regexp {
 	const (
-		start  = `^\s*` + logTime + logTags + logLevel
-		method = `(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) `
+		start = `^\s*` + logTime + logTags + logLevel
 		// The whole target, query and all, so a request that only starts
 		// like the trigger's ("/notices?page=2#&page=1") has its own key.
 		path   = `(/[^\s"]*)`
 		status = `([1-5]\d\d)`
-		// The quoted part of a request line, with no quote or space inside.
-		request = method + path + ` HTTP/(?:1\.[01]|0\.9)`
 		// An IPv4 or IPv6 address, with or without a port.
 		address = `[\w.:\[\]-]+`
 	)
+	// The quoted part of a request line, with no quote or space inside.
+	request := method + path + ` HTTP/(?:1\.[01]|0\.9)`
 	return []*regexp.Regexp{
 		// Next.js, Phoenix, morgan's dev and tiny formats: "GET /notices 500 in
 		// 30ms", "[info] GET /notices". The path is the only part a client
@@ -417,23 +430,32 @@ var requestForms = func() []*regexp.Regexp {
 		// uvicorn: `INFO:     127.0.0.1:52342 - "GET /notices HTTP/1.1" 500 Internal Server Error`
 		regexp.MustCompile(start + address + ` - "` + request + `" ` + status + `(?: [A-Za-z' -]*)?\s*$`),
 	}
-}()
+}
 
 // requestOf gives "GET /notices?page=2" and its status for a request line, with 0 when
 // the line shows no status. The key is empty if it isn't a request line.
 func requestOf(l string) (key string, status int) {
+	return readRequest(requestForms, l)
+}
+
+// anyRequestOf is requestOf for a request with any method.
+func anyRequestOf(l string) (key string, status int) {
+	return readRequest(anyRequestForms, l)
+}
+
+// readRequest reads l with forms, made by requestFormsFor.
+func readRequest(forms []*regexp.Regexp, l string) (key string, status int) {
 	// A server logs one request line per request. A second means someone put
 	// one in a field of their own.
 	if strings.Count(l, "HTTP/") > 1 {
 		return "", 0
 	}
-	forms := requestForms
 	if quotedRequest.MatchString(l) {
 		// A line with a quoted request on it is that request's line. What
 		// comes before the quotes can be a forwarded address the client
 		// chose ("GET /notices 200 - - [...]"), so only the forms anchored at
 		// both ends may read it.
-		forms = requestForms[quotedForms:]
+		forms = forms[quotedForms:]
 	}
 	for _, re := range forms {
 		m := re.FindStringSubmatch(l)
@@ -496,8 +518,10 @@ const unclearTrigger = "?"
 //     ended any other way had nothing to do with the error.
 //
 // If the context holds any two requests with no status, before or after the
-// error and ended or not, or an ending that can't be tied to a request, the
-// endings may be on the wrong requests. A request's start can scroll out of
+// error and ended or not, or an ending that can't be tied to a request (one
+// after a request that already ended, or one before any request), the
+// endings may be on the wrong requests. A request with a method that doesn't
+// count ("PROPFIND /x") is still one of those requests. A request's start can scroll out of
 // the context, so two that look one after the other may still have run side
 // by side. There's no telling which request failed then, and the trigger is
 // unclearTrigger, even when no request seems to have failed. So a Rails or
@@ -529,10 +553,20 @@ func triggerOf(en Entry) string {
 			reqs = append(reqs, seen{key: k, status: st, at: i})
 			continue
 		}
+		// A request with a method that doesn't count is still a request near
+		// the error. If it's the one that failed, the trigger is unclear.
+		if k, st := anyRequestOf(l); k != "" {
+			reqs = append(reqs, seen{key: unclearTrigger, status: st, at: i})
+			continue
+		}
 		// An ending belongs to the last request, if that showed no status:
-		// one that started since would be last instead.
-		if end := endedWith(l); end != 0 && len(reqs) > 0 {
-			if last := &reqs[len(reqs)-1]; last.status == 0 && last.ended == 0 {
+		// one that started since would be last instead. One with no request
+		// before it ends a request whose start isn't shown, which may still
+		// be running beside the next.
+		if end := endedWith(l); end != 0 {
+			if len(reqs) == 0 {
+				stray = true
+			} else if last := &reqs[len(reqs)-1]; last.status == 0 && last.ended == 0 {
 				last.ended = end
 			} else {
 				stray = true

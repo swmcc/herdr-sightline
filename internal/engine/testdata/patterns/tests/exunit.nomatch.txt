@@ -1,0 +1,12 @@
+Running ExUnit with seed: 0, max_cases: 24
+04:23:51.930 [warning] error budget at 80%
+     test/shop_test.exs:4
+     Doctest failed
+     Assertion with == failed
+     code:  assert Shop.checkout([%{price: 5}]) == 6
+     ** (ArgumentError) cart is empty
+       test/shop_test.exs:17: (test)
+Finished in 0.01 seconds (0.00s async, 0.01s sync)
+Result: 2/6 passed (0/1 doctest, 2/5 tests), 1 skipped
+Failed: 1 doctest, 3 tests
+Result: 2/4 passed, 1 skipped

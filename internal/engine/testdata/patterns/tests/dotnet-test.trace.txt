@@ -1,0 +1,16 @@
+# starts: 1
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  tests -> /app/bin/Debug/net11.0/tests.dll
+Test run for /app/bin/Debug/net11.0/tests.dll (.NETCoreApp,Version=v11.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.06]     tests.CartTests.CheckoutThrows [FAIL]
+  Failed tests.CartTests.CheckoutThrows [< 1 ms]
+  Error Message:
+   System.InvalidOperationException : payment gateway unreachable
+  Stack Trace:
+     at tests.CartTests.CheckoutThrows() in /app/UnitTest1.cs:line 14
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+Failed!  - Failed:     1, Passed:     0, Skipped:     0, Total:     1, Duration: 5 ms - tests.dll (net11.0)

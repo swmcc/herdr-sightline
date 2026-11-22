@@ -1,0 +1,15 @@
+Test run for /app/bin/Debug/net11.0/tests.dll (.NETCoreApp,Version=v11.0)
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.07]     tests.CartTests.Skipped [SKIP]
+[xUnit.net 00:00:00.07]     tests.CartTests.TotalAddsItems [FAIL]
+[xUnit.net 00:00:00.07]       System.InvalidOperationException : payment gateway unreachable
+[xUnit.net 00:00:00.07]         /app/UnitTest1.cs(8,0): at tests.CartTests.TotalAddsItems()
+  Skipped tests.CartTests.Skipped [1 ms]
+  Error Message:
+   Assert.Equal() Failure: Values differ
+  Stack Trace:
+     at tests.CartTests.TotalAddsItems() in /app/UnitTest1.cs:line 8
+Failed!  - Failed:     2, Passed:     1, Skipped:     1, Total:     4, Duration: 12 ms - tests.dll (net11.0)
+  tests test net11.0 failed with 2 error(s) (0.4s)
+      tests.CartTests.TotalAddsItems (2ms): Error Message: Assert.Equal() Failure: Values differ
+Test summary: total: 4, failed: 2, succeeded: 1, skipped: 1, duration: 0.4s

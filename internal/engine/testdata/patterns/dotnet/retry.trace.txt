@@ -1,0 +1,9 @@
+# starts: 1 (the warning with its exception is a handled retry, so only the fail counts)
+warn: Program[0]
+      Retrying
+      System.Net.Http.HttpRequestException: Connection refused (localhost:5432)
+         at Program.<>c.<<Main>$>b__0_4(ILogger`1 log) in /app/Program.cs:line 10
+fail: Program[0]
+      Payment failed
+      System.TimeoutException: upstream took too long
+         at Program.<>c.<<Main>$>b__0_5(ILogger`1 log) in /app/Program.cs:line 16

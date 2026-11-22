@@ -1,0 +1,15 @@
+# starts: 1 (the caller's exit says nothing the Task's own report doesn't)
+** (EXIT from #PID<0.94.0>) an exception was raised:
+    ** (ArgumentError) cart is empty
+        (shop 0.1.0) lib/shop.ex:6: Shop.checkout/1
+        (elixir 1.20.5) lib/task/supervised.ex:105: Task.Supervised.invoke_mfa/2
+        (elixir 1.20.5) lib/task/supervised.ex:40: Task.Supervised.reply/4
+
+
+04:20:47.366 [error] Task #PID<0.138.0> started from #PID<0.94.0> terminating
+** (ArgumentError) cart is empty
+    (shop 0.1.0) lib/shop.ex:6: Shop.checkout/1
+    (elixir 1.20.5) lib/task/supervised.ex:105: Task.Supervised.invoke_mfa/2
+    (elixir 1.20.5) lib/task/supervised.ex:40: Task.Supervised.reply/4
+Function: #Function<0.42850774/0 in Shop.run/1>
+    Args: []

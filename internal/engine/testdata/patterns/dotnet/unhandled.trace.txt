@@ -1,0 +1,14 @@
+# starts: 1
+warn: retrying after error: connection reset
+Unhandled exception. System.AggregateException: One or more errors occurred. (upstream took too long)
+ ---> System.TimeoutException: upstream took too long
+   at Program.<>c.<<Main>$>b__0_0() in /app/Program.cs:line 14
+   at System.Threading.Tasks.Task`1.InnerInvoke()
+   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+--- End of stack trace from previous location ---
+   at System.Threading.ExecutionContext.RunFromThreadPoolDispatchLoop(Thread threadPoolThread, ExecutionContext executionContext, ContextCallback callback, Object state)
+   at System.Threading.Tasks.Task.ExecuteWithThreadLocal(Task& currentTaskSlot, Thread threadPoolThread)
+   --- End of inner exception stack trace ---
+   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)
+   at System.Threading.Tasks.Task.Wait()
+   at Program.<Main>$(String[] args) in /app/Program.cs:line 14

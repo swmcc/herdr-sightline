@@ -1,0 +1,6 @@
+PHP Warning:  Undefined array key "missing" in /app/index.php on line 11
+Warning: Undefined array key "missing" in /app/index.php on line 11
+Deprecated: strlen(): Passing null to parameter #1 ($string) of type string is deprecated in /app/index.php on line 12
+PHP Deprecated:  strlen(): Passing null to parameter #1 ($string) of type string is deprecated in /app/index.php on line 12
+  thrown in /app/index.php on line 4
+[Sun Nov 22 04:08:09 2026] 127.0.0.1:62872 [200]: GET /index.php?case=parse - syntax error, unexpected token "}", expecting ";" in /app/broken.php on line 4

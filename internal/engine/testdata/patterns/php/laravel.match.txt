@@ -1,0 +1,7 @@
+[2026-11-22 04:08:54] local.ERROR: payment gateway unreachable {"exception":"[object] (RuntimeException(code: 0): payment gateway unreachable at /app/routes/web.php:13)
+[2026-11-22 04:08:54] local.ERROR: Undefined variable $order {"exception":"[object] (ErrorException(code: 0): Undefined variable $order at /app/routes/web.php:16)
+[2026-11-22 04:08:54] local.ERROR: SQLSTATE[HY000]: General error: 1 no such table: missing_table (Connection: sqlite, Database: /app/database/database.sqlite, SQL: select * from missing_table) {"exception":"[object] (Illuminate\\Database\\QueryException(code: HY000): SQLSTATE[HY000]: General error: 1 no such table: missing_table (Connection: sqlite, Database: /app/database/database.sqlite, SQL: select * from missing_table) at /app/vendor/laravel/framework/src/Illuminate/Database/Connection.php:864)
+[2026-11-22 04:08:54] local.ERROR: Stripe webhook signature mismatch
+[2026-11-22 04:19:00] production.CRITICAL: Disk almost full
+[2026-11-22 04:19:00] production.EMERGENCY: Database unreachable
+[2026-11-22 04:19:00] production.ALERT: Queue backlog over limit

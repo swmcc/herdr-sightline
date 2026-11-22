@@ -1,0 +1,7 @@
+# starts: 1
+[2026-11-22 04:08:54] local.ERROR: payment gateway unreachable {"exception":"[object] (RuntimeException(code: 0): payment gateway unreachable at /app/routes/web.php:13)
+[stacktrace]
+#0 /app/vendor/laravel/framework/src/Illuminate/Routing/CallableDispatcher.php(39): Illuminate\\Routing\\RouteFileRegistrar->{closure:/app/routes/web.php:12}()
+#1 /app/vendor/laravel/framework/src/Illuminate/Routing/Route.php(254): Illuminate\\Routing\\CallableDispatcher->dispatch(Object(Illuminate\\Routing\\Route), Object(Closure))
+#49 {main}
+"}

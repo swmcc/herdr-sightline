@@ -34,7 +34,7 @@ const (
 )
 
 // presetNames are the built-in pattern sets, all on by default.
-var presetNames = []string{"generic", "node", "python", "ruby", "go", "rust", "jvm", "tests"}
+var presetNames = []string{"generic", "node", "python", "ruby", "go", "rust", "jvm", "php", "elixir", "dotnet", "swift", "tests"}
 
 // Presets returns the names of every built-in pattern set.
 func Presets() []string {

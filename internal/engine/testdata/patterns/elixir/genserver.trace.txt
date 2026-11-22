@@ -1,0 +1,31 @@
+# starts: 1 (the caller's "exited in" repeats the crash report above it)
+04:20:49.102 [error] GenServer #PID<0.127.0> terminating
+** (RuntimeError) agent state corrupt
+    (shop 0.1.0) lib/shop.ex:21: anonymous fn/1 in Shop.run/1
+    (elixir 1.20.5) lib/agent/server.ex:27: Agent.Server.handle_call/3
+    (stdlib 8.1.1) gen_server.erl:2470: :gen_server.try_handle_call/4
+    (stdlib 8.1.1) gen_server.erl:2499: :gen_server.handle_msg/3
+    (stdlib 8.1.1) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+Last message (from #PID<0.94.0>): {:update, #Function<2.42850774/1 in Shop.run/1>}
+State: 0
+Client #PID<0.94.0> is alive
+
+    (stdlib 8.1.1) gen.erl:262: :gen.do_call/4
+    (elixir 1.20.5) lib/gen_server.ex:1180: GenServer.call/3
+    (elixir 1.20.5) src/elixir.erl:382: :elixir.eval_external_handler/3
+    (stdlib 8.1.1) erl_eval.erl:1048: :erl_eval.do_apply/7
+    (elixir 1.20.5) src/elixir.erl:365: :elixir.erl_eval/3
+    (elixir 1.20.5) src/elixir.erl:329: :elixir.eval_forms/4
+    (elixir 1.20.5) lib/module/parallel_checker.ex:157: Module.ParallelChecker.verify/1
+    (elixir 1.20.5) lib/code.ex:649: Code.validated_eval_string/4
+** (exit) exited in: GenServer.call(#PID<0.127.0>, {:update, #Function<2.42850774/1 in Shop.run/1>}, 5000)
+    ** (EXIT) an exception was raised:
+        ** (RuntimeError) agent state corrupt
+            (shop 0.1.0) lib/shop.ex:21: anonymous fn/1 in Shop.run/1
+            (elixir 1.20.5) lib/agent/server.ex:27: Agent.Server.handle_call/3
+            (stdlib 8.1.1) gen_server.erl:2470: :gen_server.try_handle_call/4
+            (stdlib 8.1.1) gen_server.erl:2499: :gen_server.handle_msg/3
+            (stdlib 8.1.1) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+    (elixir 1.20.5) lib/gen_server.ex:1183: GenServer.call/3
+    (stdlib 8.1.1) erl_eval.erl:1048: :erl_eval.do_apply/7
+    (elixir 1.20.5) lib/code.ex:649: Code.validated_eval_string/4

@@ -8,7 +8,6 @@ INFO  error reporting enabled (sentry)
 warning: unused import: `std::io`
 {"level":"error","time":"2026-10-26T12:00:00Z","msg":"upstream timeout","path":"/api"}
 level=error msg="dial tcp 127.0.0.1:6379: connect: connection refused"
-[2026-10-26 12:00:00] local.ERROR: Undefined variable $user
 Errors handled gracefully: 3
 on_error: retry
 onError callback registered

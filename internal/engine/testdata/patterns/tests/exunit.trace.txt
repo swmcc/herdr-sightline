@@ -1,0 +1,21 @@
+# starts: 1
+Running ExUnit with seed: 0, max_cases: 24
+Excluding tags: [:test]
+Including tags: [location: {"test/shop_test.exs", 12}]
+
+
+
+  1) test totals the cart (ShopTest)
+     test/shop_test.exs:12
+     Assertion with == failed
+     code:  assert Shop.total([%{price: 10}, %{price: 15}]) == 30
+     left:  25
+     right: 30
+     stacktrace:
+       test/shop_test.exs:13: (test)
+
+
+Finished in 0.00 seconds (0.00s async, 0.00s sync)
+
+Result: 0/1 passed, 6 excluded
+Failed: 1 test

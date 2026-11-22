@@ -1,0 +1,4 @@
+  1) test totals the cart (ShopTest)
+  2) test checkout raises on an empty cart (ShopTest)
+  1) doctest Shop.total/1 (1) (ShopTest)
+  2) test checkout/1 charges the card (ShopTest)

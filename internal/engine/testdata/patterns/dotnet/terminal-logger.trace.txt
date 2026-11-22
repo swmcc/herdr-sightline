@@ -1,0 +1,7 @@
+# starts: 1
+Restore complete (0.0s)
+  app net11.0 failed with 1 error(s) and 1 warning(s) (0.0s)
+    /app/Program.cs(21,51): error CS0103: The name 'crad' does not exist in the current context
+    /app/Program.cs(21,62): warning CS0414: The field 'Checkout.unused' is assigned but its value is never used
+
+Build failed with 1 error(s) and 1 warning(s) in 0.1s

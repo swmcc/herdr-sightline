@@ -1,0 +1,4 @@
+[[pattern]]
+name = "x"
+regex = '^FATAL boom$'
+agent = "codex"

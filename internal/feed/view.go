@@ -136,6 +136,8 @@ func (m *Model) View() string {
 		return m.pickView()
 	case modeNever:
 		return m.neverView()
+	case modeTrust:
+		return m.trustView()
 	}
 	return m.listView()
 }
@@ -221,6 +223,7 @@ func (m *Model) headerLines(w int) []string {
 	if m.listErr != nil {
 		problems = append(problems, m.listErr.Error())
 	}
+	problems = append(problems, m.projectNotes()...)
 	for _, pane := range m.watching {
 		if err := m.paneErrs[pane]; err != nil {
 			problems = append(problems, fmt.Sprintf("Can't read %s: %v", m.paneName(pane), err))
@@ -234,10 +237,14 @@ func (m *Model) headerLines(w int) []string {
 
 // footerLines is the status line and the keys.
 func (m *Model) footerLines(w int) []string {
+	keys := "j/k move  enter send  v view  t agent  d dismiss  n never  q quit"
+	if len(m.projects) > 0 {
+		keys = "j/k move  enter send  v view  t agent  d dismiss  n never  p project  q quit"
+	}
 	return []string{
 		"",
 		fit(clean(m.status), w),
-		faint.Render(fit("j/k move  enter send  v view  t agent  d dismiss  n never  q quit", w)),
+		faint.Render(fit(keys, w)),
 	}
 }
 

@@ -47,8 +47,10 @@ type Config struct {
 	SettleSeconds int
 	// ContextLines is how many lines of output to send before and after the error.
 	ContextLines int
-	// Presets are the built-in pattern sets that are switched on.
-	Presets []string
+	// Presets are the built-in pattern sets that are switched on. PresetsSet
+	// says the file listed them, so a project file can't add to them (#22).
+	Presets    []string
+	PresetsSet bool
 	// Patterns are the user's own error patterns.
 	Patterns []Pattern
 	// Ignores are lines never to alert on, even when a pattern matches.
@@ -393,7 +395,7 @@ func (v *validator) build(raw fileConfig) Config {
 
 	if raw.Presets != nil {
 		// An empty list is allowed. It switches every preset off.
-		cfg.Presets = []string{}
+		cfg.Presets, cfg.PresetsSet = []string{}, true
 		for i, p := range *raw.Presets {
 			key := "presets." + strconv.Itoa(i)
 			switch {

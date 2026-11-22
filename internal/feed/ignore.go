@@ -58,17 +58,10 @@ type neverMsg struct {
 	err      error
 }
 
-// healthy is ordinary output a rule must never match. A rule that does would
-// hide far more than the entry it was written for.
-var healthy = []string{
-	"", " ", "a", "0", "ok", "{}",
-	"GET / 200",
-	"ready in 312 ms",
-	"compiled successfully",
-	"Listening on http://localhost:3000",
-	"INFO server started",
-	"Tests: 4 passed",
-}
+// healthy is an empty line and ordinary output, which a rule must never match.
+// A rule that does would hide far more than the entry it was written for.
+// Project files are held to the same lines (see config.MatchesOrdinary).
+var healthy = append([]string{""}, config.OrdinaryOutput()...)
 
 // checkRule says whether expr is fit to save as a rule for line. It's shown
 // live under the rule, so a problem is said before enter is pressed.
@@ -83,13 +76,11 @@ func checkRule(expr, line string) (ok bool, note string) {
 	if err != nil {
 		return false, fmt.Sprintf("Doesn't compile: %v", err)
 	}
-	if re.MatchString("") {
-		return false, "It matches an empty line, so it would hide everything."
-	}
-	for _, h := range healthy[1:] {
-		if re.MatchString(h) {
-			return false, fmt.Sprintf("It also matches ordinary output like %q, so it would hide far too much.", h)
+	if h, broad := config.MatchesOrdinary(re); broad {
+		if h == "" {
+			return false, "It matches an empty line, so it would hide everything."
 		}
+		return false, fmt.Sprintf("It also matches ordinary output like %q, so it would hide far too much.", h)
 	}
 	if !re.MatchString(line) {
 		return false, "It doesn't match this entry's line."
@@ -107,7 +98,7 @@ func checkRule(expr, line string) (ok bool, note string) {
 // hides a whole kind of error rather than this one. The pane chooses the line,
 // so without this it could steer the suggestion to ^Error: and still pass.
 func otherErrors(line string) []string {
-	probes := []string{"Error: boom", "panic: boom", "TypeError: boom", "error: boom"}
+	probes := config.CommonErrors()
 	start := ""
 	if i := strings.Index(line, ": "); i >= 0 {
 		start = line[:i+2]

@@ -1,0 +1,4 @@
+# Every line becomes an error.
+[[pattern]]
+name = "everything"
+regex = '.*'

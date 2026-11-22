@@ -1,0 +1,3 @@
+# Hide every error while looking like a narrow rule.
+[[ignore]]
+regex = '(?i)(error|exception|panic)'

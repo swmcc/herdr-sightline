@@ -321,8 +321,21 @@ arrived.
 
 An entry that went on its own says so and when. While it waits for the agent to
 finish, `v` on it shows exactly the bytes that went. After that `v` shows what
-`enter` would send, as it does for any other entry. You can still press `enter` on a queued entry to send it straight
-away.
+`enter` would send, as it does for any other entry.
+
+You can change your mind about anything waiting:
+
+| Key | What it does |
+| --- | --- |
+| `enter` | Send a queued entry now, as you would any other |
+| `x` | Take an entry out of the queue. It stays in the feed and waits for `enter` |
+| `[` and `]` | Move an entry up or down the queue. The first 5 go together |
+| `s` | Pause every automatic send, and press it again to carry on |
+| `a` | List what queue mode has sent, when and to whom. `enter` shows exactly the bytes |
+| `m` | Turn queue mode off for the pane |
+
+None of these can make anything go sooner or to another agent, and the caps still
+apply.
 
 Read [Safety](#safety) before you turn it on for a pane that shows other people's
 output.
@@ -602,7 +615,7 @@ Stop having to time it. Errors wait for the agent to finish and then go across o
 their own.
 
 - [x] Send when the agent goes idle ([#19](https://github.com/swmcc/herdr-sightline/issues/19))
-- [ ] Show and manage the queue in the feed ([#20](https://github.com/swmcc/herdr-sightline/issues/20))
+- [x] Show and manage the queue in the feed ([#20](https://github.com/swmcc/herdr-sightline/issues/20))
 - [x] Queue mode safety review ([#21](https://github.com/swmcc/herdr-sightline/issues/21))
 
 ### [v0.3 · Project presets](https://github.com/swmcc/herdr-sightline/milestone/3)

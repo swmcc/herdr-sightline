@@ -298,7 +298,8 @@ func (m *Model) queueNote(en engine.Entry) string {
 	if why == "" {
 		why = "going on the next tick"
 	}
-	return "◷ queued for " + who + ", " + why
+	pos, of := m.queuePosition(en)
+	return fmt.Sprintf("◷ %d of %d queued for %s, %s", pos, of, who, why)
 }
 
 // openSentView shows exactly what queue mode sent for id, if its latest send
@@ -339,9 +340,9 @@ func (m *Model) queueHeader() []string {
 	}
 	var lines []string
 	if len(on) > 0 {
-		line := "Queue mode on for " + strings.Join(on, ", ")
+		line := fmt.Sprintf("Queue mode on for %s · %d queued", strings.Join(on, ", "), len(m.engine.Queue()))
 		if m.engine.QueuePaused() {
-			line += " · paused"
+			line += " · paused, press s to carry on"
 		}
 		lines = append(lines, line)
 	}

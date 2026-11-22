@@ -142,6 +142,8 @@ func (m *Model) View() string {
 		return m.hiddenView()
 	case modeConsent:
 		return m.consentView()
+	case modeLog:
+		return m.logView()
 	}
 	return m.listView()
 }
@@ -254,7 +256,7 @@ func (m *Model) footerLines(w int) []string {
 	if total, _ := m.engine.Hidden(); total > 0 {
 		keys += "  h hidden"
 	}
-	keys += "  m queue"
+	keys += "  m queue  x unqueue  s pause  a sent"
 	keys += "  q quit"
 	return []string{
 		"",
@@ -347,7 +349,7 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 		return "? unverified, nothing ran to prove it either way. Check it yourself", "[enter] send again   [d] dismiss"
 	}
 	if en.Queued {
-		return m.queueNote(en), "[enter] send now   [m] queue off   [d] dismiss"
+		return m.queueNote(en), "[enter] send now   [x] unqueue   [ ] move   [d] dismiss"
 	}
 	if m.sending[en.ID] {
 		return "sending…", ""

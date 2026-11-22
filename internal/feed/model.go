@@ -310,6 +310,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.trustDone(msg)
 	}
 	m.refresh()
+	if m.mode == modeTrust {
+		// A resize or a new version can bring the end of it into view.
+		m.noteTrustSeen()
+	}
 	return m, cmd
 }
 

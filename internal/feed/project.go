@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -62,23 +64,40 @@ type trustMsg struct {
 	err    error
 }
 
-// trustState is the trust view: which project it shows, the sum it showed
-// when it opened or the person last acknowledged a change, and how far down
-// it's scrolled.
+// trustState is the trust view: which project it shows, the sum of the
+// version it's showing, how far down it's scrolled and whether the end of that
+// version has been on screen. y only trusts a version read to the end.
 type trustState struct {
-	root string
-	sum  config.Sum
-	top  int
-	busy bool
+	root    string
+	sum     config.Sum
+	top     int
+	seenEnd bool
+	busy    bool
+	// changedAt is when a new version replaced the one being read. y waits a
+	// moment after that, so a press meant for the old one can't trust the new.
+	changedAt time.Time
 }
+
+// changeSettle is how long y is refused after the file changes on screen.
+const changeSettle = 3 * time.Second
 
 // applyProjects takes a fresh look at the project files.
 func (m *Model) applyProjects(msg projectsMsg) {
 	m.projects, m.trustErr = msg.projects, msg.trustErr
-	if m.mode == modeTrust {
-		if _, ok := m.shownProject(); !ok {
-			m.status = "That repo's project file has gone, or no watched pane is in the repo any more. Press esc to go back."
-		}
+	if m.mode != modeTrust {
+		return
+	}
+	p, ok := m.shownProject()
+	switch {
+	case !ok:
+		m.status = "That repo's project file has gone, or no watched pane is in the repo any more. Press esc to go back."
+	case p.sum != m.trust.sum:
+		// A new version replaces what was being read. It's read from the top,
+		// all of it, before y trusts it, and the person is told straight away
+		// rather than at the next y.
+		m.showProject(p)
+		m.trust.changedAt = m.now()
+		m.status = "The file just changed. This is the new version, so read it from the top before pressing y."
 	}
 }
 
@@ -108,13 +127,29 @@ func (m *Model) openTrust() {
 }
 
 func (m *Model) showProject(p project) {
-	m.trust.root, m.trust.sum, m.trust.top = p.root, p.sum, 0
+	m.trust.root, m.trust.sum, m.trust.top, m.trust.seenEnd = p.root, p.sum, 0, false
+	m.noteTrustSeen()
+}
+
+// trustHeight is how many lines of the trust view fit on screen.
+func (m *Model) trustHeight() int { return max(m.height-4, 1) }
+
+// noteTrustSeen notes when the last line of the version shown is on screen.
+// The model calls it after anything that could scroll or resize the view.
+func (m *Model) noteTrustSeen() {
+	p, ok := m.shownProject()
+	if !ok || p.sum != m.trust.sum {
+		return
+	}
+	if m.trust.top+m.trustHeight() >= len(m.trustLines(p, max(m.width, 20))) {
+		m.trust.seenEnd = true
+	}
 }
 
 // trustKey handles the trust view.
 func (m *Model) trustKey(k tea.KeyMsg) tea.Cmd {
 	p, ok := m.shownProject()
-	page := max(m.height-4, 1)
+	page := m.trustHeight()
 	switch k.String() {
 	case "esc", "q", "p":
 		m.mode = modeList
@@ -143,6 +178,7 @@ func (m *Model) trustKey(k tea.KeyMsg) tea.Cmd {
 		}
 	}
 	m.trust.top = min(max(m.trust.top, 0), max(len(m.trustLines(p, max(m.width, 20)))-page, 0))
+	m.noteTrustSeen()
 	return nil
 }
 
@@ -156,10 +192,16 @@ func (m *Model) trustProject(p project) tea.Cmd {
 		m.status = "This file can't be used, so it can't be trusted. Fix it in the repo first."
 		return nil
 	case p.sum != m.trust.sum:
-		// What's on screen now isn't what the person was reading, because the
-		// file changed under them. Trusting it would trust something unread.
-		m.trust.sum, m.trust.top = p.sum, 0
-		m.status = "The file changed while you were reading it. Read it again, then press y."
+		// applyProjects shows a new version as it arrives, so this is only a
+		// backstop. Trusting it would trust something unread.
+		m.showProject(p)
+		m.status = "The file changed while you were reading it. Read it again from the top, then press y."
+		return nil
+	case !m.trust.changedAt.IsZero() && m.now().Sub(m.trust.changedAt) < changeSettle:
+		m.status = "The file only just changed. Read the new version, then press y."
+		return nil
+	case !m.trust.seenEnd:
+		m.status = "Scroll to the end first (j or space), so every rule has been on screen before you trust it."
 		return nil
 	case p.trusted:
 		m.status = "This version is already trusted."
@@ -203,6 +245,7 @@ func (m *Model) trustDone(msg trustMsg) {
 		m.status = fmt.Sprintf("Not recorded: %v", msg.err)
 		return
 	}
+	matched := false
 	for i := range m.projects {
 		p := &m.projects[i]
 		if p.root != msg.root {
@@ -211,14 +254,19 @@ func (m *Model) trustDone(msg trustMsg) {
 		if msg.forget {
 			p.trusted, p.trustedBefore = false, false
 		} else if p.sum == msg.sum {
-			p.trusted, p.trustedBefore = true, true
+			p.trusted, p.trustedBefore, matched = true, true, true
+		} else {
+			p.trustedBefore = true
 		}
 	}
-	if msg.forget {
+	switch {
+	case msg.forget:
 		m.status = "Stopped trusting it. Its rules no longer apply."
-		return
+	case matched:
+		m.status = "Trusted this version. Its rules apply to panes in this repo from the next line."
+	default:
+		m.status = "Trusted the version you read, but the file has changed again since, so that's ignored too. Read the new one."
 	}
-	m.status = "Trusted this version. Its rules apply to panes in this repo from the next line."
 }
 
 // projectNotes are the header lines about project files that need the
@@ -269,7 +317,7 @@ func (m *Model) trustView() string {
 	end := min(top+h, len(lines))
 
 	head := "Project file"
-	if len(m.projects) > 1 {
+	if ok && len(m.projects) > 1 {
 		i := slices.IndexFunc(m.projects, func(q project) bool { return q.root == m.trust.root })
 		head = fmt.Sprintf("Project file %d of %d (tab for the next)", i+1, len(m.projects))
 	}
@@ -282,7 +330,8 @@ func (m *Model) trustView() string {
 	if ok && p.err != nil {
 		keys = "j/k scroll  esc back"
 	}
-	out = append(out, fit(clean(m.status), w), faint.Render(fit(keys, w)))
+	where := fmt.Sprintf("lines %d to %d of %d", min(top+1, end), end, len(lines))
+	out = append(out, fit(clean(m.status), w), faint.Render(spread(keys, where, w)))
 	return strings.Join(out, "\n")
 }
 
@@ -324,10 +373,22 @@ func (m *Model) trustLines(p project, w int) []string {
 	out = append(out, "")
 
 	c := p.cfg
-	if len(c.Presets) == 0 && len(c.Patterns) == 0 && len(c.Ignores) == 0 {
-		add("It adds nothing.")
-	} else {
-		add("It adds:")
+	// The count comes first, so a rule can't pass for the end of the list.
+	add(fmt.Sprintf("It adds %s, %s and %s:",
+		plural(len(c.Presets), "preset", "presets"),
+		plural(len(c.Patterns), "error pattern", "error patterns"),
+		plural(len(c.Ignores), "ignore rule", "ignore rules")))
+	// Names and rules are shown quoted with everything outside plain ASCII
+	// escaped, so where each one ends is plain and no character can make it
+	// read as something else. A long one wraps indented under its own line.
+	rule := func(label, text string) {
+		for i, l := range wrap(label+strconv.QuoteToASCII(text), w-4) {
+			if i == 0 {
+				out = append(out, "  "+l)
+			} else {
+				out = append(out, "      "+l)
+			}
+		}
 	}
 	if len(c.Presets) > 0 {
 		note := ""
@@ -336,12 +397,13 @@ func (m *Model) trustLines(p project, w int) []string {
 		}
 		add("  presets " + strings.Join(c.Presets, ", ") + note)
 	}
-	for _, pat := range c.Patterns {
-		add(fmt.Sprintf("  error pattern %q: %s", pat.Name, pat.Regex.String()))
+	for i, pat := range c.Patterns {
+		rule(fmt.Sprintf("error pattern %d of %d, %s: ", i+1, len(c.Patterns), strconv.QuoteToASCII(pat.Name)), pat.Regex.String())
 	}
-	for _, ig := range c.Ignores {
-		add("  ignore rule: " + ig.Regex.String())
+	for i, ig := range c.Ignores {
+		rule(fmt.Sprintf("ignore rule %d of %d: ", i+1, len(c.Ignores)), ig.Regex.String())
 	}
+	add("That's the end of the list.")
 	out = append(out, "")
 	add("Anyone who can push to this repo can change this file. Only trust it if you've read every rule above.")
 	if len(c.Ignores) > 0 {

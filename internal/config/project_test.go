@@ -39,6 +39,11 @@ func TestParseProjectRefuses(t *testing.T) {
 		{"hide-everything.toml", []string{`[[ignore]] "(?s)." matches ordinary output like " "`}},
 		{"hide-errors.toml", []string{`matches common errors like "Error: boom", so it could hide real ones`}},
 		{"hide-tracebacks.toml", []string{`matches common errors like "Traceback (most recent call last):"`}},
+		{"hide-errors-evasive.toml", []string{"matches common errors like", "so it could hide real ones"}},
+		{"hide-go-panics.toml", []string{`matches common errors like "panic: boom"`}},
+		{"padded.toml", []string{"has a run of spaces, which could hide part of it on screen"}},
+		{"tab.toml", []string{"has a run of spaces"}},
+		{"bad-name.toml", []string{"needs a name of at most 64 plain characters"}},
 		{"bad-regex.toml", []string{"bad regex"}},
 		{"syntax.toml", []string{"syntax.toml:"}},
 		{"unknown-preset.toml", []string{`unknown preset "cobol"`}},
@@ -121,7 +126,7 @@ func TestParseProjectLimits(t *testing.T) {
 		{"one pattern too many", many("pattern", config.MaxProjectRules+1), "at most 50 [[pattern]] tables, this one has 51"},
 		{"as many ignores as allowed", many("ignore", config.MaxProjectRules), ""},
 		{"one ignore too many", many("ignore", config.MaxProjectRules+1), "at most 50 [[ignore]] tables, this one has 51"},
-		{"a regex too long to read", "[[ignore]]\nregex = '" + long + "'\n", "over 2000 bytes"},
+		{"a regex too long to read", "[[ignore]]\nregex = '" + long + "'\n", "over 500 bytes"},
 		{"a file too big", "# " + strings.Repeat("x", config.MaxProjectFileSize) + "\n", "bigger than 64 KiB"},
 	}
 	for _, tt := range tests {

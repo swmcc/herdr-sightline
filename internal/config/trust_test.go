@@ -1,9 +1,11 @@
 package config_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/swmcc/herdr-sightline/internal/config"
@@ -108,5 +110,30 @@ func TestBrokenTrustFileTrustsNothing(t *testing.T) {
 func TestTrustNeedsAStateDir(t *testing.T) {
 	if err := config.TrustProject("", "/web", config.SumOf(nil)); err == nil {
 		t.Error("trusted with nowhere to record it")
+	}
+}
+
+// Two feeds can trust and forget at once. A change that reports success is
+// never lost to the other feed's write.
+func TestTrustChangesFromTwoFeedsAreKept(t *testing.T) {
+	dir := t.TempDir()
+	var wg sync.WaitGroup
+	ok := make([]bool, 20)
+	for i := range ok {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ok[i] = config.TrustProject(dir, fmt.Sprintf("/repo/%d", i), config.SumOf(nil)) == nil
+		}()
+	}
+	wg.Wait()
+	trust, err := config.LoadTrust(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, worked := range ok {
+		if worked && !trust.Trusted(fmt.Sprintf("/repo/%d", i), config.SumOf(nil)) {
+			t.Errorf("/repo/%d was trusted but the file lost it", i)
+		}
 	}
 }

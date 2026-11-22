@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/pelletier/go-toml/v2"
@@ -24,8 +25,11 @@ const (
 	// rules, one project file can add.
 	MaxProjectRules = 50
 	// MaxProjectRegex is the longest regex a project file can hold, in bytes.
-	// A rule is meant to be read before it's trusted.
-	MaxProjectRegex = 2000
+	// A rule is meant to be read before it's trusted, and a long one can push
+	// what matters off the screen.
+	MaxProjectRegex = 500
+	// MaxProjectName is the longest pattern name a project file can hold.
+	MaxProjectName = 64
 )
 
 // Project is what a trusted project file adds to the person's own config. It
@@ -33,7 +37,9 @@ const (
 // sightline.toml wins on every conflict.
 type Project struct {
 	// Presets are built-in pattern sets to switch on. PresetsSet says the file
-	// listed them at all, which an empty list also counts as.
+	// listed them at all, which an empty list also counts as. Unlike the
+	// person's own list, a project's can only switch presets on, never off, so
+	// an empty one does nothing.
 	Presets    []string
 	PresetsSet bool
 	// Patterns are error patterns, on top of the person's own.
@@ -54,26 +60,40 @@ var projectKeys = map[string][]string{
 	"ignore":  {"regex"},
 }
 
-// projectErrors are errors a project's ignore rule must not match. They're the
-// common ones plus the first line of the usual crashes in each preset's stack.
-// A rule that matches one would hide a whole kind of error in that repo.
-var projectErrors = append(CommonErrors(),
-	"Error: Cannot find module 'x'",
-	"Uncaught Error: boom",
-	"SyntaxError: boom",
-	"ReferenceError: x is not defined",
-	"Traceback (most recent call last):",
-	"ValueError: boom",
-	"panic: runtime error: index out of range [1] with length 1",
-	"fatal error: all goroutines are asleep - deadlock!",
-	"thread 'main' panicked at src/main.rs:1:1:",
-	"error[E0425]: cannot find value `x` in this scope",
-	`Exception in thread "main" java.lang.RuntimeException: boom`,
-	"NoMethodError (undefined method `x' for nil):",
-	"FAIL src/app.test.js",
-	"ERROR boom",
-	"FATAL boom",
-)
+// errorHeads are how the usual errors in each preset's stack start. A
+// project's ignore rule must not match one of them followed by any message,
+// or it would hide a whole kind of error in that repo.
+var errorHeads = []string{
+	"Error: ", "TypeError: ", "SyntaxError: ", "ReferenceError: ", "RangeError: ",
+	"Uncaught Error: ", "Uncaught TypeError: ", "UnhandledPromiseRejection: ",
+	"ValueError: ", "KeyError: ", "AttributeError: ", "ModuleNotFoundError: ",
+	"error: ", "ERROR: ", "ERROR ", "FATAL ", "fatal: ", "fatal error: ",
+	"panic: ", "panic: runtime error: ", "thread 'main' panicked at ",
+	"error[E0425]: ", "FAIL ", "FAILED ",
+	`Exception in thread "main" java.lang.RuntimeException: `,
+	"NoMethodError (undefined method ", "ActionView::Template::Error (",
+}
+
+// projectErrors are the lines an ignore rule from a project is tried against:
+// each head followed by messages that start with every printable character,
+// so a rule that only leaves out a few first letters (^Error: [^bC]) still
+// matches one, plus a few whole lines that have no message to vary. It catches
+// the obvious ways to hide a kind of error, not every one. The trust view and
+// the count of what was hidden are the real defence.
+var projectErrors = func() []string {
+	probes := CommonErrors()
+	for _, head := range errorHeads {
+		for c := byte('!'); c <= '~'; c++ {
+			probes = append(probes, head+string(c)+"x failed")
+		}
+		probes = append(probes, head+"boom", head+"Cannot find module 'x'", head+" x")
+	}
+	return append(probes,
+		"Traceback (most recent call last):",
+		"fatal error: all goroutines are asleep - deadlock!",
+		"goroutine 1 [running]:",
+	)
+}()
 
 // ParseProject reads a project file. name is only used in error messages.
 //
@@ -90,7 +110,8 @@ func ParseProject(name string, data []byte) (Project, error) {
 	data = bytes.TrimPrefix(data, utf8BOM)
 
 	var keys map[string]any
-	if err := toml.Unmarshal(data, &keys); err == nil {
+	mapErr := toml.Unmarshal(data, &keys)
+	if mapErr == nil {
 		if errs := disallowed(name, data, keys); len(errs) > 0 {
 			sortErrors(errs)
 			return Project{}, errors.Join(errs...)
@@ -100,6 +121,10 @@ func ParseProject(name string, data []byte) (Project, error) {
 	cfg, err := Parse(name, data)
 	if err != nil {
 		return Project{}, err
+	}
+	if mapErr != nil {
+		// The keys weren't checked, so it isn't used, however Parse got on.
+		return Project{}, &Error{File: name, Msg: fmt.Sprintf("couldn't check which keys it sets: %v", mapErr)}
 	}
 
 	p := Project{Patterns: cfg.Patterns, Ignores: cfg.Ignores}
@@ -119,8 +144,12 @@ func ParseProject(name string, data []byte) (Project, error) {
 		key := "pattern." + strconv.Itoa(i) + ".regex"
 		expr := pat.Regex.String()
 		switch line, broad := MatchesOrdinary(pat.Regex); {
+		case len(pat.Name) > MaxProjectName || strings.ContainsFunc(pat.Name, unreadable):
+			v.fail("pattern."+strconv.Itoa(i)+".name", "[[pattern]] %s needs a name of at most %d plain characters", short(pat.Name), MaxProjectName)
 		case len(expr) > MaxProjectRegex:
 			v.fail(key, "[[pattern]] %q has a regex over %d bytes, which is too long to read before trusting it", pat.Name, MaxProjectRegex)
+		case padded(expr):
+			v.fail(key, "[[pattern]] %q has a run of spaces in its regex, which could hide part of it on screen. Use ' {2}' or \\s+", pat.Name)
 		case broad && line == "":
 			v.fail(key, "[[pattern]] %q matches an empty line, so every line would be an error", pat.Name)
 		case broad:
@@ -135,6 +164,8 @@ func ParseProject(name string, data []byte) (Project, error) {
 		switch {
 		case len(expr) > MaxProjectRegex:
 			v.fail(key, "[[ignore]] has a regex over %d bytes, which is too long to read before trusting it", MaxProjectRegex)
+		case padded(expr):
+			v.fail(key, "[[ignore]] %s has a run of spaces, which could hide part of it on screen. Use ' {2}' or \\s+", short(expr))
 		case broad && line == "":
 			v.fail(key, "[[ignore]] %s matches an empty line, so it would hide everything", short(expr))
 		case broad:
@@ -148,6 +179,21 @@ func ParseProject(name string, data []byte) (Project, error) {
 		return Project{}, errors.Join(v.errs...)
 	}
 	return p, nil
+}
+
+// padded reports whether a regex has two or more whitespace characters in a
+// row, or any whitespace but a space. Either can push the rest of a rule out
+// of sight when it's shown before being trusted, and a real rule can always
+// say ' {2}' or \s instead.
+func padded(expr string) bool {
+	return strings.Contains(expr, "  ") || strings.ContainsFunc(expr, func(r rune) bool {
+		return r != ' ' && unicode.IsSpace(r)
+	})
+}
+
+// unreadable reports whether r doesn't show as itself on a terminal.
+func unreadable(r rune) bool {
+	return r == utf8.RuneError || !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r)
 }
 
 // short quotes a regex for an error message, cut so one long rule can't take

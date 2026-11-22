@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"runtime/debug"
 	"slices"
 	"sync"
@@ -97,6 +98,13 @@ type loops struct {
 	movesMu sync.Mutex
 	moves   []paneMove
 	moved   chan struct{}
+
+	// cwds are the watched panes' working directories, which the model hands
+	// the projects loop after each snapshot. Behind a lock like moves.
+	cwdsMu     sync.Mutex
+	cwds       map[string]string
+	cwdsMoved  chan struct{}
+	cwdsHanded bool
 }
 
 // paneMove is a pane that moved from one id to another.
@@ -114,6 +122,8 @@ func newLoops(ctx context.Context, f *faults, client *herdr.Client, send func(te
 		agents: map[string]context.CancelFunc{},
 		resync: make(chan struct{}, 1),
 		moved:  make(chan struct{}, 1),
+
+		cwdsMoved: make(chan struct{}, 1),
 	}
 }
 
@@ -162,6 +172,7 @@ func (l *loops) startShared(stateDir string, extra []string, configUpdates <-cha
 		})
 	}
 	l.goLoop("the pane events loop", l.runGlobalEvents)
+	l.goLoop("the projects loop", func() { l.runProjects(stateDir) })
 }
 
 // requestSync asks the sync loop for a snapshot straight away. It never blocks:
@@ -643,4 +654,132 @@ func panicPoint(ctx context.Context, where string) {
 	if hook, ok := ctx.Value(panicKey{}).(func(string)); ok {
 		hook(where)
 	}
+}
+
+// noteCwds hands the projects loop the watched panes' working directories. It
+// never blocks, and only wakes the loop when they've changed.
+func (l *loops) noteCwds(cwds map[string]string) {
+	l.cwdsMu.Lock()
+	same := l.cwdsHanded && maps.Equal(l.cwds, cwds)
+	l.cwds, l.cwdsHanded = maps.Clone(cwds), true
+	l.cwdsMu.Unlock()
+	if same {
+		return
+	}
+	select {
+	case l.cwdsMoved <- struct{}{}:
+	default:
+	}
+}
+
+func (l *loops) currentCwds() map[string]string {
+	l.cwdsMu.Lock()
+	defer l.cwdsMu.Unlock()
+	return maps.Clone(l.cwds)
+}
+
+// runProjects looks for project files where the watched panes are, every
+// Config interval and whenever their working directories change, and tells
+// the model when what it finds changes. It reads the trust file each time
+// too, so a decision made in the feed applies on the next look.
+func (l *loops) runProjects(stateDir string) {
+	t := time.NewTicker(l.every.Config)
+	defer t.Stop()
+	parsed := map[config.Sum]parsedProject{}
+	var last projectsMsg
+	first := true
+	for {
+		msg := readProjects(l.currentCwds(), stateDir, parsed)
+		if first || !sameProjects(msg, last) {
+			first = false
+			last = msg
+			l.deliver(l.ctx, msg)
+		}
+		select {
+		case <-l.ctx.Done():
+			return
+		case <-t.C:
+		case <-l.cwdsMoved:
+		}
+	}
+}
+
+// parsedProject is a project file parsed once, kept by its sum so an
+// unchanged file isn't parsed again every look.
+type parsedProject struct {
+	cfg config.Project
+	err error
+}
+
+// readProjects finds the project file for each pane's repo and whether it's
+// trusted. The sum is of the very bytes that were parsed, so what's trusted is
+// what applies.
+func readProjects(cwds map[string]string, stateDir string, parsed map[config.Sum]parsedProject) projectsMsg {
+	var msg projectsMsg
+	trust, err := config.LoadTrust(stateDir)
+	if err != nil {
+		msg.trustErr = err
+		trust = config.Trust{}
+	}
+	byRoot := map[string]*project{}
+	seen := map[config.Sum]bool{}
+	for _, pane := range slices.Sorted(maps.Keys(cwds)) {
+		root, ok, err := config.FindRoot(cwds[pane])
+		if err != nil || !ok {
+			continue
+		}
+		if p, ok := byRoot[root]; ok {
+			if p != nil {
+				p.panes = append(p.panes, pane)
+			}
+			continue
+		}
+		data, exists, err := config.ReadProject(root)
+		if !exists {
+			byRoot[root] = nil
+			continue
+		}
+		p := &project{root: root, panes: []string{pane}, err: err}
+		if err == nil {
+			p.sum = config.SumOf(data)
+			got, ok := parsed[p.sum]
+			if !ok {
+				got.cfg, got.err = config.ParseProject(config.ProjectPath(root), data)
+				parsed[p.sum] = got
+			}
+			seen[p.sum] = true
+			p.cfg, p.err = got.cfg, got.err
+			p.trusted = p.err == nil && trust.Trusted(root, p.sum)
+		}
+		p.trustedBefore = slices.Contains(trust.Roots(), root)
+		byRoot[root] = p
+	}
+	// Forget parses of files no longer there, so the cache can't grow.
+	for sum := range parsed {
+		if !seen[sum] {
+			delete(parsed, sum)
+		}
+	}
+	for _, root := range slices.Sorted(maps.Keys(byRoot)) {
+		if p := byRoot[root]; p != nil {
+			msg.projects = append(msg.projects, *p)
+		}
+	}
+	return msg
+}
+
+func sameProjects(a, b projectsMsg) bool {
+	errText := func(err error) string {
+		if err == nil {
+			return ""
+		}
+		return err.Error()
+	}
+	if errText(a.trustErr) != errText(b.trustErr) {
+		return false
+	}
+	return slices.EqualFunc(a.projects, b.projects, func(x, y project) bool {
+		return x.root == y.root && x.sum == y.sum && errText(x.err) == errText(y.err) &&
+			x.trusted == y.trusted && x.trustedBefore == y.trustedBefore && slices.Equal(x.panes, y.panes)
+	})
 }

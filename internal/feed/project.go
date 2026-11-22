@@ -84,6 +84,7 @@ const changeSettle = 3 * time.Second
 // applyProjects takes a fresh look at the project files.
 func (m *Model) applyProjects(msg projectsMsg) {
 	m.projects, m.trustErr = msg.projects, msg.trustErr
+	m.applyProjectRules()
 	if m.mode != modeTrust {
 		return
 	}
@@ -435,9 +436,10 @@ func (m *Model) trustLines(p project, w int) []string {
 	add("That's the end of the list.")
 	out = append(out, "")
 	add("Anyone who can push to this repo can change this file. Only trust it if you've read every rule above.")
+	add("It only applies to the watched panes in this repo, and your own sightline.toml wins where they differ.")
 	if len(c.Ignores) > 0 {
 		out = append(out, "")
-		styled(newStyle, "An ignore rule can hide a real error from you, and from the check on whether a fix worked.")
+		styled(newStyle, "An ignore rule can hide a real error from you, and from the check on whether a fix worked. The feed counts every error these rules hide, and h lists them.")
 	}
 	return out
 }

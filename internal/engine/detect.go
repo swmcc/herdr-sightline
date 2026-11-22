@@ -45,20 +45,36 @@ func (m Substring) Match(line string) bool {
 	return m.Text != "" && strings.Contains(line, m.Text)
 }
 
-// startsError reports whether line should start a capture, and the name of the
-// matcher that caught it. Ignores win over matchers.
+// startsError reports whether line from s should start a capture, and the name
+// of the matcher that caught it. Ignores win over matchers. s's own rules (see
+// Rules) come after Options' at each step, and hidden says one of s's own
+// ignore rules is all that stopped the line starting an error.
 //
 // Only the head of a line is matched (see scanned), so one huge line can't stall
 // the feed.
-func (e *Engine) startsError(line string) (name string, ok bool) {
+func (e *Engine) startsError(s *source, line string) (name string, ok, hidden bool) {
 	line = scanned(line)
 	if strings.TrimSpace(line) == "" {
-		return "", false
+		return "", false, false
 	}
 	if e.ignored(line) {
-		return "", false
+		return "", false, false
 	}
-	for _, m := range e.opts.Matchers {
+	name, ok = firstMatch(line, e.opts.Matchers)
+	if !ok {
+		name, ok = firstMatch(line, s.rules.Matchers)
+	}
+	if !ok {
+		return "", false, false
+	}
+	if _, hit := firstMatch(line, s.rules.Ignores); hit {
+		return "", false, true
+	}
+	return name, true, false
+}
+
+func firstMatch(line string, ms []Matcher) (name string, ok bool) {
+	for _, m := range ms {
 		if m.Match(line) {
 			return m.Name(), true
 		}

@@ -32,6 +32,7 @@ const (
 	modeView              // the exact message for one entry
 	modePick              // choosing an agent for one entry
 	modeNever             // writing an ignore rule for one entry (#14)
+	modeTrust             // reading a project file before trusting it (#23)
 )
 
 // await is an agent that has been sent errors and hasn't finished yet.
@@ -73,6 +74,9 @@ type Model struct {
 	// configDir is where sightline.toml lives, set by Run. Empty means n can't
 	// save a rule.
 	configDir string
+	// stateDir is where trust in project files is kept, set by Run. Empty
+	// means no project file can be trusted.
+	stateDir string
 
 	engine *engine.Engine
 	cfg    config.Config
@@ -121,6 +125,10 @@ type Model struct {
 	pickCursor int
 
 	never neverState // see ignore.go
+
+	projects []project // project files the watched panes are in, see project.go
+	trustErr error     // what's wrong with the trust file
+	trust    trustState
 
 	status string
 	width  int
@@ -296,6 +304,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sent(msg)
 	case neverMsg:
 		m.neverDone(msg)
+	case projectsMsg:
+		m.applyProjects(msg)
+	case trustMsg:
+		m.trustDone(msg)
 	}
 	m.refresh()
 	return m, cmd
@@ -792,6 +804,8 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return nil
 	case modeNever:
 		return m.neverKey(k)
+	case modeTrust:
+		return m.trustKey(k)
 	}
 	return m.listKey(k)
 }
@@ -844,6 +858,8 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 		}
 	case "u":
 		return m.undoRule()
+	case "p":
+		m.openTrust()
 	case "t":
 		if i >= 0 {
 			m.openPicker(m.entries[i])

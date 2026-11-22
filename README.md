@@ -291,6 +291,25 @@ Sightline:
 - shows every `@` from the pane as a fullwidth `＠`, so the agent can't take pane text for a file mention like `@~/.ssh/id_ed25519` (the message says when it has done this)
 - always starts the message with "Sightline", so it can never begin with a `!` or `/` that an agent's prompt might run as a command
 - shows you exactly what will be sent before you send it (`v` to view)
+- ignores a repo's own `.sightline.toml` until you've read it and trusted it, and asks
+  again if a single byte of it changes
+
+**A project file is untrusted too.** Whoever can push to a repo writes its
+`.sightline.toml`, so cloning one mustn't change what Sightline does. Until you trust
+it, the feed says it's there and ignores it. Press `p` to see every rule it adds,
+then `y` to trust that version or `esc` to leave it. `x` stops trusting it.
+
+- It can only add presets, error patterns and ignore rules. It can't change what's
+  sent, which agent gets it or when, so it can never turn on queue mode or pin a pane
+  to an agent. A file that tries is refused whole.
+- Trust is kept in Sightline's state directory, which a repo can't write to, against
+  the repo's real path and a sha256 of the file's exact bytes. The rules that apply
+  are read from the same bytes that were hashed, so a file swapped after you trusted
+  it is just a new version that isn't trusted.
+- A rule that would match an empty line or ordinary output is refused, and so is an
+  ignore rule that matches common errors like `Error: boom` or a Python traceback.
+- An ignore rule from a repo can still hide a real error, and the trust screen says
+  so. Read the rules before you press `y`.
 
 What that protects against, and what it doesn't:
 
@@ -418,7 +437,7 @@ Error patterns that live with the code, so everyone on a project gets the same
 behaviour.
 
 - [ ] Project presets checked into the repo ([#22](https://github.com/swmcc/herdr-sightline/issues/22))
-- [ ] Trust prompt for project presets ([#23](https://github.com/swmcc/herdr-sightline/issues/23))
+- [x] Trust prompt for project presets ([#23](https://github.com/swmcc/herdr-sightline/issues/23))
 - [ ] Share error patterns ([#24](https://github.com/swmcc/herdr-sightline/issues/24))
 - [x] More built-in presets ([#25](https://github.com/swmcc/herdr-sightline/issues/25))
 

@@ -1,0 +1,4 @@
+# Send every error from the dev server to an agent the repo chose.
+[[watch]]
+pane_title = "web"
+agent = "codex"

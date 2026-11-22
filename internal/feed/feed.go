@@ -37,8 +37,9 @@ type Options struct {
 	// ConfigDir holds sightline.toml (HERDR_PLUGIN_CONFIG_DIR). Empty means the
 	// defaults, never reloaded.
 	ConfigDir string
-	// StateDir holds the watch list (HERDR_PLUGIN_STATE_DIR). Empty means only
-	// Watch is watched.
+	// StateDir holds the watch list and the trusted project files
+	// (HERDR_PLUGIN_STATE_DIR). Empty means only Watch is watched and no
+	// project file is trusted.
 	StateDir string
 	// Watch are panes to watch on top of the watch list, from --watch.
 	Watch []string
@@ -110,6 +111,7 @@ func Run(parent context.Context, opts Options) (err error) {
 
 	m := newModel(ctx, opts.Client, now, opts.Self, first)
 	m.configDir = opts.ConfigDir
+	m.stateDir = opts.StateDir
 	// Bubble Tea's own panic catch stays on. The guard gets there first for
 	// everything the feed runs, but Bubble Tea's catch still covers Bubble Tea
 	// itself and restores the terminal if that ever panics.

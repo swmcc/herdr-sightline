@@ -1,0 +1,7 @@
+# Try to turn on queue mode, so errors go across without a keypress.
+queue = true
+
+[[watch]]
+pane_title = "web"
+agent = "claude"
+mode = "queue"

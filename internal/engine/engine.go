@@ -72,6 +72,9 @@ type source struct {
 type record struct {
 	entry Entry
 	fix   fixState // #12's settle period, see fixcheck.go
+	// auto is queue mode's latest send of this entry, kept for as long as
+	// the entry is, so v can always show exactly what went (see queue.go).
+	auto *AutoSent
 }
 
 // New makes an engine with the given options. ContextLines is clamped to

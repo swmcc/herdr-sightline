@@ -56,15 +56,16 @@ func (c *clock) Advance(d time.Duration) {
 type fakeHerdr struct {
 	srv *herdrtest.Server
 
-	mu      sync.Mutex
-	status  map[string]herdr.AgentStatus // agent pane to its status
-	seq     map[string]uint64
-	kind    map[string]string // agent pane to its kind, claude if not set
-	term    map[string]string // agent pane to its terminal id, if it moved
-	text    string            // what pane.read returns for the watched pane
-	cwd     string            // the watched pane's working directory
-	prompts []promptCall
-	reads   atomic.Int64
+	mu                 sync.Mutex
+	status             map[string]herdr.AgentStatus // agent pane to its status
+	seq                map[string]uint64
+	kind               map[string]string // agent pane to its kind, claude if not set
+	term               map[string]string // agent pane to its terminal id, if it moved
+	text               string            // what pane.read returns for the watched pane
+	webLabel, webTitle string            // the watched pane's label and terminal title
+	cwd                string            // the watched pane's working directory
+	prompts            []promptCall
+	reads              atomic.Int64
 }
 
 type promptCall struct {
@@ -75,18 +76,20 @@ type promptCall struct {
 func newFakeHerdr(t *testing.T) *fakeHerdr {
 	t.Helper()
 	f := &fakeHerdr{
-		srv:    herdrtest.New(t),
-		status: map[string]herdr.AgentStatus{agentPane: herdr.AgentIdle},
-		seq:    map[string]uint64{agentPane: 10},
-		kind:   map[string]string{},
-		term:   map[string]string{},
-		text:   "ready",
+		srv:      herdrtest.New(t),
+		status:   map[string]herdr.AgentStatus{agentPane: herdr.AgentIdle},
+		seq:      map[string]uint64{agentPane: 10},
+		kind:     map[string]string{},
+		term:     map[string]string{},
+		text:     "ready",
+		webLabel: "web",
+		webTitle: "next dev",
 	}
 	f.srv.Handle("pane.list", func(herdrtest.Request) (any, *herdrtest.ErrorBody) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		panes := []map[string]any{
-			{"pane_id": webPane, "workspace_id": "w1", "tab_id": "w1:t2", "label": "web", "terminal_title_stripped": "next dev", "cwd": f.cwd},
+			{"pane_id": webPane, "workspace_id": "w1", "tab_id": "w1:t2", "label": f.webLabel, "terminal_title_stripped": f.webTitle, "cwd": f.cwd},
 			{"pane_id": feedPane, "workspace_id": "w1", "tab_id": "w1:t2"},
 		}
 		for pane, st := range f.status {

@@ -250,7 +250,9 @@ gone yet. It goes when all of these are true:
 - The agent is one Sightline is sure of: the one it would pick in the same tab, one
   a pin names or one you picked with `t`. Never one in another tab unless you
   picked it, never through a pin that only matched a terminal title and never when
-  Sightline would ask.
+  Sightline would ask. A pane with no label sets its own title, and with it
+  whether a pin applies, so nothing goes on its own from one while
+  `sightline.toml` pins any pane to an agent.
 - The agent has been idle for 3 seconds and still is when herdr is asked again
   just before sending. Queue mode never interrupts an agent that's working or
   blocked.
@@ -308,8 +310,9 @@ that pane. Its errors wait for `enter` again until you send one by hand or turn
 queue mode off and on. The same happens if Sightline can't tell whether a send
 arrived.
 
-An entry that went on its own says so and when, and `v` on it shows exactly the
-bytes that went. You can still press `enter` on a queued entry to send it straight
+An entry that went on its own says so and when. While it waits for the agent to
+finish, `v` on it shows exactly the bytes that went. After that `v` shows what
+`enter` would send, as it does for any other entry. You can still press `enter` on a queued entry to send it straight
 away.
 
 Read [Safety](#safety) before you turn it on for a pane that shows other people's

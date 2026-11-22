@@ -435,6 +435,19 @@ func (t *AgentTracker) IdleSince(pane string) (time.Time, bool) {
 	return a.since, true
 }
 
+// StateChangeSeq is herdr's state change counter for the agent in pane as of
+// the last snapshot, if the tracker has one it trusts. An event since then
+// leaves it untrusted, because events don't carry the counter.
+func (t *AgentTracker) StateChangeSeq(pane string) (uint64, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	a, ok := t.agents[pane]
+	if !ok || !a.seqTrusted {
+		return 0, false
+	}
+	return a.info.StateChangeSeq, true
+}
+
 // Choose picks the agent to send an error from the watched pane to.
 //
 //  1. The first pin whose pane_title names the watched pane decides. It

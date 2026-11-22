@@ -87,7 +87,9 @@ func (m *Model) consentKey(k tea.KeyMsg) {
 // consentView says plainly what queue mode means before it goes on.
 func (m *Model) consentView() string {
 	w := max(m.width, 20)
-	name := m.paneName(m.consentPane)
+	// The title can come from the program in the pane, so it's cut short and
+	// herdr's pane id, which the pane can't set, is always there too.
+	name := fmt.Sprintf("%s (pane %s)", fit(m.paneName(m.consentPane), 32), clean(m.consentPane))
 	who := "Right now Sightline would ask which agent, so nothing would go until that's settled."
 	if t, why := m.autoTargetForPane(m.consentPane); why == "" {
 		who = fmt.Sprintf("Right now that's %s.", clean(t.Label))
@@ -152,12 +154,30 @@ func (m *Model) autoTarget(en engine.Entry) (herdr.Target, string) {
 		return t, "sending it would need a second enter"
 	case note == titlePinNote:
 		return t, "the agent was only pinned by terminal title"
+	case m.titleDecidesPin(string(en.Source.ID)):
+		return t, "the pane has no label, so its own title decides whether a pin applies"
 	case note != "":
 		// A pin whose agent isn't running fell back to the tab. That's not
 		// an agent Sightline is sure of, so it waits for a keypress.
 		return t, "the pinned agent isn't running, so it fell back to the tab"
 	}
 	return t, ""
+}
+
+// titleDecidesPin reports whether pane has no label while sightline.toml pins
+// some pane to an agent. Then the program in the pane chooses, by setting its
+// title, whether a pin matches it, and so which agent it goes to. That's fine
+// for a keypress, which shows the agent first, but not for queue mode.
+func (m *Model) titleDecidesPin(pane string) bool {
+	if p, ok := m.panes[m.resolve(pane)]; ok && p.Label != "" {
+		return false
+	}
+	for _, pin := range m.cfg.Pins {
+		if pin.Agent != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // autoTargetForPane is autoTarget for a pane with no entry yet.
@@ -187,7 +207,9 @@ func (m *Model) agentReady(t herdr.Target, now time.Time) string {
 // MaxAutoBatch, and hands them to the engine, which builds the message and
 // counts it against the caps.
 func (m *Model) autoSend() tea.Cmd {
-	if m.autoBusy || !m.synced || m.engine.QueuePaused() {
+	// Any send in flight, by hand or not, waits for its answer first, so two
+	// prompts can never reach an agent before Sightline knows of the first.
+	if m.autoBusy || len(m.sending) > 0 || !m.synced || m.engine.QueuePaused() {
 		return nil
 	}
 	now := m.now()
@@ -219,14 +241,31 @@ func (m *Model) autoSend() tea.Cmd {
 		if err != nil {
 			continue
 		}
-		m.autoBusy = true
+		m.autoBusy, m.autoPane = true, target.PaneID
 		for _, id := range ids {
 			m.sending[id] = true
 		}
 		m.status = fmt.Sprintf("Queue mode is checking %s before sending...", clean(target.Label))
-		return checkTarget(m.ctx, m.client, m.now, ids, true, target, text)
+		msg := checkedMsg{ids: ids, auto: true, target: target, text: text}
+		msg.wantSeq, msg.wantSeqKnown = m.tracker.StateChangeSeq(target.PaneID)
+		return checkTargetWith(m.ctx, m.client, m.now, msg)
 	}
 	return nil
+}
+
+// autoTargetStill reports whether the entries of an automatic send would
+// still go to the agent it was checked for.
+func (m *Model) autoTargetStill(msg checkedMsg) bool {
+	for _, id := range msg.ids {
+		en, ok := m.entry(id)
+		if !ok {
+			return false
+		}
+		if t, why := m.autoTarget(en); why != "" || !sameAgent(t, msg.target) {
+			return false
+		}
+	}
+	return true
 }
 
 // queueNote says where a queued entry stands: who it's waiting for and why it
@@ -259,8 +298,11 @@ func (m *Model) queueNote(en engine.Entry) string {
 // openSentView shows exactly what queue mode sent for id, if its latest send
 // was automatic. It reports whether it did.
 func (m *Model) openSentView(id engine.EntryID) bool {
+	// Only while it waits on that send. Once there's a verdict, or it's still
+	// failing with fresh lines, enter would send something else, and v shows
+	// what enter sends.
 	en, ok := m.entry(id)
-	if !ok || !en.Auto {
+	if !ok || !en.Auto || en.State != engine.StateSent {
 		return false
 	}
 	s, ok := m.engine.LastAutoSend(id)

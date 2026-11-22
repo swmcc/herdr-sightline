@@ -62,7 +62,7 @@ func TestQueueModeAsksFirst(t *testing.T) {
 	}
 	view := h.model.View()
 	for _, want := range []string{
-		"Turn on queue mode for web?",
+		"Turn on queue mode for web (pane w1:p1)?",
 		"without you pressing enter",
 		"Anyone who can put text in this pane",
 		"without you reading it first",
@@ -229,15 +229,93 @@ func TestQueueChangeOfMindDuringTheCheck(t *testing.T) {
 			}
 		})
 	}
+	// The agent did something during the check: its counter moved.
 	h := newHarness(t)
 	h.queueOn()
 	h.clock.Advance(5 * time.Second)
 	cmd := h.update(tickMsg{})
+	h.herdr.mu.Lock()
+	h.herdr.seq[agentPane]++
+	h.herdr.mu.Unlock()
+	h.run(cmd)
+	if n := len(h.herdr.promptCalls()); n != 0 {
+		t.Errorf("sent to an agent whose counter moved during the check")
+	}
+
+	// A keypress for the same agent while an automatic send is on its way
+	// waits, so two prompts can't land before Sightline knows of the first.
+	h = newHarness(t)
+	first := h.queueOn()
+	h.model.engine.Unqueue(first.ID)
+	h.update(deltaMsg{pane: webPane, gen: h.gen(webPane), delta: herdr.Delta{Lines: []string{"ReferenceError: other is not defined"}}})
+	h.clock.Advance(5 * time.Second)
+	cmd = h.update(tickMsg{})
+	if cmd == nil {
+		t.Fatal("the tick started no send")
+	}
+	h.model.selected = first.ID
+	if h.press("enter") != nil {
+		t.Error("a keypress sent to the agent queue mode was sending to")
+	}
+	h.run(cmd)
+
+	h = newHarness(t)
+	h.queueOn()
+	h.clock.Advance(5 * time.Second)
+	cmd = h.update(tickMsg{})
 	h.press("d")
 	if !h.model.entries[0].Queued {
 		t.Error("d dismissed an entry while its send was on its way")
 	}
 	h.run(cmd)
+}
+
+// An unlabelled pane sets its own title, and with it whether a pin matches.
+// Queue mode doesn't let it choose: nothing goes on its own while it's titled
+// like the pin, and nothing goes once it retitles itself out of the pin.
+func TestQueueRefusesAPaneWhoseTitleDecidesThePin(t *testing.T) {
+	h := newHarness(t)
+	h.herdr.mu.Lock()
+	h.herdr.webLabel, h.herdr.webTitle = "", "web"
+	h.herdr.mu.Unlock()
+	cfg := config.Default()
+	cfg.Pins = []config.Pin{{PaneTitle: "web", Agent: "claude"}}
+	h.model.applyConfig(config.Update{Config: cfg})
+	h.queueOn()
+	for _, title := range []string{"web", "x"} {
+		h.herdr.mu.Lock()
+		h.herdr.webTitle = title
+		h.herdr.mu.Unlock()
+		h.sync()
+		h.clock.Advance(5 * time.Second)
+		h.tickAndRun()
+		if n := len(h.herdr.promptCalls()); n != 0 {
+			t.Fatalf("titled %q: got %d prompts", title, n)
+		}
+	}
+}
+
+// Once an entry that went on its own has a verdict or fresh lines, v shows
+// what enter would send now, not what went.
+func TestViewAfterAnAutoSendShowsWhatEnterSends(t *testing.T) {
+	h := newHarness(t)
+	en := h.queueOn()
+	h.clock.Advance(2 * time.Second)
+	h.tickAndRun()
+	h.finish()
+	h.clock.Advance(time.Second)
+	h.print(" GET /other 500", "TypeError: Cannot read properties of undefined (reading 'map')", "    at NoticeList (app/notices/page.tsx:14:22)")
+	if got := h.model.entries[0].State; got != engine.StateStillFailing {
+		t.Fatalf("state = %v, want still failing", got)
+	}
+	want, err := h.model.engine.Message(en.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.press("v")
+	if h.model.viewSent || h.model.viewText != want {
+		t.Errorf("v on a still failing entry doesn't show what enter sends:\n%s", h.model.View())
+	}
 }
 
 func TestQueueOnlyGoesWhereItsSure(t *testing.T) {

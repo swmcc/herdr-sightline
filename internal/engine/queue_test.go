@@ -386,6 +386,47 @@ func TestFollowAgentKeepsTheCaps(t *testing.T) {
 	}
 }
 
+// A settle period longer than the window still spaces automatic sends, and
+// what went stays with the entry however many sends come after.
+func TestLongSettleAndKeptText(t *testing.T) {
+	opts := options()
+	opts.Settle = time.Hour
+	a := enginetest.New(opts)
+	a.Watch(qpane, "web", "next dev")
+	a.Watch(qother, "api", "rails s")
+	a.Engine.SetQueueMode(qpane, true)
+	catch(a, qpane, "Error: one")
+	first := a.Engine.QueueCandidates(qpane)
+	text, err := a.Engine.AutoSend(first, qagent, a.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Engine.AutoDelivered(first, qagent, text, a.Now())
+	a.Finish(qagent)
+	a.Advance(15 * time.Minute)
+	if why := a.Engine.AutoWait(qagent, a.Now()); why == "" {
+		t.Error("a send 15 minutes after the last one with an hour's settle period")
+	}
+	for i := range 60 {
+		catch(a, qother, "Error: "+words(i))
+	}
+	a.Engine.SetQueueMode(qother, true)
+	for i := range 60 {
+		ids := a.Engine.QueueCandidates(qother)
+		if len(ids) == 0 {
+			t.Fatalf("ran out of candidates after %d sends", i)
+		}
+		agent := fmt.Sprintf("w9:p%d", i)
+		a.Advance(10 * time.Minute)
+		if text, err := a.Engine.AutoSend(ids[:1], agent, a.Now()); err == nil {
+			a.Engine.AutoDelivered(ids[:1], agent, text, a.Now())
+		}
+	}
+	if s, ok := a.Engine.LastAutoSend(first[0]); !ok || s.Text != text {
+		t.Errorf("what went was lost after 60 more sends: %+v, %v", s, ok)
+	}
+}
+
 func TestAutoStillWanted(t *testing.T) {
 	tests := []struct {
 		name   string

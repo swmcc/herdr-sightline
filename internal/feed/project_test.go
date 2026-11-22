@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/swmcc/herdr-sightline/internal/config"
 )
@@ -68,8 +69,8 @@ func TestTrustingAProjectFile(t *testing.T) {
 	view := h.model.View()
 	for _, want := range []string{
 		"You haven't trusted it, so none of it applies.",
-		"presets go",
-		"It adds 1 preset, 1 error pattern and 1 ignore rule:",
+		"presets go (already on, so nothing changes)",
+		"It has 1 preset, 1 error pattern and 1 ignore rule:",
 		`error pattern 1 of 1, "our-framework": "^FATAL \\[app\\] .+"`,
 		`ignore rule 1 of 1: "DeprecationWarning: Buffer\\(\\) is deprecated"`,
 		"That's the end of the list.",
@@ -229,7 +230,7 @@ func TestTrustViewScrollsAndSwitches(t *testing.T) {
 	h, _ := trustHarness(t)
 	var b strings.Builder
 	for i := range 40 {
-		b.WriteString("[[ignore]]\nregex = '^WARN rule " + strings.Repeat("x", i) + "$'\n")
+		b.WriteString("[[ignore]]\nregex = '^WARN rule number " + strings.Repeat("x", i) + "$'\n")
 	}
 	one := projectFrom(t, b.String())
 	two := projectFrom(t, projectFile)
@@ -266,15 +267,36 @@ func TestTrustViewScrollsAndSwitches(t *testing.T) {
 // other character outside plain ASCII.
 func TestTrustViewEscapesBlankLetters(t *testing.T) {
 	h, _ := trustHarness(t)
-	p := projectFrom(t, "[[ignore]]\nregex = \"^WARN a\u3164\u3164b|\u05d0x\"\n")
+	p := projectFrom(t, "[[ignore]]\nregex = \"^WARN a\u3164\u3164b \u05d0x\"\n")
 	if p.err != nil {
 		t.Fatal(p.err)
 	}
 	h.update(projectsMsg{projects: []project{p}})
 	h.press("p")
 	view := h.model.View()
-	if strings.ContainsAny(view, "\u3164\u05d0") || !strings.Contains(view, `\u3164\u3164b|\u05d0x`) {
+	if strings.ContainsAny(view, "\u3164\u05d0") || !strings.Contains(view, `\u3164\u3164b \u05d0x`) {
 		t.Errorf("blank or right to left letters reach the screen raw:\n%s", view)
+	}
+}
+
+// The terminal cuts a line wider than the pane, which would hide part of a
+// rule while the end still counted as seen. No line of the view is too wide.
+func TestTrustViewFitsTheWidth(t *testing.T) {
+	long := "^WARN deprecated option in config file please update to the new format before the next release or things break " + strings.Repeat("and more words ", 20)
+	p := projectFrom(t, "[[pattern]]\nname = \"a-long-name\"\nregex = '^FATAL "+strings.Repeat("y", 300)+"'\n[[ignore]]\nregex = '"+long+"'\n")
+	if p.err != nil {
+		t.Fatal(p.err)
+	}
+	for _, width := range []int{20, 21, 37, 80, 121} {
+		h, _ := trustHarness(t)
+		h.update(tea.WindowSizeMsg{Width: width, Height: 200})
+		h.update(projectsMsg{projects: []project{p}})
+		h.press("p")
+		for i, line := range strings.Split(h.model.View(), "\n") {
+			if got := lipgloss.Width(line); got > width {
+				t.Errorf("width %d: line %d is %d wide: %q", width, i, got, line)
+			}
+		}
 	}
 }
 

@@ -1,0 +1,3 @@
+# Hide every jest failure.
+[[ignore]]
+regex = '^ +FAIL '

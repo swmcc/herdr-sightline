@@ -374,15 +374,17 @@ func (m *Model) trustLines(p project, w int) []string {
 
 	c := p.cfg
 	// The count comes first, so a rule can't pass for the end of the list.
-	add(fmt.Sprintf("It adds %s, %s and %s:",
+	add(fmt.Sprintf("It has %s, %s and %s:",
 		plural(len(c.Presets), "preset", "presets"),
 		plural(len(c.Patterns), "error pattern", "error patterns"),
 		plural(len(c.Ignores), "ignore rule", "ignore rules")))
 	// Names and rules are shown quoted with everything outside plain ASCII
 	// escaped, so where each one ends is plain and no character can make it
 	// read as something else. A long one wraps indented under its own line.
+	// Every line is wrapped to fit after the deeper indent, because the
+	// terminal cuts anything wider and a cut could hide part of a rule.
 	rule := func(label, text string) {
-		for i, l := range wrap(label+strconv.QuoteToASCII(text), w-4) {
+		for i, l := range wrap(label+strconv.QuoteToASCII(text), max(w-6, 1)) {
 			if i == 0 {
 				out = append(out, "  "+l)
 			} else {
@@ -391,11 +393,23 @@ func (m *Model) trustLines(p project, w int) []string {
 		}
 	}
 	if len(c.Presets) > 0 {
-		note := ""
-		if m.cfg.PresetsSet {
-			note = " (left out: your sightline.toml sets presets, and yours win)"
+		var on, off []string
+		for _, name := range c.Presets {
+			if slices.Contains(m.cfg.Presets, name) {
+				on = append(on, name)
+			} else {
+				off = append(off, name)
+			}
 		}
-		add("  presets " + strings.Join(c.Presets, ", ") + note)
+		switch {
+		case m.cfg.PresetsSet && len(off) > 0:
+			add("  presets " + strings.Join(off, ", ") + " (left out: your sightline.toml lists presets, and yours win)")
+		case len(off) > 0:
+			add("  presets " + strings.Join(off, ", ") + " (switched on for this repo)")
+		}
+		if len(on) > 0 {
+			add("  presets " + strings.Join(on, ", ") + " (already on, so nothing changes)")
+		}
 	}
 	for i, pat := range c.Patterns {
 		rule(fmt.Sprintf("error pattern %d of %d, %s: ", i+1, len(c.Patterns), strconv.QuoteToASCII(pat.Name)), pat.Regex.String())

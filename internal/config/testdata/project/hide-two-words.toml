@@ -1,0 +1,3 @@
+# Hide every *Error: whose second word doesn't start with f.
+[[ignore]]
+regex = '^\w+Error: \S+ [^f]'

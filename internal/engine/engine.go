@@ -357,7 +357,7 @@ func (e *Engine) Entries() []Entry {
 		r := e.records[i]
 		en := r.entry.clone()
 		if slices.Contains(e.queue.order, r) {
-			en.Queued, en.Hold = true, holdOf(en)
+			en.Queued, en.Hold = true, e.holdOf(en)
 		}
 		out = append(out, en)
 	}

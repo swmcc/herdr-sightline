@@ -292,10 +292,15 @@ Every block is built and marked exactly as a single error's is, and the whole
 message is still capped at 16 KiB. When the cap bites, lines come off the longest
 block first. A single error gets exactly the message `enter` would send.
 
-Two kinds of entry never go on their own. They wait for `enter`:
+Some entries never go on their own. They wait for `enter`:
 
 - an entry where output around it may have been missed
 - an entry with an `@` that Sightline would have to show as `＠`
+- an error that already went on its own from that pane and has come back as a new
+  entry, after its settle period or its verdict. Turning queue mode off for the
+  pane forgets what went
+- an error only a project file's pattern caught, because the repo chose that
+  pattern and a request can put text in a log line
 
 Automatic sends are capped, and the caps are fixed so a config file can't loosen
 them:

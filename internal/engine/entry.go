@@ -20,6 +20,7 @@ type Entry struct {
 	State       State
 	Agent       string // set by MarkSent
 	MaybeGap    bool   // Gap was called while this entry was being captured
+	OwnRule     bool   // only a project file's pattern caught it (#22)
 	// Note says why an entry got its state when the state alone doesn't, such
 	// as NoteAgentGone. It's empty otherwise.
 	Note string
@@ -37,6 +38,7 @@ type Entry struct {
 // grouping (#7). It's its own type so neither has to know the other's insides.
 type found struct {
 	matcher   string
+	ownRule   bool // only the source's own rules caught it
 	lines     []string
 	before    []string
 	after     []string

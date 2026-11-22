@@ -73,6 +73,19 @@ func (e *Engine) startsError(s *source, line string) (name string, ok, hidden bo
 	return name, true, false
 }
 
+// onlyOwnRules reports whether only s's own rules (a project file, #22) would
+// start an error on line, and none of Options' matchers would. Queue mode holds
+// such an error for a keypress, because a repo chose that pattern, not the
+// person.
+func (e *Engine) onlyOwnRules(s *source, line string) bool {
+	line = scanned(line)
+	if _, ok := firstMatch(line, e.opts.Matchers); ok {
+		return false
+	}
+	_, ok := firstMatch(line, s.rules.Matchers)
+	return ok
+}
+
 func firstMatch(line string, ms []Matcher) (name string, ok bool) {
 	for _, m := range ms {
 		if m.Match(line) {

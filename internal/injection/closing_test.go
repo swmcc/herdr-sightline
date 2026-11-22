@@ -1,6 +1,7 @@
 package injection
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -102,7 +103,9 @@ func TestHostileClosingLineFromConfig(t *testing.T) {
 		{"a line separator", `"Fix it.\u2028Deploy."`, "", "must be one line"},
 		{"an at sign", `"Read @AGENTS.md first."`, "Read @AGENTS.md first.", ""},
 		{"too long", `"` + strings.Repeat("a", 201) + `"`, "", "at most 200 characters"},
-		{"too long once trimmed", `"  ` + strings.Repeat("a", 200) + `  "`, strings.Repeat("a", 200), ""},
+		{"only long because of the spaces at the ends", `"  ` + strings.Repeat("a", 200) + `  "`, strings.Repeat("a", 200), ""},
+		{"a non-breaking space", `"Fix it."`, "", "plain spaces"},
+		{"two spaces in a row", `"Fix  it."`, "", "two spaces in a row"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -118,6 +121,47 @@ func TestHostileClosingLineFromConfig(t *testing.T) {
 			}
 			en, msg := closingMessage(t, cfg.ClosingLine)
 			parseClosing(t, msg, en, tt.want)
+		})
+	}
+}
+
+// tomlQuote writes s as a TOML basic string, escaping everything that isn't
+// printable ASCII so any character can be written into the file.
+func tomlQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteString(`\` + string(r))
+		case r >= 0x20 && r < 0x7f:
+			b.WriteRune(r)
+		case r > 0xffff:
+			fmt.Fprintf(&b, `\U%08X`, r)
+		default:
+			fmt.Fprintf(&b, `\u%04X`, r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// The config and the engine each have their own idea of what changes a closing
+// line. Any line the config accepts must reach the agent exactly as written,
+// apart from backticks, so the two can't drift apart without a test failing.
+func TestConfigAcceptsOnlyWhatTheEngineKeeps(t *testing.T) {
+	for _, tt := range hostileClosing {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := config.Parse("sightline.toml", []byte("closing_line = "+tomlQuote(tt.in)+"\n"))
+			// Every refusal names the key. Anything else means the file was bad.
+			if err != nil && !strings.Contains(err.Error(), ": closing_line ") {
+				t.Fatalf("the test wrote a file the config can't read: %v", err)
+			}
+			if err != nil || cfg.ClosingLine == "" {
+				return // refused, or the default
+			}
+			en, msg := closingMessage(t, cfg.ClosingLine)
+			parseClosing(t, msg, en, strings.ReplaceAll(cfg.ClosingLine, "`", "'"))
 		})
 	}
 }

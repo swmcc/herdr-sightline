@@ -540,6 +540,26 @@ func TestViewRefusesToSendAChangedMessage(t *testing.T) {
 	}
 }
 
+// A new closing_line while the view is open changes the message, so enter
+// mustn't send what wasn't on screen.
+func TestViewRefusesToSendAfterTheClosingLineChanges(t *testing.T) {
+	h := newHarness(t)
+	h.catchError()
+	h.press("v")
+	cfg := config.Default()
+	cfg.ClosingLine = "Explain the cause before changing anything."
+	h.update(configMsg{config.Update{Config: cfg}})
+	if cmd := h.press("enter"); cmd != nil {
+		t.Error("enter sent a message with a closing line that wasn't on screen")
+	}
+	if calls := h.herdr.promptCalls(); len(calls) != 0 {
+		t.Fatalf("sent %+v", calls)
+	}
+	if !strings.Contains(h.model.status, "changed") {
+		t.Errorf("status = %q, want it to say the message changed", h.model.status)
+	}
+}
+
 func TestListKeys(t *testing.T) {
 	h := newHarness(t)
 	first := h.catchError()

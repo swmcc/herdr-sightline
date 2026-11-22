@@ -513,3 +513,36 @@ func TestQueueWaitsWhileTheAgentPaneHasFocus(t *testing.T) {
 		})
 	}
 }
+
+// An entry that went on its own keeps saying so, and when, after its verdict
+// (#21, #93). One sent with enter doesn't.
+func TestVerdictSaysItWentOnItsOwn(t *testing.T) {
+	const went = "It went on its own at 09:00:04."
+	tests := []struct {
+		state engine.State
+		note  string
+		auto  bool
+		want  string
+	}{
+		{engine.StateFixed, "", true, "✓ fixed, it stopped appearing after claude (tab 2) finished. " + went},
+		{engine.StateFixed, "", false, "✓ fixed, it stopped appearing after claude (tab 2) finished"},
+		{engine.StateUnverified, "", true, "? unverified, nothing ran to prove it either way. " + went + " Check it yourself"},
+		{engine.StateUnverified, "", false, "? unverified, nothing ran to prove it either way. Check it yourself"},
+		{engine.StateUnverified, "the pane went quiet", true, "? unverified, the pane went quiet. " + went + " Send it again or check it yourself"},
+		{engine.StateUnverified, "the pane went quiet", false, "? unverified, the pane went quiet. Send it again or check it yourself"},
+		{engine.StateStillFailing, "", true, "✗ still failing after claude (tab 2) finished, so queue mode stopped for this pane. " + went + " → claude (tab 2)"},
+		{engine.StateStillFailing, "", false, "✗ still failing after claude (tab 2) finished. → claude (tab 2)"},
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%v %q auto %v", tt.state, tt.note, tt.auto), func(t *testing.T) {
+			h := newHarness(t)
+			en := h.catchError()
+			en.State, en.Note, en.Agent = tt.state, tt.note, agentPane
+			en.Auto, en.SentAt = tt.auto, time.Date(2026, 1, 1, 9, 0, 4, 0, time.UTC)
+			h.model.labels[agentPane] = "claude (tab 2)" // as the send would have kept it
+			if who, _ := h.model.entryTarget(en); who != tt.want {
+				t.Errorf("line = %q\nwant   %q", who, tt.want)
+			}
+		})
+	}
+}

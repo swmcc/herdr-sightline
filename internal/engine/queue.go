@@ -459,6 +459,18 @@ func (e *Engine) renameQueue(from, to SourceID) {
 		delete(q.wentAuto, from)
 		q.wentAuto[to] = fps
 	}
+	// The log and each entry's copy of its send name the pane too, so a shows
+	// where it is now.
+	for i := range q.log {
+		if q.log[i].Source == from {
+			q.log[i].Source = to
+		}
+	}
+	for _, r := range e.records {
+		if r.auto != nil && r.auto.Source == from {
+			r.auto.Source = to
+		}
+	}
 }
 
 // unwatchQueue turns queue mode off for a source that's no longer watched.

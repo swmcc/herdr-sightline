@@ -1,0 +1,18 @@
+// The same environment as `make setup` gives on my machine, for Codespaces and
+// cloud agents. Any recent Go will do: the toolchain line in go.mod fetches the
+// exact version the first time something builds.
+{
+  "name": "Sightline",
+  "image": "mcr.microsoft.com/devcontainers/go:1",
+  "containerEnv": {
+    "GOTOOLCHAIN": "auto"
+  },
+  // shellcheck lints scripts/install.sh. make setup installs staticcheck,
+  // govulncheck and the git hooks.
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y shellcheck && make setup",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"]
+    }
+  }
+}

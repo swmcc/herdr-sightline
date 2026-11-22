@@ -45,6 +45,23 @@ run background daemons. Close the feed and watching stops. That's intended.
 `herdr plugin link` doesn't run build steps, so always `make build` before trying a
 change in herdr.
 
+## Picking up an issue
+
+Issues labelled `🤖 agent ready` have a clear scope, say when they're done and have no
+open design questions, so an agent can take one on alone. Never put the label on an
+issue labelled `💭 needs design`, and take it off if a design question turns up.
+
+## Checking a change
+
+Adapter tests don't need herdr. `internal/herdr/herdrtest` is a fake that speaks the
+socket protocol: `herdrtest.Herdr` holds panes, agents and tabs, records prompts and
+pushes events in both envelope shapes, and `herdrtest.Server` answers each method
+however the test says. Use them before writing another fake.
+
+To try a change in a real herdr, follow
+[Checking your change in herdr](../CONTRIBUTING.md#checking-your-change-in-herdr). It
+works from a shell inside herdr. Never press `enter` in the feed on a person's behalf.
+
 ## Go conventions
 
 - Table driven tests. Fixtures live in `testdata/`.

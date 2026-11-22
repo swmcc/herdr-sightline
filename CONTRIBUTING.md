@@ -27,6 +27,11 @@ or [🙋 help wanted](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aope
 are good places to start. Anything labelled `💭 needs design` needs a decision in the
 thread before any code.
 
+Issues labelled [🤖 agent ready](https://github.com/swmcc/herdr-sightline/issues?q=is%3Aopen+label%3A%22%F0%9F%A4%96+agent+ready%22)
+are specified well enough for a coding agent to finish alone. An issue gets the label
+when it has a clear scope, says when it's done and has no open design questions. It
+never goes on an issue that still needs design. They suit people too.
+
 ## Getting set up
 
 You'll need [Go](https://go.dev/dl/) 1.24 or newer and, to try your change for real,
@@ -51,6 +56,47 @@ Push your branch to your fork and open the pull request against `main` on
 
 `herdr plugin link` doesn't run build steps, so run `make link` again after each change.
 `make unlink` takes it back out.
+
+If you'd rather not install anything, the repo has a [dev container](.devcontainer/devcontainer.json)
+that runs `make setup` for you, so a Codespace gets the same tools and hooks.
+
+## Checking your change in herdr
+
+Tests come first, and they don't need herdr. `internal/herdr/herdrtest` is a fake herdr
+that speaks the socket protocol. `herdrtest.Herdr` holds panes, agents and tabs,
+answers reads from them, records prompts and pushes events in both of herdr's envelope
+shapes. `herdrtest.Server` underneath it answers each method however the test says,
+for when you want to spell out an odd reply yourself.
+
+When a change affects what the feed shows or what reaches an agent, try it in a real
+herdr as well. These steps work from a shell inside herdr, so an agent can follow them
+end to end. Swap in the pane IDs that `herdr pane list` shows you:
+
+```sh
+make check
+make link    # builds bin/sightline and links the plugin
+
+# A pane that prints an error a few seconds after it starts
+herdr pane split --current --direction down --cwd "$PWD"
+herdr pane list    # note the new pane's ID, say w1:p5
+herdr pane run w1:p5 'sleep 3; echo "ReferenceError: fetchUser is not defined"; sleep 600'
+
+# A feed that watches it
+herdr pane split --current --direction right --cwd "$PWD"
+herdr pane list    # say w1:p6
+herdr pane run w1:p6 'bin/sightline feed --watch w1:p5'
+
+# What the feed shows
+herdr pane read w1:p6 --source recent-unwrapped --lines 40
+```
+
+The error should be in the feed within a couple of seconds. A feed started by hand only
+watches the panes given with `--watch`. To check the watch action and the feed herdr
+opens itself, focus the pane and run **Sightline: watch this pane** instead.
+
+Don't press `enter` in the feed unless you're happy for the agent in that tab to get the
+error. Sending is meant to need a person at the keyboard. When you've finished, close
+the panes with `herdr pane close <id>`.
 
 ## Making a change
 
@@ -146,6 +192,12 @@ The project settings format Go files and check the prose straight after each edi
 
 The git hooks from `make setup` run the same checks whichever tool you use, so an agent
 can't push something that `make check` would reject.
+
+Agents that work in the cloud start ready. GitHub's Copilot coding agent runs
+[`copilot-setup-steps.yml`](.github/workflows/copilot-setup-steps.yml) first and
+anything that understands dev containers uses [`.devcontainer`](.devcontainer/devcontainer.json).
+Both end with `make setup`. Point an agent at an issue labelled `🤖 agent ready` and it
+has everything it needs, including the [steps to check its change in herdr](#checking-your-change-in-herdr).
 
 ## Security
 

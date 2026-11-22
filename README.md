@@ -389,7 +389,7 @@ send one to an agent with a keypress and find out if the fix worked.
 - [x] Build and publish release binaries ([#29](https://github.com/swmcc/herdr-sightline/issues/29))
 - [x] Protect `main` and run the tests on every pull request ([#31](https://github.com/swmcc/herdr-sightline/issues/31))
 - [x] CONTRIBUTING.md and the contribution rules ([#33](https://github.com/swmcc/herdr-sightline/issues/33))
-- [ ] Make it easy for coding agents to pick up issues ([#34](https://github.com/swmcc/herdr-sightline/issues/34))
+- [x] Make it easy for coding agents to pick up issues ([#34](https://github.com/swmcc/herdr-sightline/issues/34))
 - [ ] Release v0.1 ([#18](https://github.com/swmcc/herdr-sightline/issues/18))
 
 ### [v0.2 · Queue mode](https://github.com/swmcc/herdr-sightline/milestone/2)

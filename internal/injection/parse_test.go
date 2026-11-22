@@ -193,64 +193,9 @@ func checkClosing(msg string, en engine.Entry, closing string) (m message, err e
 		fail("after the block = %q, want a blank line and %q", rest, tail)
 	}
 
-	if m.named {
-		if len(block) == 0 || !strings.HasPrefix(block[0], aboutTitle) {
-			fail("header says there's a name, block starts %q", block)
-		}
-		m.title = strings.TrimPrefix(block[0], aboutTitle)
-		block = block[1:]
-		checkLabel(fail, "title", m.title, titleAllowed, 32)
-	}
-	if m.commanded {
-		if len(block) == 0 || !strings.HasPrefix(block[0], aboutCmd) {
-			fail("header says there's a command, block has %q", block)
-		}
-		m.command = strings.TrimPrefix(block[0], aboutCmd)
-		block = block[1:]
-		checkLabel(fail, "command", m.command, commandAllowed, 48)
-	}
-	if m.named || m.commanded {
-		if len(block) == 0 || block[0] != "|" {
-			fail("no empty line after the name and command")
-		}
-		block = block[1:]
-	}
-	for _, l := range block {
-		switch {
-		case l == "|":
-			m.body = append(m.body, "")
-		case strings.HasPrefix(l, "| "):
-			m.body = append(m.body, strings.TrimPrefix(l, "| "))
-		default:
-			fail("output line %q isn't marked %q", l, "| ")
-		}
-	}
+	m.title, m.command, m.body = checkBlock(fail, block, m.fence, m.named, m.commanded)
 	if len(m.body) != shown {
 		fail("header says %d lines of output, the block has %d", shown, len(m.body))
-	}
-
-	// The fence can only be closed by a line of nothing but backticks, at least
-	// as many as it has. Every line inside starts with "|", so none can, but the
-	// fence must also outlast every run, which is what Markdown readers check.
-	for _, l := range append(block, m.title, m.command) {
-		if r := longestRun(l, '`'); r >= len(m.fence) {
-			fail("a line inside the block has a run of %d backticks, the fence has %d", r, len(m.fence))
-		}
-		// "@path" can make an agent read a file, so no "@" from the pane.
-		if strings.Contains(l, "@") {
-			fail("pane text %q has an @ an agent could take for a file mention", l)
-		}
-	}
-
-	for _, l := range m.body {
-		n := utf8.RuneCountInString(l)
-		if n <= maxLineRunes {
-			continue
-		}
-		cut := cutLine.FindStringSubmatch(l)
-		if cut == nil || utf8.RuneCountInString(cut[1]) != maxLineRunes {
-			fail("output line of %d characters isn't cut at %d with a marker: %.80q", n, maxLineRunes, l)
-		}
 	}
 
 	total := len(en.Before) + len(en.Lines) + len(en.After)
@@ -273,28 +218,107 @@ func checkClosing(msg string, en engine.Entry, closing string) (m message, err e
 	if m.leftContext+m.leftError > 0 {
 		rebuilt += noteSentence(m.leftContext, m.leftError) + "\n"
 	}
-	rebuilt += "\n" + m.fence + "text\n"
-	if m.named {
-		rebuilt += aboutTitle + m.title + "\n"
-	}
-	if m.commanded {
-		rebuilt += aboutCmd + m.command + "\n"
-	}
-	if m.named || m.commanded {
-		rebuilt += "|\n"
-	}
-	for _, l := range m.body {
-		if l == "" {
-			rebuilt += "|\n"
-		} else {
-			rebuilt += "| " + l + "\n"
-		}
-	}
-	rebuilt += m.fence + "\n\n" + tail + "\n"
+	rebuilt += "\n" + rebuildBlock(m.fence, m.title, m.command, m.named, m.commanded, m.body)
+	rebuilt += "\n" + tail + "\n"
 	if rebuilt != msg {
 		fail("message differs from the format rebuilt from its own counts:\n%s", quoteLines(rebuilt))
 	}
 	return m, nil
+}
+
+// checkBlock reads the lines inside one fenced block, the fence lines left
+// out, and gives back the name, the command and the output without their
+// marks. A batch's blocks are each held to it as a single error's block is.
+//
+//   - Every line starts with "|". The name and command are marked "|# " and
+//     come first, exactly when the header says they're there, then a "|" alone.
+//     Every other line is "| " and its text, or "|" alone.
+//   - No line has a run of backticks as long as the fence, or an "@".
+//   - Every line of output is at most 500 characters plus a cut marker.
+func checkBlock(fail func(string, ...any), block []string, fence string, named, commanded bool) (title, command string, body []string) {
+	inside := block
+	if named {
+		if len(block) == 0 || !strings.HasPrefix(block[0], aboutTitle) {
+			fail("header says there's a name, block starts %q", block)
+		}
+		title = strings.TrimPrefix(block[0], aboutTitle)
+		block = block[1:]
+		checkLabel(fail, "title", title, titleAllowed, 32)
+	}
+	if commanded {
+		if len(block) == 0 || !strings.HasPrefix(block[0], aboutCmd) {
+			fail("header says there's a command, block has %q", block)
+		}
+		command = strings.TrimPrefix(block[0], aboutCmd)
+		block = block[1:]
+		checkLabel(fail, "command", command, commandAllowed, 48)
+	}
+	if named || commanded {
+		if len(block) == 0 || block[0] != "|" {
+			fail("no empty line after the name and command")
+		}
+		block = block[1:]
+	}
+	for _, l := range block {
+		switch {
+		case l == "|":
+			body = append(body, "")
+		case strings.HasPrefix(l, "| "):
+			body = append(body, strings.TrimPrefix(l, "| "))
+		default:
+			fail("output line %q isn't marked %q", l, "| ")
+		}
+	}
+
+	// The fence can only be closed by a line of nothing but backticks, at least
+	// as many as it has. Every line inside starts with "|", so none can, but the
+	// fence must also outlast every run, which is what Markdown readers check.
+	for _, l := range inside {
+		if !strings.HasPrefix(l, "|") {
+			fail("line inside the block doesn't start with |: %q", l)
+		}
+		if r := longestRun(l, '`'); r >= len(fence) {
+			fail("a line inside the block has a run of %d backticks, the fence has %d", r, len(fence))
+		}
+		// "@path" can make an agent read a file, so no "@" from the pane.
+		if strings.Contains(l, "@") {
+			fail("pane text %q has an @ an agent could take for a file mention", l)
+		}
+	}
+
+	for _, l := range body {
+		n := utf8.RuneCountInString(l)
+		if n <= maxLineRunes {
+			continue
+		}
+		cut := cutLine.FindStringSubmatch(l)
+		if cut == nil || utf8.RuneCountInString(cut[1]) != maxLineRunes {
+			fail("output line of %d characters isn't cut at %d with a marker: %.80q", n, maxLineRunes, l)
+		}
+	}
+	return title, command, body
+}
+
+// rebuildBlock writes a block back from what checkBlock read out of it.
+func rebuildBlock(fence, title, command string, named, commanded bool, body []string) string {
+	s := fence + "text\n"
+	if named {
+		s += aboutTitle + title + "\n"
+	}
+	if commanded {
+		s += aboutCmd + command + "\n"
+	}
+	if named || commanded {
+		s += "|\n"
+	}
+	for _, l := range body {
+		if l == "" {
+			s += "|\n"
+		} else {
+			s += "| " + l + "\n"
+		}
+	}
+	return s + fence + "\n"
 }
 
 // forbidden reports whether r is a character that must never reach an agent:

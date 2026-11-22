@@ -158,9 +158,10 @@ func TestReconnectCallsGap(t *testing.T) {
 				t.Fatal("the error after the reconnect wasn't caught")
 			}
 			// With the mode kept, the line isn't redrawn at all: both texts are
-			// kept as printed, and nothing was drawn over to flag.
-			if rc.wantGap && (redrawn.Lines[0] != "Error: realok" || redrawn.MaybeGap) {
-				t.Fatalf("after Gap the line = %q MaybeGap %v, want it kept as printed and unflagged", redrawn.Lines[0], redrawn.MaybeGap)
+			// kept as printed. A terminal may show something else, so it's
+			// flagged (#95).
+			if rc.wantGap && (redrawn.Lines[0] != "Error: realok" || !redrawn.MaybeGap) {
+				t.Fatalf("after Gap the line = %q MaybeGap %v, want it kept as printed and flagged", redrawn.Lines[0], redrawn.MaybeGap)
 			}
 		})
 	}

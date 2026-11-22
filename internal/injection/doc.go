@@ -8,6 +8,10 @@
 // not from the engine's code, so a change to the engine can't quietly change
 // what the tests accept.
 //
+// Queue mode's batches of 2 to 5 errors go through the same corpus by way of
+// AutoSend and are read by a batch parser held to the same rules. See
+// batch_test.go.
+//
 // The corpus lives in internal/engine/testdata/injection. See corpus_test.go for
 // its format.
 package injection

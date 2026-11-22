@@ -3,6 +3,11 @@
 // It speaks the same newline delimited JSON as herdr: one request per
 // connection, answered and then closed, except events.subscribe, which keeps its
 // connection open so the test can push events and drop it to fake a restart.
+//
+// There are two levels. Server answers each method with whatever the test says,
+// which suits testing how the client copes with odd replies. Herdr sits on top
+// and holds panes, agents and tabs, which suits testing what the adapter does
+// with them. Neither needs herdr installed.
 package herdrtest
 
 import (
@@ -53,8 +58,11 @@ type Server struct {
 
 	mu       sync.Mutex
 	handlers map[string]Handler
-	conns    map[net.Conn]struct{}
-	closed   bool
+	// subscribed, when set, hears about each subscription before its client
+	// does.
+	subscribed func(*Subscriber)
+	conns      map[net.Conn]struct{}
+	closed     bool
 }
 
 // New starts a server and stops it when the test ends.
@@ -165,6 +173,7 @@ func (s *Server) serve(conn net.Conn) {
 
 	s.mu.Lock()
 	h, ok := s.handlers[req.Method]
+	subscribed := s.subscribed
 	s.mu.Unlock()
 
 	var result any
@@ -178,8 +187,22 @@ func (s *Server) serve(conn net.Conn) {
 		herr = &ErrorBody{Code: "unknown_method", Message: "no handler for " + req.Method}
 	}
 
-	sub := &Subscriber{conn: conn}
+	sub := &Subscriber{conn: conn, done: make(chan struct{})}
+	defer close(sub.done)
 	raw, isRaw := result.(Raw)
+	subscribing := req.Method == "events.subscribe" && herr == nil && (!isRaw || raw != "")
+	if subscribing {
+		var params struct {
+			Subscriptions json.RawMessage `json:"subscriptions"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
+		sub.Subscriptions = params.Subscriptions
+		// Before the reply, so the subscription is in place by the time the
+		// client hears it started and can make something happen.
+		if subscribed != nil {
+			subscribed(sub)
+		}
+	}
 	switch {
 	case herr != nil:
 		_ = sub.write(map[string]any{"id": req.ID, "error": herr})
@@ -205,15 +228,19 @@ func (s *Server) serve(conn net.Conn) {
 		}
 	}
 
-	var params struct {
-		Subscriptions json.RawMessage `json:"subscriptions"`
-	}
-	_ = json.Unmarshal(req.Params, &params)
-	sub.Subscriptions = params.Subscriptions
-	select {
-	case s.subscribers <- sub:
-	case <-s.done:
-		return
+	if subscribed != nil {
+		// Something else is already keeping track, so nobody has to read the
+		// channel. Offer it without waiting.
+		select {
+		case s.subscribers <- sub:
+		default:
+		}
+	} else {
+		select {
+		case s.subscribers <- sub:
+		case <-s.done:
+			return
+		}
 	}
 
 	// Hold the connection until the client hangs up or the test drops it.
@@ -229,9 +256,35 @@ type Subscriber struct {
 
 	conn net.Conn
 	mu   sync.Mutex
+	// done closes when the connection has ended.
+	done chan struct{}
 }
 
-// Push sends an event envelope: {"event": event, "data": data}.
+// ended reports whether the subscription's connection has gone.
+func (sub *Subscriber) ended() bool {
+	select {
+	case <-sub.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// PushLifecycle sends an event in herdr's other envelope shape, the one its
+// lifecycle events use: an underscored name that's repeated as data.type, as in
+// {"event":"pane_closed","data":{"type":"pane_closed","pane_id":"w1:p2"}}.
+func (sub *Subscriber) PushLifecycle(event string, fields map[string]any) error {
+	data := map[string]any{"type": event}
+	for k, v := range fields {
+		if k != "type" {
+			data[k] = v
+		}
+	}
+	return sub.Push(event, data)
+}
+
+// Push sends an event envelope: {"event": event, "data": data}. That's the
+// shape herdr uses for subscription events such as pane.agent_status_changed.
 func (sub *Subscriber) Push(event string, data any) error {
 	return sub.write(map[string]any{"event": event, "data": data})
 }

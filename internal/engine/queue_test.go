@@ -726,13 +726,13 @@ func TestAutoLogFollowsAPaneThatMoves(t *testing.T) {
 	const moved engine.SourceID = "w2:p1"
 	tests := []struct {
 		name    string
-		deliver func(a *enginetest.Adapter, ids []engine.EntryID, text string)
+		deliver func(a *enginetest.Adapter, ids []engine.EntryID, text, agent string)
 	}{
-		{"arrived", func(a *enginetest.Adapter, ids []engine.EntryID, text string) {
-			a.Engine.AutoDelivered(ids, qagent, text, a.Now())
+		{"arrived", func(a *enginetest.Adapter, ids []engine.EntryID, text, agent string) {
+			a.Engine.AutoDelivered(ids, agent, text, a.Now())
 		}},
-		{"may not have arrived", func(a *enginetest.Adapter, ids []engine.EntryID, text string) {
-			a.Engine.AutoUnsure(ids, qagent, text, a.Now())
+		{"may not have arrived", func(a *enginetest.Adapter, ids []engine.EntryID, text, agent string) {
+			a.Engine.AutoUnsure(ids, agent, text, a.Now())
 		}},
 	}
 	for _, tt := range tests {
@@ -746,13 +746,26 @@ func TestAutoLogFollowsAPaneThatMoves(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			tt.deliver(a, ids, text)
+			tt.deliver(a, ids, text, qagent)
+			// A send from another pane, to another agent, keeps its own id.
+			const otherAgent = "w1:p5"
+			a.Engine.SetQueueMode(qother, true)
+			catch(a, qother, "Error: other")
+			others := a.Engine.QueueCandidates(qother)
+			otherText, err := a.Engine.AutoSend(others, otherAgent, a.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			tt.deliver(a, others, otherText, otherAgent)
 			if !a.Engine.Rename(qpane, moved) {
 				t.Fatal("Rename moved nothing")
 			}
-			log := a.Engine.AutoLog()
-			if len(log) != 1 || log[0].Source != moved {
-				t.Errorf("AutoLog = %+v, want one send from %s", log, moved)
+			log := a.Engine.AutoLog() // newest first
+			if len(log) != 2 || log[0].Source != qother || log[1].Source != moved {
+				t.Errorf("AutoLog = %+v, want a send from %s then one from %s", log, qother, moved)
+			}
+			if s, ok := a.Engine.LastAutoSend(others[0]); !ok || s.Source != qother {
+				t.Errorf("LastAutoSend for the other pane = %+v, %v, want a send from %s", s, ok, qother)
 			}
 			if s, ok := a.Engine.LastAutoSend(en.ID); !ok || s.Source != moved {
 				t.Errorf("LastAutoSend = %+v, %v, want a send from %s", s, ok, moved)

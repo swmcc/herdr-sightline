@@ -479,3 +479,37 @@ func TestQueueWaitsWhenAPinFellBackToTheTab(t *testing.T) {
 		})
 	}
 }
+
+// You may be typing in the agent's pane when it goes idle, and herdr doesn't
+// say whether a prompt clears a half typed draft. So nothing goes on its own
+// while that pane has focus: not when the snapshot says so, and not when focus
+// arrives between the snapshot and the check just before sending. Once focus
+// moves away it goes.
+func TestQueueWaitsWhileTheAgentPaneHasFocus(t *testing.T) {
+	setFocus := func(h *harness, pane string) {
+		h.herdr.mu.Lock()
+		h.herdr.focused = pane
+		h.herdr.mu.Unlock()
+	}
+	tests := []struct {
+		name  string
+		setUp func(h *harness)
+		want  int
+	}{
+		{"focused in the snapshot", func(h *harness) { setFocus(h, agentPane); h.sync() }, 0},
+		{"focused just before sending", func(h *harness) { setFocus(h, agentPane) }, 0},
+		{"focus somewhere else", func(h *harness) { setFocus(h, webPane); h.sync() }, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.queueOn()
+			tt.setUp(h)
+			h.clock.Advance(5 * time.Second)
+			h.tickAndRun()
+			if n := len(h.herdr.promptCalls()); n != tt.want {
+				t.Errorf("got %d prompts, want %d", n, tt.want)
+			}
+		})
+	}
+}

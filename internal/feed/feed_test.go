@@ -63,6 +63,7 @@ type fakeHerdr struct {
 	term               map[string]string // agent pane to its terminal id, if it moved
 	text               string            // what pane.read returns for the watched pane
 	webLabel, webTitle string            // the watched pane's label and terminal title
+	focused            string            // the pane herdr says has focus, if any
 	cwd                string            // the watched pane's working directory
 	prompts            []promptCall
 	reads              atomic.Int64
@@ -97,7 +98,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 			if pane == otherAgent {
 				tab = "w1:t3"
 			}
-			panes = append(panes, map[string]any{"pane_id": pane, "terminal_id": f.terminalOf(pane), "workspace_id": "w1", "tab_id": tab, "agent": f.kindOf(pane), "agent_status": st})
+			panes = append(panes, map[string]any{"pane_id": pane, "terminal_id": f.terminalOf(pane), "workspace_id": "w1", "tab_id": tab, "agent": f.kindOf(pane), "agent_status": st, "focused": pane == f.focused})
 		}
 		return map[string]any{"type": "pane_list", "panes": panes}, nil
 	})

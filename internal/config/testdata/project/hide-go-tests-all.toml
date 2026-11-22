@@ -1,0 +1,3 @@
+# Hide every Go test failure, since every test name starts with Test.
+[[ignore]]
+regex = '^--- FAIL: Test'

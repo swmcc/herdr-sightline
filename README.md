@@ -315,8 +315,9 @@ version or `esc` to leave it. `x` stops trusting it.
   Python traceback and so on) followed by any message, with or without a process
   manager label in front. A regex with a run of spaces in it is refused too, since
   spaces could push the rest of it off the screen.
-- A project's ignore rule has to start with `^` and at least 12 characters of fixed
-  text that name an error and its message, like `^Error: flaky upstream`. It can't
+- A project's ignore rule has to start with `^` and fixed text that names an error
+  and at least 12 characters of its message, like `^Error: flaky upstream`. A
+  process manager label at the start doesn't count towards that. It can't
   match anywhere in a line or start with a class, an alternation or `(?i)`. Nor can
   it name only a process manager label. Those are the ways a rule hides a whole
   kind of error. Your own ignore rules have no such limit.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"regexp/syntax"
 	"slices"
 	"strconv"
@@ -74,6 +75,9 @@ var errorHeads = []string{
 	"PermissionError: ", "ConnectionError: ", "TimeoutError: ",
 	"error: ", "ERROR: ", "ERROR ", "ERROR in ", "FATAL ", "fatal: ", "fatal error: ",
 	"panic: ", "panic: runtime error: ", "thread 'main' panicked at ",
+	"panic: runtime error: invalid memory address or nil pointer dereference",
+	"panic: runtime error: index out of range ", "thread 'main' panicked at src/",
+	"TypeError: Cannot read properties of ", "--- FAIL: Test",
 	"error[E0425]: ", "error TS2304: ", "src/main.c:1:1: error: ",
 	"FAIL ", " FAIL ", "FAILED ", "--- FAIL: ", "test result: FAILED. ",
 	`Exception in thread "main" java.lang.RuntimeException: `,
@@ -81,9 +85,16 @@ var errorHeads = []string{
 	"NoMethodError (undefined method ", "ActionView::Template::Error (",
 }
 
-// labels are the process manager labels the presets match through (see
-// labelPrefix in the engine): docker compose, foreman and turborepo. Every
-// probe is tried bare and behind each one.
+// labelShape is the engine's labelPrefix (docker compose, foreman and
+// turborepo labels), with the label required. A test keeps the two in step.
+// A project's ignore rule is judged on what comes after any label, so naming
+// the repo's own service can't stand in for naming an error.
+const labelShape = `^(?:(?:\d{2}:\d{2}:\d{2} )?[a-z0-9][\w.-]* *\| |[\w@./-]+:[A-Za-z][\w-]*: )`
+
+var labelRE = regexp.MustCompile(labelShape)
+
+// labels are examples of each label shape. Every probe is tried bare and
+// behind each one.
 var labels = []string{"", "web-1  | ", "12:00:00 web.1  | ", "web:dev: "}
 
 // projectErrors are the lines an ignore rule from a project is tried against:
@@ -119,10 +130,12 @@ var projectErrors = func() []string {
 }()
 
 // minIgnoreHead is the shortest fixed text a project's ignore rule can start
-// with, and minPastHead how much of it must come after a known error head.
+// with, and minMessage how much of it must be the error's message, after
+// its head. Four characters is a word stem, and the first word of a message is
+// often its kind ("invalid", "Cannot", "Test"), so it's longer than that.
 const (
 	minIgnoreHead = 12
-	minPastHead   = 4
+	minMessage    = 12
 )
 
 // ignoreHead is the fixed text every match of expr starts with, after the ^,
@@ -162,7 +175,7 @@ func ignoreHead(expr string) (head string, anchored bool) {
 //     alternation or (?i) in them, which is where a rule hides a whole kind
 //     of error.
 //   - name an error and its message: a known error head or a ": ", followed
-//     by at least minPastHead characters of the message. A label or a word on
+//     by at least minMessage characters of the message. A label or a word on
 //     its own (^my-frontend-1 | ) could hide everything a process prints.
 //
 // It costs some rules that would be fine, but those can go in the person's
@@ -175,19 +188,23 @@ func tooLoose(expr string) string {
 	if len(head) < minIgnoreHead {
 		return fmt.Sprintf("has to start with ^ and at least %d characters of fixed text, with no class, alternation or (?i) in them, so it's plain what it hides", minIgnoreHead)
 	}
-	named := fmt.Sprintf("has to name the message, with at least %d characters of fixed text after the error's own start, so it hides one error and not a kind of them", minPastHead)
+	// Judge what's after a label, if the rule starts with one.
+	if loc := labelRE.FindStringIndex(head); loc != nil {
+		head = head[loc[1]:]
+	}
+	named := fmt.Sprintf("has to name the message, with at least %d characters of fixed text after the error's own start, so it hides one error and not a kind of them", minMessage)
 	known := false
 	for _, h := range errorHeads {
 		h = strings.TrimSpace(h)
 		if strings.HasPrefix(head, h) {
 			known = true
-			if len(strings.TrimSpace(head[len(h):])) < minPastHead {
+			if len(strings.TrimSpace(head[len(h):])) < minMessage {
 				return named
 			}
 		}
 	}
 	if i := strings.LastIndex(head, ": "); i >= 0 {
-		if len(strings.TrimSpace(head[i+2:])) < minPastHead {
+		if len(strings.TrimSpace(head[i+2:])) < minMessage {
 			return named
 		}
 	} else if !known {
@@ -212,7 +229,17 @@ func ParseProject(name string, data []byte) (Project, error) {
 
 	var keys map[string]any
 	mapErr := toml.Unmarshal(data, &keys)
-	if mapErr == nil {
+	if mapErr != nil {
+		// Parse has a better message for a syntax error, but it compiles every
+		// regex, so it only runs on a file too small for that to matter.
+		if len(data) <= 4<<10 {
+			if _, err := Parse(name, data); err != nil {
+				return Project{}, err
+			}
+		}
+		return Project{}, &Error{File: name, Msg: fmt.Sprintf("couldn't check which keys it sets: %v", mapErr)}
+	}
+	{
 		if errs := disallowed(name, data, keys); len(errs) > 0 {
 			sortErrors(errs)
 			return Project{}, errors.Join(errs...)
@@ -228,10 +255,6 @@ func ParseProject(name string, data []byte) (Project, error) {
 	cfg, err := Parse(name, data)
 	if err != nil {
 		return Project{}, err
-	}
-	if mapErr != nil {
-		// The keys weren't checked, so it isn't used, however Parse got on.
-		return Project{}, &Error{File: name, Msg: fmt.Sprintf("couldn't check which keys it sets: %v", mapErr)}
 	}
 
 	p := Project{Patterns: cfg.Patterns, Ignores: cfg.Ignores}

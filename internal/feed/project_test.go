@@ -253,7 +253,7 @@ func TestTrustViewScrollsAndSwitches(t *testing.T) {
 	h, _ := trustHarness(t)
 	var b strings.Builder
 	for i := range 40 {
-		b.WriteString("[[ignore]]\nregex = '^WARN: rule number " + strings.Repeat("x", i) + "$'\n")
+		b.WriteString("[[ignore]]\nregex = '^WARN: rule number one " + strings.Repeat("x", i) + "$'\n")
 	}
 	one := projectFrom(t, b.String())
 	two := projectFrom(t, projectFile)

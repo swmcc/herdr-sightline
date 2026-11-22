@@ -33,10 +33,18 @@ const maxHidden = 50
 // They apply from the next line fed. Unlike a new ignore rule in Options, a
 // source's ignore rule never dismisses an entry already filed, and never
 // touches a capture in progress.
-func (e *Engine) SetRules(id SourceID, r Rules) {
-	if s, ok := e.sources[id]; ok {
-		s.rules = Rules{Matchers: clip(r.Matchers), Ignores: clip(r.Ignores)}
+//
+// Every call counts as a change. A fix being checked on the source can't be
+// called fixed after one, because the pattern that caught its error may have
+// gone, and then the error coming back wouldn't be seen. So call it only when
+// the rules really change.
+func (e *Engine) SetRules(id SourceID, r Rules, now time.Time) {
+	s, ok := e.sources[id]
+	if !ok {
+		return
 	}
+	s.rules = Rules{Matchers: clip(r.Matchers), Ignores: clip(r.Ignores)}
+	e.uncertainRead(id, now, false)
 }
 
 func clip(ms []Matcher) []Matcher { return append([]Matcher(nil), ms...) }

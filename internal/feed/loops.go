@@ -672,6 +672,14 @@ func (l *loops) noteCwds(cwds map[string]string) {
 	}
 }
 
+// lookAgain asks the projects loop for a fresh look now. It never blocks.
+func (l *loops) lookAgain() {
+	select {
+	case l.cwdsMoved <- struct{}{}:
+	default:
+	}
+}
+
 func (l *loops) currentCwds() map[string]string {
 	l.cwdsMu.Lock()
 	defer l.cwdsMu.Unlock()
@@ -685,7 +693,7 @@ func (l *loops) currentCwds() map[string]string {
 func (l *loops) runProjects(stateDir string) {
 	t := time.NewTicker(l.every.Config)
 	defer t.Stop()
-	parsed := map[config.Sum]parsedProject{}
+	parsed := map[parseKey]parsedProject{}
 	var last projectsMsg
 	first := true
 	for {
@@ -704,8 +712,9 @@ func (l *loops) runProjects(stateDir string) {
 	}
 }
 
-// parsedProject is a project file parsed once, kept by its sum so an
-// unchanged file isn't parsed again every look.
+// parsedProject is a project file parsed once, kept by its repo and sum so an
+// unchanged file isn't parsed again every look. The repo is in the key because
+// an error names the file's path.
 type parsedProject struct {
 	cfg config.Project
 	err error
@@ -714,7 +723,12 @@ type parsedProject struct {
 // readProjects finds the project file for each pane's repo and whether it's
 // trusted. The sum is of the very bytes that were parsed, so what's trusted is
 // what applies.
-func readProjects(cwds map[string]string, stateDir string, parsed map[config.Sum]parsedProject) projectsMsg {
+type parseKey struct {
+	root string
+	sum  config.Sum
+}
+
+func readProjects(cwds map[string]string, stateDir string, parsed map[parseKey]parsedProject) projectsMsg {
 	var msg projectsMsg
 	trust, err := config.LoadTrust(stateDir)
 	if err != nil {
@@ -722,7 +736,7 @@ func readProjects(cwds map[string]string, stateDir string, parsed map[config.Sum
 		trust = config.Trust{}
 	}
 	byRoot := map[string]*project{}
-	seen := map[config.Sum]bool{}
+	seen := map[parseKey]bool{}
 	for _, pane := range slices.Sorted(maps.Keys(cwds)) {
 		root, ok, err := config.FindRoot(cwds[pane])
 		if err != nil || !ok {
@@ -735,19 +749,20 @@ func readProjects(cwds map[string]string, stateDir string, parsed map[config.Sum
 			continue
 		}
 		data, exists, err := config.ReadProject(root)
-		if !exists {
+		if !exists && err == nil {
 			byRoot[root] = nil
 			continue
 		}
 		p := &project{root: root, panes: []string{pane}, err: err}
 		if err == nil {
 			p.sum = config.SumOf(data)
-			got, ok := parsed[p.sum]
+			key := parseKey{root, p.sum}
+			got, ok := parsed[key]
 			if !ok {
 				got.cfg, got.err = config.ParseProject(config.ProjectPath(root), data)
-				parsed[p.sum] = got
+				parsed[key] = got
 			}
-			seen[p.sum] = true
+			seen[key] = true
 			p.cfg, p.err = got.cfg, got.err
 			p.trusted = p.err == nil && trust.Trusted(root, p.sum)
 		}
@@ -755,9 +770,9 @@ func readProjects(cwds map[string]string, stateDir string, parsed map[config.Sum
 		byRoot[root] = p
 	}
 	// Forget parses of files no longer there, so the cache can't grow.
-	for sum := range parsed {
-		if !seen[sum] {
-			delete(parsed, sum)
+	for key := range parsed {
+		if !seen[key] {
+			delete(parsed, key)
 		}
 	}
 	for _, root := range slices.Sorted(maps.Keys(byRoot)) {

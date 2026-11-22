@@ -1,0 +1,19 @@
+[info] Running WebWeb.Endpoint with Bandit 1.15.0 at 127.0.0.1:4417 (http)
+[info] Sent 500 in 233ms
+[debug] ** (Phoenix.Router.NoRouteError) no route found for GET /nope (WebWeb.Router)
+04:20:05.871 request_id=GOpDH-bPb5UG1dEAAAXF [debug] ** (Phoenix.Router.NoRouteError) no route found for GET /nope (WebWeb.Router)
+[warning] payment retry, error budget at 80%
+[info] error count: 0
+04:20:05.682 request_id=GOpDH-Iv5rg0w4IAAAWF [warning] payment retry, error budget at 80%
+04:20:05.682 request_id=GOpDH-Iv5rg0w4IAAAWF [info] error count: 0
+    ** (ArgumentError) cart is empty
+    (shop 0.1.0) lib/shop.ex:6: Shop.checkout/1
+    warning: the following pattern will never match:
+    type warning found at:
+    └─ lib/shop.ex:11:35: Shop.run/1
+== Compilation error in file lib/shop.ex ==
+04:11:25.657 [error] GenServer #PID<0.127.0> terminating
+04:11:22.888 [error] Task #PID<0.127.0> started from #PID<0.94.0> terminating
+Last message (from #PID<0.94.0>): {:update, #Function<2.42850774/1 in Shop.run/1>}
+** (EXIT from #PID<0.94.0>) an exception was raised:
+** (exit) exited in: GenServer.call(#PID<0.127.0>, {:update, #Function<2.42850774/1 in Shop.run/1>}, 5000)

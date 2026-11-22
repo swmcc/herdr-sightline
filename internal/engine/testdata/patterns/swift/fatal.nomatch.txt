@@ -1,0 +1,12 @@
+Building for debugging...
+[4/8] Compiling Shop main.swift
+/app/Sources/Shop/main.swift:2:9: warning: initialization of immutable value 'unused' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+   |         `- warning: initialization of immutable value 'unused' was never used; consider replacing with assignment to '_' or removing it [#no-usage]
+Build of product 'Shop' complete! (27.55s)
+Fatal errors so far: 0
+error count: 0
+Stack dump:
+1.	Apple Swift version 6.3 (swiftlang-6.3.0.123.5 clang-2100.0.123.102)
+2.	Compiling with effective version 5.10
+4  libswiftCore.dylib       0x00000001944b3cc8 $ss17_assertionFailure__4file4line5flagss5NeverOs12StaticStringV_SSAHSus6UInt32VtF + 172
+5  libswiftCore.dylib       0x000000019438ee44 swift_unexpectedError + 700

@@ -1,0 +1,11 @@
+** (ArgumentError) cart is empty
+** (KeyError) key :price not found in:
+** (MatchError) no match of right hand side value:
+** (exit) :shutdown_failed
+** (ArithmeticError) bad argument in arithmetic expression
+** (RuntimeError) agent state corrupt
+** (CompileError) lib/shop.ex: cannot compile module Shop (errors have been logged)
+** (MismatchedDelimiterError) mismatched delimiter found on lib/shop.ex:33:1:
+[error] ** (RuntimeError) payment gateway unreachable
+[error] ** (BadMapError) expected a map, got:
+04:20:05.602 request_id=GOpDH9LZ4VysLnYAAASF [error] ** (RuntimeError) payment gateway unreachable

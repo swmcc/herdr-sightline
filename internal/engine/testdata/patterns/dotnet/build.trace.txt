@@ -1,0 +1,14 @@
+# starts: 1
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+/app/Program.cs(21,51): error CS0103: The name 'crad' does not exist in the current context [/app/app.csproj]
+/app/Program.cs(21,62): warning CS0414: The field 'Checkout.unused' is assigned but its value is never used [/app/app.csproj]
+
+Build FAILED.
+
+/app/Program.cs(21,62): warning CS0414: The field 'Checkout.unused' is assigned but its value is never used [/app/app.csproj]
+/app/Program.cs(21,51): error CS0103: The name 'crad' does not exist in the current context [/app/app.csproj]
+    1 Warning(s)
+    1 Error(s)
+
+Time Elapsed 00:00:00.14

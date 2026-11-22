@@ -186,6 +186,12 @@ func TestContinuationLines(t *testing.T) {
 		{"jest detail", "  ● formatDate › handles midnight"},
 		{"rspec detail", "     Failure/Error: expect(user.full_name).to eq(\"Ada Lovelace\")"},
 		{"pytest detail", "E       assert 200 == 404"},
+		{"php frame", "#0 /app/index.php(6): load_user(42)"},
+		{"php thrown", "  thrown in /app/index.php on line 4"},
+		{"elixir nested exception", "    ** (ArgumentError) cart is empty"},
+		{"dotnet frame", "   at Checkout.Pay(String card) in /app/Program.cs:line 20"},
+		{"dotnet inner", " ---> System.FormatException: The input string 'abc' was not in a correct format."},
+		{"exunit detail", "     ** (ArgumentError) cart is empty"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

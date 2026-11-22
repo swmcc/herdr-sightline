@@ -1,0 +1,9 @@
+[Sun Nov 22 04:08:04 2026] PHP 8.6.0 Development Server (http://127.0.0.1:8765) started
+[Sun Nov 22 04:08:09 2026] 127.0.0.1:62867 Accepted
+[Sun Nov 22 04:08:09 2026] 127.0.0.1:62867 [200]: GET /index.php?case=ok
+[Sun Nov 22 04:08:09 2026] 127.0.0.1:62867 Closing
+[Sun Nov 22 04:08:09 2026] PHP Warning:  Undefined array key "missing" in /app/index.php on line 11
+[Sun Nov 22 04:08:09 2026] PHP Deprecated:  strlen(): Passing null to parameter #1 ($string) of type string is deprecated in /app/index.php on line 12
+[Sun Nov 22 04:08:09 2026] payment error: retrying
+[Sun Nov 22 04:08:09 2026] 127.0.0.1:62868 [200]: GET /index.php?case=throw - Uncaught RuntimeException: user 42 not found in /app/index.php:4
+[Sun Nov 22 04:08:09 2026] 127.0.0.1:62874 [200]: GET /index.php?case=memory - Allowed memory size of 8388608 bytes exhausted (tried to allocate 20987904 bytes) in /app/index.php on line 14

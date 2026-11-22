@@ -1,0 +1,3 @@
+   FAILED  Tests\Unit\CartTest > total adds items
+   FAILED  Tests\Unit\CartTest > discount applies
+   FAILED  Tests\Unit\CartTest > checkout throws             RuntimeException

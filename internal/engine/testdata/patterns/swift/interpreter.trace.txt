@@ -1,0 +1,17 @@
+# starts: 1
+more/more.swift:7: Fatal error: 'try!' expression unexpectedly raised an error: more.(unknown context at $10bb002a4).(unknown context at $10bb002ac).E.missing
+Stack dump:
+0.	Program arguments: /Library/Developer/CommandLineTools/usr/bin/swift-frontend -frontend -interpret /app/more.swift -Xllvm -aarch64-use-tbi -enable-objc-interop -stack-check -sdk /Library/Developer/CommandLineTools/SDKs/MacOSX.sdk -no-color-diagnostics -Xcc -fno-color-diagnostics -module-name more -- try
+1.	Apple Swift version 6.3 (swiftlang-6.3.0.123.5 clang-2100.0.123.102)
+2.	Compiling with effective version 5.10
+3.	While running user code "/app/more.swift"
+Stack dump without symbol names (ensure you have llvm-symbolizer in your PATH or set the environment var `LLVM_SYMBOLIZER_PATH` to point to it):
+0  swift-frontend           0x00000001077b9cb8 llvm::sys::PrintStackTrace(llvm::raw_ostream&, int) + 56
+1  swift-frontend           0x00000001077b7158 llvm::sys::RunSignalHandlers() + 172
+2  swift-frontend           0x00000001077ba2a8 SignalHandler(int, __siginfo*, void*) + 356
+3  libsystem_platform.dylib 0x0000000180cd17a4 _sigtramp + 56
+4  libswiftCore.dylib       0x00000001944b3cc8 $ss17_assertionFailure__4file4line5flagss5NeverOs12StaticStringV_SSAHSus6UInt32VtF + 172
+5  libswiftCore.dylib       0x000000019438ee44 swift_unexpectedError + 700
+6  (error)                  0x000000010bb04494
+7  swift-frontend           0x00000001014c5550 llvm::orc::runAsMain(int (*)(int, char**), llvm::ArrayRef<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>, std::__1::optional<llvm::StringRef>) + 908
+16 dyld                     0x000000018090bda4 start + 6992

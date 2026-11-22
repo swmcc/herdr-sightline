@@ -1,0 +1,33 @@
+# starts: 1
+04:20:05.421 request_id=GOpDH9LZ4VysLnYAAASF [info] GET /boom
+04:20:05.421 request_id=GOpDH9LZ4VysLnYAAASF [debug] Processing with WebWeb.PageController.boom/2
+  Parameters: %{}
+  Pipelines: [:browser]
+04:20:05.599 request_id=GOpDH9LZ4VysLnYAAASF [info] Sent 500 in 178ms
+04:20:05.602 request_id=GOpDH9LZ4VysLnYAAASF [error] ** (RuntimeError) payment gateway unreachable
+    (web 0.1.0) lib/web_web/controllers/page_controller.ex:10: WebWeb.PageController.boom/2
+    (web 0.1.0) lib/web_web/controllers/page_controller.ex:1: WebWeb.PageController.action/2
+    (web 0.1.0) lib/web_web/controllers/page_controller.ex:1: WebWeb.PageController.phoenix_controller_pipeline/2
+    (phoenix 1.8.17) lib/phoenix/router.ex:428: Phoenix.Router.__call__/5
+    (web 0.1.0) lib/web_web/endpoint.ex:1: WebWeb.Endpoint.plug_builder_call/2
+    (web 0.1.0) deps/plug/lib/plug/debugger.ex:155: WebWeb.Endpoint."call (overridable 3)"/2
+    (web 0.1.0) lib/web_web/endpoint.ex:1: WebWeb.Endpoint.call/2
+    (phoenix 1.8.17) lib/phoenix/endpoint/sync_code_reload_plug.ex:22: Phoenix.Endpoint.SyncCodeReloadPlug.do_call/4
+    (bandit 1.15.0) lib/bandit/pipeline.ex:168: Bandit.Pipeline.call_plug!/2
+    (bandit 1.15.0) lib/bandit/pipeline.ex:44: Bandit.Pipeline.run/5
+    (bandit 1.15.0) lib/bandit/http1/handler.ex:23: Bandit.HTTP1.Handler.handle_data/3
+    (bandit 1.15.0) lib/bandit/delegating_handler.ex:18: Bandit.DelegatingHandler.handle_data/3
+    (thousand_island 1.6.0) lib/thousand_island/handler.ex:636: ThousandIsland.Handler.invoke_callback/2
+    (bandit 1.15.0) lib/bandit/delegating_handler.ex:8: Bandit.DelegatingHandler.handle_continue/2
+    (stdlib 8.1.1) gen_server.erl:2424: :gen_server.try_handle_continue/3
+    (stdlib 8.1.1) gen_server.erl:2291: :gen_server.loop/4
+    (stdlib 8.1.1) proc_lib.erl:333: :proc_lib.init_p_do_apply/3
+
+04:20:05.678 request_id=GOpDH-Iv5rg0w4IAAAWF [info] GET /log
+04:20:05.678 request_id=GOpDH-Iv5rg0w4IAAAWF [debug] Processing with WebWeb.PageController.log/2
+  Parameters: %{}
+  Pipelines: [:browser]
+04:20:05.682 request_id=GOpDH-Iv5rg0w4IAAAWF [warning] payment retry, error budget at 80%
+04:20:05.682 request_id=GOpDH-Iv5rg0w4IAAAWF [info] error count: 0
+04:20:05.755 request_id=GOpDH-bPb5UG1dEAAAXF [info] GET /nope
+04:20:05.871 request_id=GOpDH-bPb5UG1dEAAAXF [debug] ** (Phoenix.Router.NoRouteError) no route found for GET /nope (WebWeb.Router)

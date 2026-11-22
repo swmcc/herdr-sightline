@@ -1,0 +1,3 @@
+    /app/Program.cs(21,51): error CS0103: The name 'crad' does not exist in the current context
+Build FAILED.
+The build failed. Fix the build errors and run again.

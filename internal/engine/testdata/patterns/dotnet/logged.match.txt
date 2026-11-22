@@ -1,0 +1,3 @@
+fail: Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddleware[1]
+fail: Program[0]
+crit: Program[0]

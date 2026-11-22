@@ -44,6 +44,11 @@ var unless = map[string]string{
 	"node/exception": `(?:Uncaught )?[A-Za-z]*Error: ` + emptyValue,
 	"generic/error":  `(?:error|Error|ERROR): ` + emptyValue,
 	"generic/fatal":  `(?:fatal|Fatal|FATAL): +` + emptyValue,
+	// A call whose server crashed. The server's own report, printed first, is
+	// the error. This also misses an "exited in:" with no report of its own: a
+	// call or Task.await that timed out, or a call to a process that isn't
+	// running. That's accepted.
+	"elixir/exception": `(?:(?:\d{2}:\d{2}:\d{2}\.\d{3} (?:\w+=\S+ )*)?\[error\] )?\*\* \(exit\) exited in: `,
 }
 
 // presetMatcher is a built-in pattern with its optional exception.
@@ -122,6 +127,46 @@ var presets = []preset{
 		{"gradle", `FAILURE: Build (?:failed with an exception\.|completed with \d+ failures?\.)$`},
 		{"maven", `\[(?:INFO|ERROR)\] BUILD FAILURE$`},
 	}},
+	{"php", []pattern{
+		// generic/fatal already catches "PHP Fatal error:" and "Fatal error:".
+		// A parse error says where it is, so the line has to end that way.
+		{"parse", `(?:PHP )?Parse error: +\S.* on line \d+$`},
+		// php -S puts the date in front of each line, which hides them from
+		// generic. Warnings and deprecations are left alone.
+		{"server", `\[[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4}\] PHP (?:Fatal|Parse) error: +\S`},
+		// Laravel's log, as tail -f storage/logs/laravel.log shows it.
+		{"laravel", `\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] [\w-]+\.(?:ERROR|CRITICAL|ALERT|EMERGENCY): \S`},
+	}},
+	{"elixir", []pattern{
+		// An exception at the start of a line, from mix run, a crashed process
+		// or Phoenix's [error] log. Phoenix logs a 404 at [debug], so only
+		// [error] is allowed. Indented ones are inside a report already being
+		// captured. "** (EXIT from #PID<...>)" is left out: it's the caller
+		// going down with a process whose own crash report comes too.
+		{"exception", `(?:(?:\d{2}:\d{2}:\d{2}\.\d{3} (?:\w+=\S+ )*)?\[error\] )?\*\* \((?:[A-Z]\w*(?:\.[A-Z]\w*)*|exit)\) \S`},
+	}},
+	{"dotnet", []pattern{
+		// A COMException or any DbException puts its HRESULT before the colon.
+		{"unhandled", `Unhandled exception\. (?:[A-Za-z_]\w*\.)*[A-Za-z_]\w*Exception(?: \(0x[0-9A-Fa-f]{8}\))?: \S`},
+		// dotnet build's terminal logger indents each error under its project.
+		// The classic logger prints every error twice, inline and again under
+		// "Build FAILED.", and dotnet run prints them before its own one-line
+		// summary, so there the summary is matched and the errors above it are
+		// the context. Those summaries don't say which error it was, so every
+		// failed build is one entry, as with go/build.
+		{"build", `(?: {4}[^\s(]+\(\d+,\d+\): error [A-Z]+\d+: \S|Build FAILED\.$|The build failed\. Fix the build errors and run again\.$)`},
+		// The console logger's level line at error or critical, which ASP.NET
+		// uses for an unhandled exception. The exception sits under it, six
+		// spaces in, but so does one logged with a warning for a retry that
+		// worked, so the level is what's matched. The frames under it tell one
+		// exception from another. In Development a route value that won't bind
+		// (an int id given "abc") is logged this way too.
+		{"logged", `(?:fail|crit): [\w.]+\[\d+\]$`},
+	}},
+	{"swift", []pattern{
+		// fatalError, precondition, assert and the runtime's own traps.
+		{"fatal", `[^\s:]+\.swift(?:interface)?:\d+: (?:Fatal error|Precondition failed|Assertion failed)(?:: \S|$)`},
+	}},
 	{"tests", []pattern{
 		{"jest", ` *FAIL +[^\s:]+\.[cm]?[jt]sx?(?: |$)`},
 		{"mocha", ` +[1-9]\d* failing$`},
@@ -132,6 +177,18 @@ var presets = []preset{
 		{"minitest", `(?: +\d+\) )?(?:Failure|Error):$`},
 		{"go-test", `--- FAIL: \S`},
 		{"cargo-test", `test result: FAILED\.`},
+		// "  1) test totals the cart (ShopTest)", and doctests the same way.
+		{"exunit", ` +\d+\) (?:test|doctest) .+ \((?:[A-Z]\w*\.)*[A-Z]\w*\)$`},
+		// PHPUnit's "There were 2 failures:" comes once for failures and once
+		// for errors, so the one line at the end of a failed run is matched. It
+		// doesn't say which test failed, so a failing run is one entry, as with
+		// cargo-test.
+		{"phpunit", `(?:FAILURES|ERRORS)!$`},
+		{"artisan-test", ` *FAILED  (?:[A-Z]\w*\\)+[A-Z]\w* > \S`},
+		// VSTest's "  Failed Name [2 ms]", or under dotnet's terminal logger the
+		// "    UnitTest1.cs(8): error TESTERROR:" above each failure. That one only
+		// names the file and line, so failures in a shared helper are one entry.
+		{"dotnet-test", `(?:  Failed [\w.+]+(?:\(.*\))? \[(?:< )?\d[^\]]*\]$| {4}[^\s(]+\(\d+\): error TESTERROR:)`},
 	}},
 	{"generic", []pattern{
 		// One space after the colon. uvicorn pads its level ("ERROR:    ") and

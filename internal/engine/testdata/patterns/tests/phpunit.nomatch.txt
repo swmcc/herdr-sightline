@@ -1,0 +1,12 @@
+PHPUnit 12.5.45 by Sebastian Bergmann and contributors.
+Runtime:       PHP 8.6.0
+DWS                                                                 3 / 3 (100%)
+OK, but there were issues!
+Tests: 3, Assertions: 2, Warnings: 1, Deprecations: 1, Skipped: 1.
+Tests: 7, Assertions: 4, Errors: 1, Failures: 2, Warnings: 1, Deprecations: 1, Skipped: 1, Incomplete: 1.
+There was 1 error:
+There were 2 failures:
+1) Tests\Unit\CartTest::test_checkout_throws
+RuntimeException: payment gateway unreachable
+Failed asserting that 25 is identical to 30.
+/app/tests/Unit/CartTest.php:21

@@ -1,0 +1,9 @@
+# starts: 1
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /app
+fail: Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddleware[1]
+      An unhandled exception has occurred while executing the request.
+      System.InvalidOperationException: payment gateway unreachable
+         at Program.<>c.<<Main>$>b__0_1() in /app/Program.cs:line 5
+         at lambda_method2(Closure, Object, HttpContext)
+         at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)

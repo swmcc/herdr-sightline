@@ -1,0 +1,8 @@
+Swift/ContiguousArrayBuffer.swift:692: Fatal error: Index out of range
+crash/crash.swift:6: Fatal error: Unexpectedly found nil while unwrapping an Optional value
+crash/crash.swift:7: Fatal error: config missing
+crash/crash.swift:8: Precondition failed: port must be free
+more/more.swift:2: Assertion failed: queue drained
+more/more.swift:3: Fatal error
+more/more.swift:7: Fatal error: 'try!' expression unexpectedly raised an error: more.(unknown context at $102f299f4).(unknown context at $102f299fc).E.missing
+Swift/arm64e-apple-macos.swiftinterface:39495: Fatal error: Division by zero

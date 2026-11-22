@@ -1,0 +1,12 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+/app/Program.cs(21,62): warning CS0414: The field 'Checkout.unused' is assigned but its value is never used [/app/app.csproj]
+    /app/Program.cs(21,62): warning CS0414: The field 'Checkout.unused' is assigned but its value is never used
+    1 Warning(s)
+    1 Error(s)
+    0 Error(s)
+Restore complete (0.0s)
+  app net11.0 failed with 1 error(s) and 1 warning(s) (0.0s)
+Build failed with 1 error(s) and 1 warning(s) in 0.1s
+Time Elapsed 00:00:00.14
+/app/Program.cs(21,51): error CS0103: The name 'crad' does not exist in the current context [/app/app.csproj]

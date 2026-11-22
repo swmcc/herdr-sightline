@@ -217,6 +217,8 @@ var framePatterns = []framePattern{
 	{regexp.MustCompile("(\\S+\\.\\w+):\\d+:in [`']([^']+)'\\s*$"), 2, "$1:in '$2'"},
 	// Elixir: "(my_app 0.1.0) lib/my_app/worker.ex:12: MyApp.Worker.run/1"
 	{regexp.MustCompile(`\((\w+) [\w.\-+]+\) (\S+):\d+: (\S+)\s*$`), 3, "($1) $2: $3"},
+	// .NET: "at Checkout.Pay(String card) in /app/Program.cs:line 20"
+	{regexp.MustCompile("\\bat ([\\w.`<>$\\[\\],]+)\\((.*)\\) in (.+):line \\d+\\s*$"), 1, "at $1($2) in $3"},
 }
 
 var (
@@ -240,6 +242,8 @@ var volatile = []struct {
 	{regexp.MustCompile(`\d{4}[-/]\d{2}[-/]\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2}|\b))?`), "<time>"},
 	// Apache and nginx: "01/Jan/2026:09:00:00 +0000"
 	{regexp.MustCompile(`\d{2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2}(?: [+-]\d{4})?`), "<time>"},
+	// ctime, as php -S prints it: "Sun Nov 22 04:08:09 2026"
+	{regexp.MustCompile(`\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ \d]\d \d{2}:\d{2}:\d{2} \d{4}\b`), "<time>"},
 	// syslog: "Jan  1 09:00:00"
 	{regexp.MustCompile(`\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}\s+\d{1,2}:\d{2}:\d{2}\b`), "<time>"},
 	// Bare clock times: "[09:00:01]", "09:00:01.123"
@@ -269,6 +273,8 @@ var volatile = []struct {
 	{regexp.MustCompile(`\bgoroutine \d+\b`), "goroutine <n>"},
 
 	// How long and how often.
+	// VSTest: "[2 ms]", "[< 1 ms]" and, past a minute, "[1 m 3 s]"
+	{regexp.MustCompile(`\[(?:< )?\d+ (?:h|m|s|ms)(?: \d+ (?:m|s|ms))*\]`), "[<duration>]"},
 	{regexp.MustCompile(`\b(?:\d+(?:\.\d+)?(?:ns|µs|us|ms|h|m|s))+\b`), "<duration>"},
 	{regexp.MustCompile(`(?i)\b\d+(?:\.\d+)?\s?(?:seconds?|secs?|minutes?|mins?|hours?|milliseconds?)\b`), "<duration>"},
 	{regexp.MustCompile(`(?i)\b\d+ (retries|retry|attempts?|tries|restarts?)\b`), "<n> $1"},

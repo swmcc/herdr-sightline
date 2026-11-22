@@ -1,0 +1,13 @@
+   FAIL  Tests\Unit\CartTest
+  ⨯ total adds items
+  ⨯ checkout throws
+  ! deprecated still passes → error_log() style helper is deprecated // tests/Unit/CartTest.php:26
+  ! warning still passes → cache miss, error rate rising
+  - skipped → needs Stripe sandbox
+  … incomplete → error handling to do
+  Failed asserting that 25 is identical to 30.
+  at tests/Unit/CartTest.php:11
+  ➜  11▕         $this->assertSame(30, array_sum([10, 15]));
+  1   tests/Unit/CartTest.php:11
+  Tests:    1 deprecated, 3 failed, 1 warning, 1 incomplete, 1 skipped (4 assertions)
+  Duration: 0.14s

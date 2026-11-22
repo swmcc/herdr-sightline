@@ -1,0 +1,13 @@
+# starts: 1
+Compiling 1 file (.ex)
+    error: undefined function missing_fun/0 (expected Shop to define such a function or for it to be imported, but none are available)
+    │
+ 32 │   def run(_), do: missing_fun()
+    │                   ^^^^^^^^^^^
+    │
+    └─ lib/shop.ex:32:19: Shop.run/1
+
+
+== Compilation error in file lib/shop.ex ==
+** (CompileError) lib/shop.ex: cannot compile module Shop (errors have been logged)
+

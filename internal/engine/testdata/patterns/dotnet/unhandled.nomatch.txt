@@ -1,0 +1,7 @@
+ ---> System.FormatException: The input string 'abc' was not in a correct format.
+   at Checkout.Pay(String card) in /app/Program.cs:line 20
+   at System.Number.ThrowFormatException[TChar](ReadOnlySpan`1 value)
+   --- End of inner exception stack trace ---
+--- End of stack trace from previous location ---
+warn: retrying after error: connection reset
+      An unhandled exception has occurred while executing the request.

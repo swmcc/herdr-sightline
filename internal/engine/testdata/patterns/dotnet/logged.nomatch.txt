@@ -1,0 +1,19 @@
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:5417
+      Application started. Press Ctrl+C to shut down.
+      Hosting environment: Development
+      An unhandled exception has occurred while executing the request.
+      System.InvalidOperationException: payment gateway unreachable
+      System.Runtime.InteropServices.COMException (0x80004005): database is locked
+         at Program.<>c.<<Main>$>b__0_1() in /app/Program.cs:line 5
+         at Microsoft.AspNetCore.Diagnostics.DeveloperExceptionPageMiddlewareImpl.Invoke(HttpContext context)
+warn: Program[0]
+      Payment retry, error budget at 80%
+      Retrying
+      System.Net.Http.HttpRequestException: Connection refused (localhost:5432)
+info: Program[0]
+      Error count: 0
+      Stripe webhook signature mismatch
+      Disk almost full
+   System.InvalidOperationException : payment gateway unreachable
+      Application is shutting down...

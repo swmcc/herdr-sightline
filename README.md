@@ -233,7 +233,7 @@ settle_seconds = 30
 context_lines = 20
 
 # Built-in pattern sets. All are on by default.
-presets = ["generic", "node", "python", "ruby", "go", "rust", "jvm", "tests"]
+presets = ["generic", "node", "python", "ruby", "go", "rust", "jvm", "php", "elixir", "dotnet", "swift", "tests"]
 
 # The last line of the message to the agent. One line, at most 200 characters.
 closing_line = "Please investigate and fix the cause."
@@ -420,7 +420,7 @@ behaviour.
 - [ ] Project presets checked into the repo ([#22](https://github.com/swmcc/herdr-sightline/issues/22))
 - [ ] Trust prompt for project presets ([#23](https://github.com/swmcc/herdr-sightline/issues/23))
 - [ ] Share error patterns ([#24](https://github.com/swmcc/herdr-sightline/issues/24))
-- [ ] More built-in presets ([#25](https://github.com/swmcc/herdr-sightline/issues/25))
+- [x] More built-in presets ([#25](https://github.com/swmcc/herdr-sightline/issues/25))
 
 ### [v0.4 · Windows](https://github.com/swmcc/herdr-sightline/milestone/4)
 

@@ -1,0 +1,4 @@
+  Failed tests.CartTests.TotalAddsItems [2 ms]
+  Failed tests.CartTests.CheckoutThrows [< 1 ms]
+    /app/UnitTest1.cs(8): error TESTERROR:
+    /app/UnitTest1.cs(14): error TESTERROR:

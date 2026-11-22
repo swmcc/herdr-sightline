@@ -1,0 +1,9 @@
+[2026-11-22 04:08:54] local.WARNING: Slow query, error budget at 80%
+[2026-11-22 04:08:54] local.INFO: Retrying after error: connection reset
+[2026-11-22 04:08:54] local.DEBUG: error count {"errors":0}
+[2026-11-22 04:19:00] production.NOTICE: error page cache warmed
+[stacktrace]
+[previous exception] [object] (PDOException(code: HY000): SQLSTATE[HY000]: General error: 1 no such table: missing_table at /app/vendor/laravel/framework/src/Illuminate/Database/Connection.php:442)
+#0 /app/vendor/laravel/framework/src/Illuminate/Routing/CallableDispatcher.php(39): Illuminate\\Routing\\RouteFileRegistrar->{closure:/app/routes/web.php:12}()
+ 2026-11-22 04:08:54 /boom .. ~ 0.01ms
+ INFO Server running on [http://127.0.0.1:8766].

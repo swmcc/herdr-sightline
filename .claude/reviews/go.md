@@ -14,7 +14,8 @@ say how sure you are.
 - [ ] Every goroutine has an owner and stops when its context is cancelled
 - [ ] No data races. Shared state is guarded or owned by one goroutine
 - [ ] Errors are wrapped with context and handled once, not logged and returned
-- [ ] Reconnects, `events_lost` and closed panes are handled, not ignored
+- [ ] Reconnects, the socket closing and closed panes are handled, not ignored. herdr
+      has no `events_lost` event, so a closed socket is the only sign events were missed
 - [ ] Timers and tickers are stopped
 
 ## Tests

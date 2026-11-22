@@ -55,6 +55,10 @@ func TestParseProjectRefuses(t *testing.T) {
 		{"hide-two-words.toml", []string{"[[ignore]]"}},
 		{"hide-typescript.toml", []string{"[[ignore]]"}},
 		{"hide-webpack.toml", []string{"[[ignore]]"}},
+		{"hide-go-index.toml", []string{"[[ignore]]"}},
+		{"hide-own-compose.toml", []string{"[[ignore]]"}},
+		{"hide-own-turbo.toml", []string{"[[ignore]]"}},
+		{"hide-unanchored.toml", []string{"[[ignore]]"}},
 		{"bad-regex.toml", []string{"bad regex"}},
 		{"syntax.toml", []string{"syntax.toml:"}},
 		{"unknown-preset.toml", []string{`unknown preset "cobol"`}},
@@ -86,9 +90,9 @@ func TestParseProjectAccepts(t *testing.T) {
 		ignores    []string
 	}{
 		{file: "ok.toml", presets: []string{"go", "node"}, presetsSet: true,
-			patterns: []string{`^FATAL \[app\] .+`}, ignores: []string{`DeprecationWarning: Buffer\(\) is deprecated`}},
+			patterns: []string{`^FATAL \[app\] .+`}, ignores: []string{`^Error: flaky upstream timed out`}},
 		{file: "empty.toml"},
-		{file: "narrow.toml", ignores: []string{`^Error: flaky upstream timed out`, `^--- FAIL: TestFlakyNetwork `, `DeprecationWarning: punycode`, `^TypeError: fetch failed \(retrying\)$`}},
+		{file: "narrow.toml", ignores: []string{`^Error: flaky upstream timed out`, `^--- FAIL: TestFlakyNetwork `, `^web-1 \| WARN: punycode is deprecated`, `^TypeError: fetch failed \(retrying\)$`}},
 		{file: "no-presets.toml", presets: []string{}, presetsSet: true},
 	}
 	for _, tt := range tests {
@@ -123,7 +127,7 @@ func TestParseProjectLimits(t *testing.T) {
 			if table == "pattern" {
 				fmt.Fprintf(&b, "[[pattern]]\nname = \"p%d\"\nregex = '^FATAL p%d$'\n", i, i)
 			} else {
-				fmt.Fprintf(&b, "[[ignore]]\nregex = '^WARN warning number %d$'\n", i)
+				fmt.Fprintf(&b, "[[ignore]]\nregex = '^WARN: warning number %d$'\n", i)
 			}
 		}
 		return b.String()
@@ -140,6 +144,10 @@ func TestParseProjectLimits(t *testing.T) {
 		{"one ignore too many", many("ignore", config.MaxProjectRules+1), "at most 50 [[ignore]] tables, this one has 51"},
 		{"a regex too long to read", "[[ignore]]\nregex = '" + long + "'\n", "over 500 bytes"},
 		{"a file too big", "# " + strings.Repeat("x", config.MaxProjectFileSize) + "\n", "bigger than 64 KiB"},
+		// About 30 MB to compile from a few hundred bytes, so it's refused
+		// before anything is compiled.
+		{"a short regex that's huge to compile", "[[ignore]]\nregex = '^FATAL " + strings.Repeat("[ab]{1000}", 40) + "$'\n", "repeats too much"},
+		{"nested repeats", "[[pattern]]\nname = \"x\"\nregex = '^FATAL ((ab|cd){30}){30}'\n", "repeats too much"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

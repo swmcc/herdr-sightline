@@ -6,4 +6,4 @@ name = "our-framework"
 regex = '^FATAL \[app\] .+'
 
 [[ignore]]
-regex = 'DeprecationWarning: Buffer\(\) is deprecated'
+regex = '^Error: flaky upstream timed out'

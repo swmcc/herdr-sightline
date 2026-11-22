@@ -125,13 +125,13 @@ const (
 	minPastHead   = 4
 )
 
-// ignoreHead is the fixed text every match of expr starts with, after any ^.
-// It's "" when there's none: the rule starts with a class, a repeat, an
-// alternation or a case insensitive part.
-func ignoreHead(expr string) string {
+// ignoreHead is the fixed text every match of expr starts with, after the ^,
+// and whether there is a ^. The text is "" when there's none: the rule starts
+// with a class, a repeat, an alternation or a case insensitive part.
+func ignoreHead(expr string) (head string, anchored bool) {
 	re, err := syntax.Parse(expr, syntax.Perl)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	re = re.Simplify()
 	subs := []*syntax.Regexp{re}
@@ -142,44 +142,56 @@ func ignoreHead(expr string) string {
 	for i, s := range subs {
 		switch {
 		case i == 0 && (s.Op == syntax.OpBeginLine || s.Op == syntax.OpBeginText):
+			anchored = true
 		case s.Op == syntax.OpLiteral && s.Flags&syntax.FoldCase == 0:
 			b.WriteString(string(s.Rune))
 		default:
-			return b.String()
+			return b.String(), anchored
 		}
 	}
-	return b.String()
+	return b.String(), anchored
 }
 
 // tooLoose says why a project's ignore rule doesn't name what it hides
 // narrowly enough, or "" when it does. Probes can only ever try some of the
-// lines a rule could hide, so on top of them a project's ignore rule has to
-// start with fixed text of its own: at least minIgnoreHead bytes, and at least
-// minPastHead past any known error head or the last ": " in it. That rules
-// out classes, alternations and case folding at the start, which is where a
-// rule hides a whole kind of error, and it says plainly on screen what each
-// rule is for. A rule from the person's own file has no such limit.
+// lines a rule could hide, so on top of them a project's ignore rule has to:
+//
+//   - start with ^, so it only matches lines that start with its text. A rule
+//     that matches anywhere ("is not defined") hides every error that says it.
+//   - go on with at least minIgnoreHead bytes of fixed text, with no class,
+//     alternation or (?i) in them, which is where a rule hides a whole kind
+//     of error.
+//   - name an error and its message: a known error head or a ": ", followed
+//     by at least minPastHead characters of the message. A label or a word on
+//     its own (^my-frontend-1 | ) could hide everything a process prints.
+//
+// It costs some rules that would be fine, but those can go in the person's
+// own sightline.toml, which has no such limits.
 func tooLoose(expr string) string {
-	head := ignoreHead(expr)
+	head, anchored := ignoreHead(expr)
+	if !anchored {
+		return "has to start with ^. A rule that matches anywhere in a line could hide any error that mentions those words"
+	}
 	if len(head) < minIgnoreHead {
-		return fmt.Sprintf("has to start with at least %d characters of fixed text, with no class, alternation or (?i) before them, so it's plain what it hides", minIgnoreHead)
+		return fmt.Sprintf("has to start with ^ and at least %d characters of fixed text, with no class, alternation or (?i) in them, so it's plain what it hides", minIgnoreHead)
 	}
-	for _, label := range labels[1:] {
-		if strings.HasPrefix(head, label) || strings.HasPrefix(label, head) {
-			return "starts with a process manager label, so it could hide everything that process prints"
-		}
-	}
-	rest := head
-	if i := strings.LastIndex(head, ": "); i >= 0 {
-		rest = head[i+2:]
-	}
+	named := fmt.Sprintf("has to name the message, with at least %d characters of fixed text after the error's own start, so it hides one error and not a kind of them", minPastHead)
+	known := false
 	for _, h := range errorHeads {
-		if strings.HasPrefix(head, strings.TrimSpace(h)) && len(head) < len(strings.TrimSpace(h))+minPastHead {
-			rest = ""
+		h = strings.TrimSpace(h)
+		if strings.HasPrefix(head, h) {
+			known = true
+			if len(strings.TrimSpace(head[len(h):])) < minPastHead {
+				return named
+			}
 		}
 	}
-	if len(strings.TrimSpace(rest)) < minPastHead {
-		return fmt.Sprintf("has to name the message, with at least %d characters of fixed text after the error's own start, so it hides one error and not a kind of them", minPastHead)
+	if i := strings.LastIndex(head, ": "); i >= 0 {
+		if len(strings.TrimSpace(head[i+2:])) < minPastHead {
+			return named
+		}
+	} else if !known {
+		return "has to start with an error and its message with \": \" between them, like ^Error: flaky upstream, so it's plain which error it hides"
 	}
 	return ""
 }
@@ -202,6 +214,12 @@ func ParseProject(name string, data []byte) (Project, error) {
 	mapErr := toml.Unmarshal(data, &keys)
 	if mapErr == nil {
 		if errs := disallowed(name, data, keys); len(errs) > 0 {
+			sortErrors(errs)
+			return Project{}, errors.Join(errs...)
+		}
+		// Parse compiles every regex, so the sizes are checked first. A short
+		// regex can still cost a lot to compile ([ab]{1000} a hundred times).
+		if errs := oversized(name, data, keys); len(errs) > 0 {
 			sortErrors(errs)
 			return Project{}, errors.Join(errs...)
 		}
@@ -287,6 +305,59 @@ func padded(expr string) bool {
 // unreadable reports whether r doesn't show as itself on a terminal.
 func unreadable(r rune) bool {
 	return r == utf8.RuneError || !unicode.IsPrint(r) || unicode.Is(unicode.Cf, r)
+}
+
+// maxRegexCost is the most a project regex can cost to compile, roughly in
+// instructions: repeats count as many times as they repeat.
+const maxRegexCost = 5000
+
+// oversized checks the counts and sizes of a project file's rules before
+// anything is compiled.
+func oversized(name string, data []byte, keys map[string]any) []error {
+	w := walkDocument(data)
+	v := validator{name: name, positions: w.positions}
+	for _, table := range []string{"pattern", "ignore"} {
+		rows, _ := keys[table].([]any)
+		if len(rows) > MaxProjectRules {
+			v.fail(table+".0", "a project file can have at most %d [[%s]] tables, this one has %d", MaxProjectRules, table, len(rows))
+			continue
+		}
+		for i, row := range rows {
+			fields, _ := row.(map[string]any)
+			expr, _ := fields["regex"].(string)
+			key := table + "." + strconv.Itoa(i) + ".regex"
+			switch {
+			case len(expr) > MaxProjectRegex:
+				v.fail(key, "[[%s]] has a regex over %d bytes, which is too long to read before trusting it", table, MaxProjectRegex)
+			case regexCost(expr) > maxRegexCost:
+				v.fail(key, "[[%s]] %s repeats too much, which would take far too much memory to compile", table, short(expr))
+			}
+		}
+	}
+	return v.errs
+}
+
+// regexCost estimates what compiling expr costs, without compiling it: each
+// part counts once, and a repeat counts its part as many times as it can
+// repeat. A regex that doesn't parse costs nothing here, and Parse reports it.
+func regexCost(expr string) int {
+	re, err := syntax.Parse(expr, syntax.Perl)
+	if err != nil {
+		return 0
+	}
+	var cost func(*syntax.Regexp) int
+	cost = func(re *syntax.Regexp) int {
+		n := 1 + len(re.Rune)
+		for _, sub := range re.Sub {
+			n += cost(sub)
+		}
+		if re.Op == syntax.OpRepeat {
+			times := max(re.Min, re.Max, 1)
+			n *= times
+		}
+		return min(n, maxRegexCost+1)
+	}
+	return cost(re)
 }
 
 // short quotes a regex for an error message, cut so one long rule can't take

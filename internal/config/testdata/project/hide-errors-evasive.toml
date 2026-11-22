@@ -1,0 +1,4 @@
+# Leaves out the first letters of the usual test messages, so it slips past
+# a check that only tries "Error: boom".
+[[ignore]]
+regex = '^Uncaught [^E]|^Error: [^bC]|^panic: [^br]|^[A-Z][a-z]+Error: [^bx]'

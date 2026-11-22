@@ -296,20 +296,27 @@ Sightline:
 
 **A project file is untrusted too.** Whoever can push to a repo writes its
 `.sightline.toml`, so cloning one mustn't change what Sightline does. Until you trust
-it, the feed says it's there and ignores it. Press `p` to see every rule it adds,
-then `y` to trust that version or `esc` to leave it. `x` stops trusting it.
+it, the feed says it's there and ignores it. Press `p` to read it. Each rule is
+shown quoted, with anything outside plain ASCII escaped. `y` only works once
+you've scrolled to the end, so every rule has been on screen. Press `y` to trust that
+version or `esc` to leave it. `x` stops trusting it.
 
-- It can only add presets, error patterns and ignore rules. It can't change what's
-  sent, which agent gets it or when, so it can never turn on queue mode or pin a pane
-  to an agent. A file that tries is refused whole.
+- It can only add presets, error patterns and ignore rules. Its presets can only
+  switch presets on. It can't change what's sent, which agent gets it or when, so it
+  can never turn on queue mode or pin a pane to an agent. A file that tries is
+  refused whole.
 - Trust is kept in Sightline's state directory, which a repo can't write to, against
   the repo's real path and a sha256 of the file's exact bytes. The rules that apply
   are read from the same bytes that were hashed, so a file swapped after you trusted
-  it is just a new version that isn't trusted.
+  it is just a new version that isn't trusted. If it changes while you're reading
+  it, the screen says so and starts again from the top.
 - A rule that would match an empty line or ordinary output is refused, and so is an
-  ignore rule that matches common errors like `Error: boom` or a Python traceback.
-- An ignore rule from a repo can still hide a real error, and the trust screen says
-  so. Read the rules before you press `y`.
+  ignore rule that matches the start of a common error (`Error: `, `panic: `, a
+  Python traceback and so on) followed by any message. A regex with a run of spaces
+  in it is refused too, since spaces could push the rest of it off the screen.
+- Those checks catch the obvious ways to hide errors, not every one. An ignore rule
+  from a repo can still hide a real error, and the trust screen says so. Read the
+  rules before you press `y`.
 
 What that protects against, and what it doesn't:
 

@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,6 +79,10 @@ func LoadTrust(dir string) (Trust, error) {
 	if err != nil {
 		return Trust{}, fmt.Errorf("reading trusted projects: %w", err)
 	}
+	return parseTrust(path, data, exists)
+}
+
+func parseTrust(path string, data []byte, exists bool) (Trust, error) {
 	if !exists {
 		return Trust{}, nil
 	}
@@ -109,14 +115,45 @@ func ForgetProject(dir, root string) error {
 	return changeTrust(dir, func(t Trust) { delete(t.byRoot, root) })
 }
 
+// errTrustRace says the trust file changed between reading it and replacing it.
+var errTrustRace = errors.New("trusted projects changed while Sightline was writing them, so nothing was recorded. Try again")
+
 // changeTrust reads the trust file, changes it and writes it back in one
 // rename. A file that can't be read is left alone rather than overwritten, so
 // a mistake in it is seen rather than lost.
+//
+// Two feeds can be open at once, and each one writes the whole file, so the
+// read and the write happen under a lock beside the file. Otherwise one feed's
+// x could be undone by the other's y. The file is also read again just before
+// the rename, in case something that doesn't take the lock changed it.
 func changeTrust(dir string, change func(Trust)) error {
 	if dir == "" {
 		return fmt.Errorf("there's no state directory to record trust in (HERDR_PLUGIN_STATE_DIR isn't set)")
 	}
-	t, err := LoadTrust(dir)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("making the state directory: %w", err)
+	}
+	unlock, err := lockFile(TrustPath(dir) + ".lock")
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	for range 3 {
+		err := changeTrustOnce(dir, change)
+		if !errors.Is(err, errTrustRace) {
+			return err
+		}
+	}
+	return errTrustRace
+}
+
+func changeTrustOnce(dir string, change func(Trust)) error {
+	path := TrustPath(dir)
+	raw, exists, err := readFile(path)
+	if err != nil {
+		return fmt.Errorf("reading trusted projects: %w", err)
+	}
+	t, err := parseTrust(path, raw, exists)
 	if err != nil {
 		return err
 	}
@@ -132,16 +169,19 @@ func changeTrust(dir string, change func(Trust)) error {
 	if err != nil {
 		return fmt.Errorf("writing trusted projects: %w", err)
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("making the state directory: %w", err)
+	unchanged := func() bool {
+		now, nowExists, err := readFile(path)
+		return err == nil && nowExists == exists && bytes.Equal(now, raw)
 	}
-	return writeAtomic(TrustPath(dir), append(data, '\n'))
+	return writeAtomic(path, append(data, '\n'), unchanged)
 }
 
 // writeAtomic replaces path with data through a temporary file and a rename,
-// so a crash part way leaves the old file. Only the feed writes the trust file,
-// so there's no one to race.
-func writeAtomic(path string, data []byte) error {
+// so a crash part way leaves the old file. unchanged is asked just before the
+// rename, and if it says the file has moved on, nothing is written and the
+// error is errTrustRace. A write landing between that check and the rename is
+// still lost, but the gap is tiny.
+func writeAtomic(path string, data []byte, unchanged func() bool) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", filepath.Base(path), err)
@@ -164,6 +204,9 @@ func writeAtomic(path string, data []byte) error {
 	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("writing %s: %w", filepath.Base(path), err)
+	}
+	if !unchanged() {
+		return errTrustRace
 	}
 	if err := os.Rename(tmp.Name(), path); err != nil {
 		return fmt.Errorf("writing %s: %w", filepath.Base(path), err)

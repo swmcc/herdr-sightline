@@ -69,8 +69,10 @@ func TestTrustingAProjectFile(t *testing.T) {
 	for _, want := range []string{
 		"You haven't trusted it, so none of it applies.",
 		"presets go",
-		`error pattern "our-framework": ^FATAL \[app\] .+`,
-		`ignore rule: DeprecationWarning: Buffer\(\) is deprecated`,
+		"It adds 1 preset, 1 error pattern and 1 ignore rule:",
+		`error pattern 1 of 1, "our-framework": "^FATAL \\[app\\] .+"`,
+		`ignore rule 1 of 1: "DeprecationWarning: Buffer\\(\\) is deprecated"`,
+		"That's the end of the list.",
 		"Anyone who can push to this repo can change this file.",
 		"An ignore rule can hide a real error",
 		"y trust this version",
@@ -115,12 +117,17 @@ func TestTrustRefusesAFileThatChangedWhileShown(t *testing.T) {
 
 	after := projectFrom(t, projectFile+"\n[[ignore]]\nregex = '^WARN flaky test skipped$'\n")
 	h.update(projectsMsg{projects: []project{after}})
+	if !strings.Contains(h.model.status, "The file just changed") {
+		t.Errorf("a change on screen isn't said straight away, status = %q", h.model.status)
+	}
+	// A y pressed as the new version lands was meant for the old one.
 	if cmd := h.press("y"); cmd != nil {
 		t.Fatal("y trusted a file that changed after it was shown")
 	}
-	if !strings.Contains(h.model.status, "changed while you were reading it") {
+	if !strings.Contains(h.model.status, "only just changed") {
 		t.Errorf("status = %q", h.model.status)
 	}
+	h.clock.Advance(changeSettle)
 	if !strings.Contains(h.model.View(), "^WARN flaky test skipped") {
 		t.Errorf("the view doesn't show the new rule")
 	}
@@ -189,7 +196,7 @@ func TestTrustViewShowsHiddenCharacters(t *testing.T) {
 			t.Errorf("the view has %q in it raw", bad)
 		}
 	}
-	for _, want := range []string{`\x{202e}`, `\x{200b}`, `\x1b\[2J`} {
+	for _, want := range []string{`\u202e`, `\u200b`, `\x1b\\[2J`} {
 		if !strings.Contains(view, want) {
 			t.Errorf("the view doesn't show %s:\n%s", want, view)
 		}
@@ -239,11 +246,35 @@ func TestTrustViewScrollsAndSwitches(t *testing.T) {
 	if strings.Contains(h.model.View(), "x$") && strings.Contains(h.model.View(), strings.Repeat("x", 39)+"$") {
 		t.Error("everything fits, so the test proves nothing about scrolling")
 	}
+	// y only trusts a file every rule of which has been on screen.
+	if cmd := h.press("y"); cmd != nil || !strings.Contains(h.model.status, "Scroll to the end first") {
+		t.Fatalf("y worked before the end was seen (status %q)", h.model.status)
+	}
 	for range 100 {
 		h.press("j")
 	}
-	if !strings.Contains(h.model.View(), strings.Repeat("x", 39)+"$") {
+	if !strings.Contains(h.model.View(), strings.Repeat("x", 39)+"$") || !strings.Contains(h.model.View(), "That's the end of the list.") {
 		t.Errorf("scrolling to the end doesn't show the last rule:\n%s", h.model.View())
+	}
+	h.press("g")
+	if cmd := h.press("y"); cmd == nil {
+		t.Errorf("y refused after the end was seen (status %q)", h.model.status)
+	}
+}
+
+// Letters that draw as blank pass for spaces, so they're escaped like any
+// other character outside plain ASCII.
+func TestTrustViewEscapesBlankLetters(t *testing.T) {
+	h, _ := trustHarness(t)
+	p := projectFrom(t, "[[ignore]]\nregex = \"^WARN a\u3164\u3164b|\u05d0x\"\n")
+	if p.err != nil {
+		t.Fatal(p.err)
+	}
+	h.update(projectsMsg{projects: []project{p}})
+	h.press("p")
+	view := h.model.View()
+	if strings.ContainsAny(view, "\u3164\u05d0") || !strings.Contains(view, `\u3164\u3164b|\u05d0x`) {
+		t.Errorf("blank or right to left letters reach the screen raw:\n%s", view)
 	}
 }
 

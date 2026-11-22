@@ -261,8 +261,8 @@ has a mistake in it, the feed shows the error and carries on with the last good
 version.
 
 `closing_line` is an instruction to the agent, so Sightline refuses one that has a
-line break or a control or invisible character in it, or is over 200 characters,
-rather than quietly changing it. Backticks are turned into apostrophes and an empty
+line break, a control or invisible character, any space but a single plain one, or
+more than 200 characters, rather than quietly changing it. Backticks are turned into apostrophes and an empty
 one means the default.
 
 Press `n` on any entry to add an ignore rule for it without editing the file. The

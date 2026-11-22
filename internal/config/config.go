@@ -458,21 +458,39 @@ func (v *validator) build(raw fileConfig) Config {
 // the file, not the only defence. Empty or only spaces means the default.
 // Backticks are allowed because the engine turns them into apostrophes, as the
 // README says.
+//
+// An "@" is allowed too, because it's the user's own words. That's only safe
+// while this file is the only place a closing line comes from. Project presets
+// (#22) must not be able to set it at all, trust prompt or not, or a repo could
+// write "Read @~/.ssh/id_ed25519" into the prompt as a real file mention.
 func (v *validator) closingLine(value *string, into *string) {
 	if value == nil {
 		return
 	}
 	const key = "closing_line"
-	s := strings.TrimSpace(*value)
+	if strings.TrimSpace(*value) == "" {
+		return
+	}
+	// Only plain spaces at the ends are tidied away. Anything else there, such
+	// as a new line or U+0085, is refused below like it is in the middle.
+	s := strings.Trim(*value, " ")
 	for _, r := range s {
 		switch {
 		case r == '\n' || r == '\r' || unicode.In(r, unicode.Zl, unicode.Zp):
 			v.fail(key, "%s must be one line", key)
 			return
+		case unicode.IsSpace(r) && r != ' ':
+			// The engine turns every run of spaces into one plain space.
+			v.fail(key, "%s may only use plain spaces, found %U", key, r)
+			return
 		case invisible(r):
 			v.fail(key, "%s has a control or invisible character (%U), which would be taken out", key, r)
 			return
 		}
+	}
+	if strings.Contains(s, "  ") {
+		v.fail(key, "%s has two spaces in a row, which would become one", key)
+		return
 	}
 	if n := utf8.RuneCountInString(s); n > MaxClosingLineRunes {
 		v.fail(key, "%s must be at most %d characters, got %d", key, MaxClosingLineRunes, n)

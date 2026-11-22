@@ -77,7 +77,11 @@ func AppendIgnore(dir, regex string, now time.Time) (Appended, error) {
 	if err != nil {
 		return Appended{}, fmt.Errorf("the rule wasn't added because the file wouldn't load with it: %w", err)
 	}
-	if len(after.Ignores) != len(before.Ignores)+1 || after.Ignores[len(after.Ignores)-1].Regex.String() != regex {
+	// The regex comes from pane output, so it must never change a setting at the
+	// top of the file either. The closing line is an instruction to the agent.
+	if len(after.Ignores) != len(before.Ignores)+1 || after.Ignores[len(after.Ignores)-1].Regex.String() != regex ||
+		after.ClosingLine != before.ClosingLine || after.SettleSeconds != before.SettleSeconds ||
+		after.ContextLines != before.ContextLines {
 		return Appended{}, &Error{File: path, Msg: "the rule wasn't added because it didn't read back as written"}
 	}
 

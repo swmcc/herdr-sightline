@@ -154,8 +154,16 @@ type Model struct {
 	viewSentAt  time.Time
 	// viewBatch, when it's set, says the view shows the batch queue mode will
 	// send with these entries, first to go first, rather than what enter
-	// would send (#92).
+	// would send (#92). viewWatch says the view is of a queued entry, so it
+	// follows what queue mode would send (see followView). viewInert says
+	// enter does nothing in it, because it has shown a batch. viewGone says
+	// the entry was dropped while it was open. viewFresh is a pane whose view
+	// changed and that queue mode holds back for a tick.
 	viewBatch []engine.EntryID
+	viewWatch bool
+	viewInert bool
+	viewGone  bool
+	viewFresh string
 
 	status string
 	width  int
@@ -304,6 +312,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// list is brought up to date first, so it sees what the tick filed.
 		m.refresh()
 		cmd = m.autoSend()
+		// A pane held back because its view changed has now had a tick on
+		// screen, so it may go on the next.
+		m.viewFresh = ""
 	case deltaMsg:
 		if m.fromCurrentLoop(msg.pane, msg.gen) {
 			m.delta(msg)
@@ -387,8 +398,8 @@ func (m *Model) refresh() {
 		if _, ok := m.entry(m.viewID); !ok {
 			m.status = fmt.Sprintf("This entry was %s, so enter won't send it. Press esc to go back.", m.goneWord(m.viewID))
 		}
-		if m.viewBatch != nil {
-			m.refreshBatchView()
+		if m.viewWatch {
+			m.followView()
 		}
 	}
 	if m.mode == modePick {
@@ -977,11 +988,15 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 // openView shows exactly what enter would send for id, or for an entry queue
 // mode will send with others, that batch.
 func (m *Model) openView(id engine.EntryID) {
+	m.viewInert, m.viewGone, m.viewWatch = false, false, false
 	if m.openSentView(id) {
 		return
 	}
+	en, ok := m.entry(id)
+	// A queued entry's view follows what queue mode would send with it.
+	watch := ok && en.Queued
 	if m.openBatchView(id) {
-		m.viewTop = 0
+		m.viewTop, m.viewWatch = 0, watch
 		return
 	}
 	text, err := m.engine.Message(id)
@@ -990,9 +1005,9 @@ func (m *Model) openView(id engine.EntryID) {
 		return
 	}
 	m.mode, m.viewID, m.viewText, m.viewTop, m.viewSent = modeView, id, text, 0, false
-	m.viewBatch = nil
+	m.viewBatch, m.viewWatch = nil, watch
 	m.viewTarget = herdr.Target{}
-	if en, ok := m.entry(id); ok {
+	if ok {
 		if t, ask := m.targetFor(en); ask == "" {
 			m.viewTarget = t
 		}
@@ -1021,8 +1036,8 @@ func (m *Model) viewKey(k tea.KeyMsg) tea.Cmd {
 			m.status = "This is what queue mode sent. Press esc, then enter on the entry to send it again."
 			return nil
 		}
-		if m.viewBatch != nil {
-			m.status = "This is the batch queue mode will send. Press esc, then enter on the entry to send it now on its own."
+		if m.viewBatch != nil || m.viewInert {
+			m.status = "This view has shown the batch queue mode will send, so enter doesn't send from it. Press esc, then enter on the entry to send it now on its own."
 			return nil
 		}
 		return m.send(m.viewID, m.viewText, true)
@@ -1093,6 +1108,9 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 		// new version rather than send something that wasn't on screen.
 		m.openView(id)
 		m.status = "The message or its agent changed while you were reading it. Check it again, then press enter to send."
+		if m.viewBatch != nil {
+			m.status = "It's now in a batch queue mode will send, shown here. Press esc, then enter on the entry to send it now on its own."
+		}
 		return nil
 	}
 	if ask != "" {

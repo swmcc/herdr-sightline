@@ -430,8 +430,14 @@ func (m *Model) messageView() string {
 	if m.viewSent {
 		head = fmt.Sprintf("Exactly what queue mode sent to %s at %s · %s", clean(m.viewTarget.Label), m.viewSentAt.Format(clockFormat), plural(len(m.viewText), "byte", "bytes"))
 	}
-	if m.viewBatch != nil {
+	switch {
+	case m.viewGone:
+		head = "This entry was dropped, so nothing here will be sent as shown"
+	case m.viewBatch != nil:
 		head = m.batchHeader()
+	case m.viewInert && !m.viewSent:
+		// enter does nothing here (see viewKey), so the header can't say it does.
+		head = fmt.Sprintf("Exactly what enter on the entry in the list sends · %s", plural(len(m.viewText), "byte", "bytes"))
 	}
 	out := []string{faint.Render(fit(head, w)), ""}
 	out = append(out, lines[top:end]...)

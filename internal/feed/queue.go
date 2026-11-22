@@ -221,6 +221,11 @@ func (m *Model) autoSend() tea.Cmd {
 	}
 	now := m.now()
 	for _, pane := range m.watching {
+		if pane == m.viewFresh {
+			// The view of what would go from pane changed on this tick and
+			// hasn't been on screen yet. It goes on a later tick.
+			continue
+		}
 		ids, target := m.nextBatch(pane)
 		if len(ids) == 0 || m.agentReady(target, now) != "" {
 			continue
@@ -242,9 +247,10 @@ func (m *Model) autoSend() tea.Cmd {
 }
 
 // nextBatch is what autoSend would hand the engine for pane once its agent is
-// ready: the queued entries from pane that may go, skipping any being sent,
-// those going to the same agent as the first, up to MaxAutoBatch, and that
-// agent. It's empty if the person hasn't agreed to queue mode for pane.
+// ready, and that agent. It's the queued entries from pane that may go, apart
+// from any being sent, keeping only those that go to the same agent as the
+// first, up to MaxAutoBatch. It's empty if the person hasn't agreed to queue
+// mode for pane.
 func (m *Model) nextBatch(pane string) ([]engine.EntryID, herdr.Target) {
 	if !m.consented[pane] {
 		return nil, herdr.Target{}
@@ -291,39 +297,47 @@ func (m *Model) openBatchView(id engine.EntryID) bool {
 	return true
 }
 
-// refreshBatchView keeps a batch on screen exactly as it would go. Lines can
-// join an entry, and entries can join, leave or move in the queue, while the
-// person reads it. If the batch changed, the view shows the new one and says
-// so. If the entry wouldn't go with others any more, it shows what v would.
-func (m *Model) refreshBatchView() {
-	// While a send of the batch is being checked, nextBatch skips its entries,
-	// so the view keeps what's going until the send is settled.
-	if slices.ContainsFunc(m.viewBatch, func(id engine.EntryID) bool { return m.sending[id] }) {
+// followView keeps the view of a queued entry showing what queue mode would
+// send with it now (#92). Lines can join an entry, and entries can join,
+// leave or move in the queue, while the person reads it, so a lone entry can
+// become a batch and a batch can fall back to one entry. refresh calls it
+// while such a view is open.
+//
+// If what would go changed, the view shows the new bytes, says so, and holds
+// queue mode back for that pane until the next tick (see autoSend), so
+// nothing goes that wasn't on screen first.
+func (m *Model) followView() {
+	// While a send is being checked, nextBatch skips its entries, so the view
+	// keeps what's going until the send is settled.
+	if m.sending[m.viewID] || slices.ContainsFunc(m.viewBatch, func(id engine.EntryID) bool { return m.sending[id] }) {
 		return
 	}
-	if _, ok := m.entry(m.viewID); !ok {
-		// refresh says the entry was dropped. What's on screen can't go.
-		m.viewBatch = nil
+	en, ok := m.entry(m.viewID)
+	if !ok {
+		// refresh says the entry was dropped. Nothing on screen can go now.
+		m.viewWatch, m.viewGone = false, true
 		return
 	}
 	text, ids, target := m.viewText, m.viewBatch, m.viewTarget
-	top := m.viewTop
-	if !m.openBatchView(m.viewID) {
-		m.openView(m.viewID)
-	}
-	if m.mode != modeView {
+	top, inert, status := m.viewTop, m.viewInert || m.viewBatch != nil, m.status
+	m.openView(m.viewID)
+	// A view that has shown a batch stays one where enter does nothing until
+	// v opens it again, so pane output can't turn it into one that sends.
+	m.viewInert = inert
+	if m.viewText == text && slices.Equal(m.viewBatch, ids) && sameAgent(m.viewTarget, target) {
+		m.viewTop = top
 		return
 	}
-	if m.viewBatch == nil {
-		m.status = "This entry won't go in that batch any more, so this is what v shows for it now."
+	m.viewTop = 0
+	now, _ := m.entry(m.viewID)
+	if !now.Queued || m.viewSent {
+		// It went, or queue mode stopped for its pane. Whatever the send set
+		// the status to says what happened, so it stays.
+		m.status = status
 		return
 	}
-	if m.viewText != text || !slices.Equal(m.viewBatch, ids) || !sameAgent(m.viewTarget, target) {
-		m.viewTop = 0
-		m.status = "The batch changed while you were reading it. This is what would go now."
-		return
-	}
-	m.viewTop = top
+	m.viewFresh = string(en.Source.ID)
+	m.status = "What queue mode would send changed while you were reading it. This is what would go now."
 }
 
 // batchHeader is the view's header line for a batch: who it goes to and

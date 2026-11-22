@@ -47,6 +47,12 @@ func TestParseValid(t *testing.T) {
 				t.Errorf("ClosingLine = %q, want %q", cfg.ClosingLine, want)
 			}
 		}},
+		{"queue-mode.toml", func(t *testing.T, cfg Config) {
+			want := []Pin{{PaneTitle: "web", Mode: ModeQueue}, {PaneTitle: "api", Agent: "codex", Mode: ModeNotify}}
+			if !slices.Equal(cfg.Pins, want) {
+				t.Errorf("Pins = %+v, want %+v", cfg.Pins, want)
+			}
+		}},
 		{"no-presets.toml", func(t *testing.T, cfg Config) {
 			if cfg.Presets == nil || len(cfg.Presets) != 0 {
 				t.Errorf("Presets = %#v, want an empty list", cfg.Presets)
@@ -132,10 +138,11 @@ func TestParseErrorsPointAtTheLine(t *testing.T) {
 		{"missing-fields.toml", []string{
 			"missing-fields.toml:1:3: [[pattern]] needs a name",
 			"missing-fields.toml:4:3: [[ignore]] needs a regex",
-			"missing-fields.toml:6:3: [[watch]] needs an agent",
+			"missing-fields.toml:6:3: [[watch]] needs an agent or a mode",
 		}},
 		{"duplicate-pattern.toml", []string{`duplicate-pattern.toml:6:8: pattern "same" is defined twice`}},
 		{"closing-line-two-lines.toml", []string{"closing-line-two-lines.toml:2:16: closing_line must be one line"}},
+		{"bad-mode.toml", []string{`bad-mode.toml:3:8: mode must be "notify" or "queue", got "auto"`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.fixture, func(t *testing.T) {

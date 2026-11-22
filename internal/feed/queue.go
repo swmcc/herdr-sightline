@@ -1,0 +1,320 @@
+package feed
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/swmcc/herdr-sightline/internal/config"
+	"github.com/swmcc/herdr-sightline/internal/engine"
+	"github.com/swmcc/herdr-sightline/internal/herdr"
+)
+
+// Queue mode (#19) sends errors without a keypress at the moment they go, so
+// it keeps to the rules decided in #21. The engine owns the queue and the caps
+// (see engine/queue.go). The feed owns the rest:
+//
+//   - Consent. Queue mode is off for every pane until m on one of its entries
+//     turns it on, and the first time for a pane in a session that opens a
+//     screen saying what it means, where only y says yes. sightline.toml can
+//     ask for it, but only makes the feed remind the person.
+//   - The agent. It goes only to an agent the feed is sure of: chosen without
+//     asking, not blocked, not one that needs a second enter (another tab, a
+//     send that may already have arrived) and not through a pin that matched
+//     a terminal title, which the watched pane sets itself.
+//   - Idle. The agent must have been idle for idleFor and not still be on an
+//     earlier send. herdr is asked again just before sending, and the send is
+//     refused if the agent isn't idle then.
+//   - One at a time. autoSend runs on the tick, starts at most one send and
+//     none while another is in flight.
+//
+// The message is the engine's, sent byte for byte, and the feed shows what
+// went and when.
+
+// idleFor is how long an agent must have been idle before queue mode sends
+// to it, so a pause between two steps of its work isn't taken for the end.
+const idleFor = 3 * time.Second
+
+// clockFormat is how the feed shows the time of an automatic send.
+const clockFormat = "15:04:05"
+
+// toggleQueue switches the pane en came from between notify and queue. Turning
+// it on for the first time in a session asks first.
+func (m *Model) toggleQueue(en engine.Entry) {
+	pane := string(en.Source.ID)
+	name := m.paneName(pane)
+	if !m.isWatching(pane) {
+		m.status = fmt.Sprintf("%s isn't watched any more, so queue mode can't go on for it.", name)
+		return
+	}
+	src := engine.SourceID(pane)
+	if m.engine.QueueMode(src) {
+		m.engine.SetQueueMode(src, false)
+		m.status = fmt.Sprintf("Queue mode is off for %s. Its errors wait for enter again.", name)
+		return
+	}
+	if !m.consented[pane] {
+		m.mode, m.consentPane = modeConsent, pane
+		return
+	}
+	m.queueOn(pane)
+}
+
+// queueOn turns queue mode on for a pane the person has agreed to.
+func (m *Model) queueOn(pane string) {
+	m.engine.SetQueueMode(engine.SourceID(pane), true)
+	m.status = fmt.Sprintf("Queue mode is on for %s. Press m on one of its entries to turn it off.", m.paneName(pane))
+}
+
+// consentKey takes the answer to the consent screen. Only y says yes.
+func (m *Model) consentKey(k tea.KeyMsg) {
+	pane := m.consentPane
+	m.mode, m.consentPane = modeList, ""
+	if k.String() != "y" {
+		m.status = fmt.Sprintf("Queue mode stays off for %s.", m.paneName(pane))
+		return
+	}
+	if !m.isWatching(pane) {
+		m.status = fmt.Sprintf("%s isn't watched any more, so queue mode can't go on for it.", m.paneName(pane))
+		return
+	}
+	m.consented[pane] = true
+	m.queueOn(pane)
+}
+
+// consentView says plainly what queue mode means before it goes on.
+func (m *Model) consentView() string {
+	w := max(m.width, 20)
+	name := m.paneName(m.consentPane)
+	who := "Right now Sightline would ask which agent, so nothing would go until that's settled."
+	if t, why := m.autoTargetForPane(m.consentPane); why == "" {
+		who = fmt.Sprintf("Right now that's %s.", clean(t.Label))
+	}
+	waiting := 0
+	for _, en := range m.entries {
+		if string(en.Source.ID) == m.consentPane && en.State == engine.StateNew {
+			waiting++
+		}
+	}
+	paras := []string{
+		bold.Render("Turn on queue mode for " + name + "?"),
+		"",
+		"Errors from this pane will be sent to an agent on their own, without you pressing enter, once it has been idle for a few seconds. " + who,
+		"",
+		"Anyone who can put text in this pane, such as someone sending requests to your dev server, can then get text in front of the agent without you reading it first. Sightline still marks it all as data from another pane, but nobody will have checked it.",
+		"",
+		fmt.Sprintf("Sightline holds back anything it isn't sure of, sends at most %d errors at a time and at most 3 messages to an agent in 10 minutes, and stops for this pane if a fix it sent didn't work.", engine.MaxAutoBatch),
+	}
+	if waiting > 0 {
+		paras = append(paras, "", fmt.Sprintf("%s from this pane already in the feed will join the queue.", plural(waiting, "error", "errors")))
+	}
+	paras = append(paras, "", "This lasts until the feed closes or the pane stops being watched.")
+	var out []string
+	for _, p := range paras {
+		out = append(out, wrapWords(p, w)...)
+	}
+	out = append(out, "", faint.Render(fit("y turn it on   any other key leaves it off", w)))
+	return strings.Join(out, "\n")
+}
+
+// wrapWords breaks s into lines of at most w cells, at spaces.
+func wrapWords(s string, w int) []string {
+	if s == "" {
+		return []string{""}
+	}
+	var out []string
+	line := ""
+	for _, word := range strings.Fields(s) {
+		switch {
+		case line == "":
+			line = word
+		case len([]rune(line))+1+len([]rune(word)) > w:
+			out = append(out, line)
+			line = word
+		default:
+			line += " " + word
+		}
+	}
+	return append(out, line)
+}
+
+// autoTarget is who queue mode would send en to, or why it won't.
+func (m *Model) autoTarget(en engine.Entry) (herdr.Target, string) {
+	t, ask, note := m.chooseFor(en)
+	switch {
+	case ask != "":
+		return t, "Sightline would ask first: " + ask
+	case t.Status == herdr.AgentBlocked:
+		return t, "the agent is waiting on a prompt"
+	case m.needsConfirm(en, t) != "":
+		return t, "sending it would need a second enter"
+	case note == titlePinNote:
+		return t, "the agent was only pinned by terminal title"
+	case note != "":
+		// A pin whose agent isn't running fell back to the tab. That's not
+		// an agent Sightline is sure of, so it waits for a keypress.
+		return t, "the pinned agent isn't running, so it fell back to the tab"
+	}
+	return t, ""
+}
+
+// autoTargetForPane is autoTarget for a pane with no entry yet.
+func (m *Model) autoTargetForPane(pane string) (herdr.Target, string) {
+	return m.autoTarget(engine.Entry{Source: engine.Source{ID: engine.SourceID(pane)}})
+}
+
+// agentReady says why queue mode can't send to t at now, or "" if it can.
+func (m *Model) agentReady(t herdr.Target, now time.Time) string {
+	if _, ok := m.awaiting[t.PaneID]; ok {
+		return "waiting for it to finish what Sightline sent it"
+	}
+	since, idle := m.tracker.IdleSince(t.PaneID)
+	switch {
+	case !idle:
+		return "waiting for it to go idle"
+	case now.Sub(since) < idleFor:
+		return "it has only just gone idle"
+	}
+	return m.engine.AutoWait(t.PaneID, now)
+}
+
+// autoSend starts the one automatic send queue mode may make now, if any. It's
+// called on every tick and is the only thing that starts a send without a
+// keypress. It takes the queued entries from the first pane that has any that
+// may go, keeps those going to the same agent as the first, up to
+// MaxAutoBatch, and hands them to the engine, which builds the message and
+// counts it against the caps.
+func (m *Model) autoSend() tea.Cmd {
+	if m.autoBusy || !m.synced || m.engine.QueuePaused() {
+		return nil
+	}
+	now := m.now()
+	for _, pane := range m.watching {
+		if !m.consented[pane] {
+			continue
+		}
+		var ids []engine.EntryID
+		var target herdr.Target
+		for _, id := range m.engine.QueueCandidates(engine.SourceID(pane)) {
+			en, ok := m.entry(id)
+			if !ok || m.sending[id] {
+				continue
+			}
+			t, why := m.autoTarget(en)
+			if why != "" || (len(ids) > 0 && !sameAgent(t, target)) {
+				continue
+			}
+			target = t
+			ids = append(ids, id)
+			if len(ids) == engine.MaxAutoBatch {
+				break
+			}
+		}
+		if len(ids) == 0 || m.agentReady(target, now) != "" {
+			continue
+		}
+		text, err := m.engine.AutoSend(ids, target.PaneID, now)
+		if err != nil {
+			continue
+		}
+		m.autoBusy = true
+		for _, id := range ids {
+			m.sending[id] = true
+		}
+		m.status = fmt.Sprintf("Queue mode is checking %s before sending...", clean(target.Label))
+		return checkTarget(m.ctx, m.client, m.now, ids, true, target, text)
+	}
+	return nil
+}
+
+// queueNote says where a queued entry stands: who it's waiting for and why it
+// hasn't gone yet.
+func (m *Model) queueNote(en engine.Entry) string {
+	src := en.Source.ID
+	t, why := m.autoTarget(en)
+	who := "an agent"
+	if t.PaneID != "" {
+		who = clean(t.Label)
+	}
+	switch {
+	case en.Hold != "":
+		why = string(en.Hold) + ", so it waits for enter"
+	case m.engine.Halted(src):
+		why = "queue mode stopped for this pane, so it waits for enter"
+	case m.engine.QueuePaused():
+		why = "queue mode is paused"
+	case why == "" && m.sending[en.ID]:
+		why = "sending now"
+	case why == "":
+		why = m.agentReady(t, m.now())
+	}
+	if why == "" {
+		why = "going on the next tick"
+	}
+	return "◷ queued for " + who + ", " + why
+}
+
+// openSentView shows exactly what queue mode sent for id, if its latest send
+// was automatic. It reports whether it did.
+func (m *Model) openSentView(id engine.EntryID) bool {
+	en, ok := m.entry(id)
+	if !ok || !en.Auto {
+		return false
+	}
+	s, ok := m.engine.LastAutoSend(id)
+	if !ok {
+		return false
+	}
+	m.mode, m.viewID, m.viewText, m.viewTop = modeView, id, s.Text, 0
+	m.viewSent, m.viewSentAt = true, s.At
+	m.viewTarget = herdr.Target{PaneID: s.Agent, Label: m.agentLabel(s.Agent)}
+	return true
+}
+
+// queueHeader is the header's lines about queue mode: which panes it's on for
+// and which sightline.toml asks for.
+func (m *Model) queueHeader() []string {
+	var on, asked []string
+	for _, pane := range m.watching {
+		src := engine.SourceID(pane)
+		name := m.paneName(pane)
+		switch {
+		case m.engine.Halted(src):
+			on = append(on, name+" (stopped until you send one by hand)")
+		case m.engine.QueueMode(src):
+			on = append(on, name)
+		case m.configAsksQueue(pane):
+			asked = append(asked, name)
+		}
+	}
+	var lines []string
+	if len(on) > 0 {
+		line := "Queue mode on for " + strings.Join(on, ", ")
+		if m.engine.QueuePaused() {
+			line += " · paused"
+		}
+		lines = append(lines, line)
+	}
+	if len(asked) > 0 {
+		lines = append(lines, "sightline.toml asks for queue mode on "+strings.Join(asked, ", ")+". Press m on one of its entries to turn it on.")
+	}
+	return lines
+}
+
+// configAsksQueue reports whether sightline.toml asks for queue mode on pane.
+// Only the pane's label counts, never its terminal title, which the program
+// in the pane can set.
+func (m *Model) configAsksQueue(pane string) bool {
+	p, ok := m.panes[pane]
+	if !ok || p.Label == "" {
+		return false
+	}
+	for _, pin := range m.cfg.Pins {
+		if pin.PaneTitle == p.Label {
+			return pin.Mode == config.ModeQueue
+		}
+	}
+	return false
+}

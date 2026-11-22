@@ -96,6 +96,7 @@ func (e *Engine) sent(r *record, agent string, _ time.Time) {
 	r.entry.State = StateSent
 	r.entry.Agent = agent
 	r.entry.Note = ""
+	r.entry.Auto = false // AutoDelivered sets it again
 	r.fix = fixState{}
 }
 
@@ -253,6 +254,9 @@ func (e *Engine) recurred(r *record, matchedAt time.Time) {
 	}
 	r.entry.State = StateStillFailing
 	r.fix = fixState{}
+	// A fix that went on its own and didn't work could go round again and
+	// again, so queue mode stops for this source until a keypress.
+	e.stillFailingAfterAuto(r)
 }
 
 // checkFixes gives a verdict on every entry whose settle period is over. It

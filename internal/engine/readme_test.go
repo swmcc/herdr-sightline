@@ -25,6 +25,21 @@ func TestReadmeExampleMatchesTheFixture(t *testing.T) {
 	}
 }
 
+// The same for queue mode's message for several errors (#19).
+func TestReadmeBatchExampleMatchesTheFixture(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := readmeBlock(string(readme), "## Queue mode", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := readFixture(t, "message_batch_readme.txt"); got != want {
+		t.Fatalf("the README's queue mode example doesn't match testdata/message_batch_readme.txt:\n%s", lineDiff(want, got))
+	}
+}
+
 func TestReadmeExample(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -81,7 +96,12 @@ func TestReadmeExample(t *testing.T) {
 // receives" heading. The example holds a fence of its own, so the block ends at the
 // first fence of the same character that's at least as long as the opening one.
 func readmeExample(readme string) (string, error) {
-	const heading = "## What the agent receives"
+	return readmeBlock(readme, "## What the agent receives", 3)
+}
+
+// readmeBlock returns the first block under heading fenced with at least
+// fenceLen backticks, so a section can show some config before its example.
+func readmeBlock(readme, heading string, fenceLen int) (string, error) {
 	lines := strings.SplitAfter(readme, "\n")
 	start := -1
 	for i, l := range lines {
@@ -99,7 +119,7 @@ func readmeExample(readme string) (string, error) {
 			break
 		}
 		fence := leadingRun(l, '`')
-		if len(fence) < 3 {
+		if len(fence) < fenceLen {
 			continue
 		}
 		var body strings.Builder

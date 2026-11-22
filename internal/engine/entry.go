@@ -23,6 +23,14 @@ type Entry struct {
 	// Note says why an entry got its state when the state alone doesn't, such
 	// as NoteAgentGone. It's empty otherwise.
 	Note string
+
+	// Queue mode (#19). Queued says the entry is waiting in the queue, Hold
+	// why it waits for a keypress instead of going on its own, if it does.
+	// Auto says its latest send was automatic and SentAt is when it went.
+	Queued bool
+	Hold   Hold
+	Auto   bool
+	SentAt time.Time
 }
 
 // found is one caught error with its context, handed from the window (#8) to

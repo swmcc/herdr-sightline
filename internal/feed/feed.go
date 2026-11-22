@@ -2,9 +2,12 @@
 // because herdr plugins can't run background daemons, the watcher too. Close
 // it and watching stops.
 //
-// The feed never sends anything without a keypress. Enter on an entry checks
-// the target agent is still there and not blocked, then makes exactly one
-// agent.prompt call with the engine's message, byte for byte what v shows.
+// The feed never sends anything without a keypress, except in queue mode
+// (#19), which a person turns on for one pane at a time and which keeps to the
+// rules in queue.go. Enter on an entry checks the target agent is still there
+// and not blocked, then makes exactly one agent.prompt call with the engine's
+// message, byte for byte what v shows. Queue mode goes through the same check
+// and the same single call, with the engine's message for what's queued.
 //
 // How herdr 0.9.1 types a prompt of several lines, checked with a fake agent
 // in a throwaway pane that printed every byte it read: the whole text arrives

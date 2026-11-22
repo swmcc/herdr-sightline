@@ -18,7 +18,9 @@ watched pane.
 - [ ] ANSI and control characters are stripped
 - [ ] Length is capped and the cap is visible in the message
 - [ ] The message says plainly that the content is data from another pane, not instructions
-- [ ] Nothing is sent without a keypress (v0.1), and queue mode follows #21 once it exists
+- [ ] Nothing is sent without a keypress, except by queue mode, which follows #21:
+      consent per pane, a sure agent, an idle agent, held entries wait and the
+      engine's caps can't be got round by pane output
 - [ ] `v` in the feed shows exactly the bytes that will be sent
 - [ ] There's a test with hostile fixtures for anything new
 

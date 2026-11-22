@@ -424,11 +424,13 @@ func (e *Engine) repeatOf(key groupKey, f found) *record {
 // An entry that's being checked is never dropped. That's one that has been sent
 // (whether its agent is still working or its settle period has started) or one
 // that's still failing after a send. Dropping either would throw away the answer
-// to "did the fix work?", which is the point of Sightline. Only a keypress can
-// make an entry sent, so output can't fill the feed with them. If every entry
+// to "did the fix work?", which is the point of Sightline. Only a keypress or
+// queue mode can make an entry sent, and queue mode's caps (see queue.go) allow
+// a handful an hour, so output can't fill the feed with them. If every entry
 // left is being checked, the feed goes over the cap rather than drop one. It's
 // only trimmed when a new entry arrives, so it can stay over the cap after those
-// checks finish, until the next new error. That's bounded by keypresses too.
+// checks finish, until the next new error. That's bounded by keypresses and
+// those caps too.
 //
 // The entry just added is never dropped either, so a new error always reaches
 // the feed. It's the newest, so it would be last in its group anyway.

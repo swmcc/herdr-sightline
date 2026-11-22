@@ -33,6 +33,27 @@ func TestMessageMatchesTheReadme(t *testing.T) {
 	}
 }
 
+// Queue mode's message for several errors (#19), as the README shows it.
+func TestBatchMatchesTheReadme(t *testing.T) {
+	src := Source{ID: "w1:p3", Title: "web", Command: "next dev"}
+	ens := []Entry{
+		{
+			Source: src,
+			Before: []string{"GET /notices 200"},
+			Lines:  []string{"TypeError: Cannot read properties of undefined (reading 'map')"},
+			After:  []string{"    at NoticeList (app/notices/page.tsx:14:22)"},
+		},
+		{
+			Source: src,
+			Lines:  []string{"ReferenceError: user is not defined"},
+			After:  []string{"    at Profile (app/profile/page.tsx:8:3)"},
+		},
+	}
+	if got, want := buildBatch(ens, Options{}), readFixture(t, "message_batch_readme.txt"); got != want {
+		t.Fatalf("message:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 func TestMessageNamesThePaneByIDOnly(t *testing.T) {
 	tests := []struct {
 		id   SourceID

@@ -73,11 +73,20 @@ type Ignore struct {
 	Regex *regexp.Regexp
 }
 
-// Pin is a [[watch]] table. It ties a pane title to an agent.
+// Pin is a [[watch]] table. It ties a pane title to an agent, or marks the
+// pane for queue mode, or both. Agent is empty when it only sets Mode.
 type Pin struct {
 	PaneTitle string
 	Agent     string
+	Mode      string // "" or ModeNotify for the usual, ModeQueue for queue mode
 }
+
+// The modes a [[watch]] table can ask for (#19). Queue mode never starts from
+// the file alone: the feed asks first, the first time in each session.
+const (
+	ModeNotify = "notify"
+	ModeQueue  = "queue"
+)
 
 // Default is the config used when there's no file at all.
 func Default() Config {
@@ -319,6 +328,7 @@ type fileIgnore struct {
 type fileWatch struct {
 	PaneTitle string `toml:"pane_title"`
 	Agent     string `toml:"agent"`
+	Mode      string `toml:"mode"`
 }
 
 func unknownKeyErrors(name string, strict *toml.StrictMissingError) []error {
@@ -441,11 +451,16 @@ func (v *validator) build(raw fileConfig) Config {
 			// Two pins for one pane can't both win, so make the choice explicit.
 			v.fail(key+".pane_title", "pane %q is pinned twice", title)
 		}
-		if agent == "" {
-			v.fail(key, "[[watch]] needs an agent")
+		mode := strings.TrimSpace(w.Mode)
+		modeOK := mode == "" || mode == ModeNotify || mode == ModeQueue
+		if !modeOK {
+			v.fail(key+".mode", "mode must be %q or %q, got %q", ModeNotify, ModeQueue, mode)
 		}
-		if title != "" && agent != "" && !titles[title] {
-			cfg.Pins = append(cfg.Pins, Pin{PaneTitle: title, Agent: agent})
+		if agent == "" && mode == "" {
+			v.fail(key, "[[watch]] needs an agent or a mode")
+		}
+		if title != "" && (agent != "" || mode != "") && modeOK && !titles[title] {
+			cfg.Pins = append(cfg.Pins, Pin{PaneTitle: title, Agent: agent, Mode: mode})
 		}
 		titles[title] = true
 	}
@@ -545,7 +560,7 @@ var schema = map[string][]string{
 	"":        {"settle_seconds", "context_lines", "presets", "closing_line", "pattern", "ignore", "watch"},
 	"pattern": {"name", "regex"},
 	"ignore":  {"regex"},
-	"watch":   {"pane_title", "agent"},
+	"watch":   {"pane_title", "agent", "mode"},
 }
 
 // checkCase follows the parts of a key down from table and records every part

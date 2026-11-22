@@ -295,6 +295,15 @@ Every block is built and marked exactly as a single error's is, and the whole
 message is still capped at 16 KiB. When the cap bites, lines come off the longest
 block first. A single error gets exactly the message `enter` would send.
 
+You can read a batch before it goes. On a queued entry that would go with others,
+`v` shows the whole batch, byte for byte as queue mode would send it now, under a
+line saying which agent it goes to and which places in the queue it holds. If the
+batch changes while you read it, because an error joins or leaves or gets more
+lines, the view follows and says so. `enter` there doesn't send the batch. Press
+`esc`, then `enter` on the entry to send it now on its own. While queue mode is
+paused or stopped for the pane nothing goes on its own, so `v` shows what `enter`
+would send.
+
 Some entries never go on their own. They wait for `enter`:
 
 - an entry where output around it may have been missed

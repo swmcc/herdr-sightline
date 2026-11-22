@@ -125,3 +125,71 @@ func TestALogShowsWhatWent(t *testing.T) {
 		t.Error("enter on what went sent something")
 	}
 }
+
+// v on a queued entry that would go with others shows that batch, exactly as
+// queue mode then sends it (#92).
+func TestVShowsTheBatchBeforeItGoes(t *testing.T) {
+	h := newHarness(t)
+	older, newer := h.queueTwo()
+	h.press("v")
+	if h.model.mode != modeView || h.model.viewBatch == nil {
+		t.Fatalf("v on a queued entry didn't show its batch, status %q", h.model.status)
+	}
+	want, err := h.model.engine.PreviewBatch([]engine.EntryID{older.ID, newer.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.model.viewText != want || !strings.HasPrefix(want, "Sightline caught 2 errors in pane w1:p1.") {
+		t.Fatalf("the view shows\n%s\nwant the batch\n%s", h.model.viewText, want)
+	}
+	if view := h.model.View(); !strings.Contains(view, "The batch queue mode will send to claude (tab 2) once it can, queued 1 and 2 of 2") {
+		t.Errorf("the header doesn't say what the batch is:\n%s", view)
+	}
+	if h.press("enter") != nil || len(h.herdr.promptCalls()) != 0 {
+		t.Fatal("enter on the batch sent something")
+	}
+
+	// Another error joins the batch while it's on screen. The view follows,
+	// so it's never out of date when queue mode sends.
+	h.printAndRun("RangeError: Maximum call stack size exceeded")
+	if !strings.HasPrefix(h.model.viewText, "Sightline caught 3 errors in pane w1:p1.") || !strings.Contains(h.model.viewText, "RangeError") {
+		t.Fatalf("the view didn't follow the batch:\n%s", h.model.viewText)
+	}
+	if !strings.Contains(h.model.status, "The batch changed") || !strings.Contains(h.model.View(), "queued 1, 2 and 3 of 3") {
+		t.Errorf("status = %q, want it to say the batch changed:\n%s", h.model.status, h.model.View())
+	}
+	shown := h.model.viewText
+
+	h.herdr.setStatus(agentPane, herdr.AgentIdle)
+	h.sync()
+	h.clock.Advance(time.Minute)
+	h.tickAndRun()
+	calls := h.herdr.promptCalls()
+	if len(calls) != 1 || calls[0].Text != shown {
+		t.Fatalf("queue mode sent %+v, want exactly what v showed:\n%s", calls, shown)
+	}
+	// Once it has gone, the view shows what went.
+	h.tickAndRun()
+	if !h.model.viewSent || h.model.viewText != shown {
+		t.Errorf("after the send the view shows\n%s", h.model.View())
+	}
+}
+
+// A queued entry that would go on its own shows what enter sends, which is
+// the same bytes.
+func TestVOnALoneQueuedEntryShowsWhatEnterSends(t *testing.T) {
+	h := newHarness(t)
+	h.herdr.setStatus(agentPane, herdr.AgentWorking)
+	en := h.queueOn()
+	h.press("v")
+	want, err := h.model.engine.Message(en.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.model.viewBatch != nil || h.model.viewText != want {
+		t.Errorf("v on a lone queued entry:\n%s", h.model.View())
+	}
+	if preview, err := h.model.engine.PreviewBatch([]engine.EntryID{en.ID}); err != nil || preview != want {
+		t.Errorf("a batch of one isn't what enter sends: %v", err)
+	}
+}

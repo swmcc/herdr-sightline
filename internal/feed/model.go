@@ -152,6 +152,10 @@ type Model struct {
 	logCursor   int    // the selected line of the log of automatic sends
 	viewSent    bool
 	viewSentAt  time.Time
+	// viewBatch, when it's set, says the view shows the batch queue mode will
+	// send with these entries, first to go first, rather than what enter
+	// would send (#92).
+	viewBatch []engine.EntryID
 
 	status string
 	width  int
@@ -382,6 +386,9 @@ func (m *Model) refresh() {
 	if m.mode == modeView {
 		if _, ok := m.entry(m.viewID); !ok {
 			m.status = fmt.Sprintf("This entry was %s, so enter won't send it. Press esc to go back.", m.goneWord(m.viewID))
+		}
+		if m.viewBatch != nil {
+			m.refreshBatchView()
 		}
 	}
 	if m.mode == modePick {
@@ -967,9 +974,14 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// openView shows exactly what enter would send for id.
+// openView shows exactly what enter would send for id, or for an entry queue
+// mode will send with others, that batch.
 func (m *Model) openView(id engine.EntryID) {
 	if m.openSentView(id) {
+		return
+	}
+	if m.openBatchView(id) {
+		m.viewTop = 0
 		return
 	}
 	text, err := m.engine.Message(id)
@@ -978,6 +990,7 @@ func (m *Model) openView(id engine.EntryID) {
 		return
 	}
 	m.mode, m.viewID, m.viewText, m.viewTop, m.viewSent = modeView, id, text, 0, false
+	m.viewBatch = nil
 	m.viewTarget = herdr.Target{}
 	if en, ok := m.entry(id); ok {
 		if t, ask := m.targetFor(en); ask == "" {
@@ -1006,6 +1019,10 @@ func (m *Model) viewKey(k tea.KeyMsg) tea.Cmd {
 	case "enter":
 		if m.viewSent {
 			m.status = "This is what queue mode sent. Press esc, then enter on the entry to send it again."
+			return nil
+		}
+		if m.viewBatch != nil {
+			m.status = "This is the batch queue mode will send. Press esc, then enter on the entry to send it now on its own."
 			return nil
 		}
 		return m.send(m.viewID, m.viewText, true)

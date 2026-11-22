@@ -97,7 +97,7 @@ func (m *Model) logKey(k tea.KeyMsg) {
 			if len(s.Entries) > 0 {
 				m.viewID = s.Entries[0]
 			}
-			m.viewSent, m.viewSentAt = true, s.At
+			m.viewSent, m.viewSentAt, m.viewBatch = true, s.At, nil
 			m.viewTarget = herdr.Target{PaneID: s.Agent, Label: m.agentLabel(s.Agent)}
 		}
 	}

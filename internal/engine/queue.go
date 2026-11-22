@@ -255,39 +255,72 @@ var (
 // from the same source and not held, queue mode is on for that source and not
 // halted or paused, and the caps allow it (see AutoWait).
 func (e *Engine) AutoSend(ids []EntryID, agent string, now time.Time) (string, error) {
-	e.pruneQueue()
-	if len(ids) == 0 || len(ids) > MaxAutoBatch || agent == "" {
-		return "", ErrNotQueued
-	}
-	var batch []Entry
-	for _, id := range ids {
-		r, ok := e.byID[id]
-		if !ok || !slices.Contains(e.queue.order, r) || e.holdOf(r.entry) != "" || slices.ContainsFunc(batch, func(en Entry) bool { return en.ID == id }) {
-			return "", ErrNotQueued
-		}
-		if len(batch) > 0 && r.entry.Source.ID != batch[0].Source.ID {
-			return "", ErrNotQueued
-		}
-		batch = append(batch, r.entry)
-	}
-	src := batch[0].Source.ID
-	if !e.queue.on[src] || e.queue.halted[src] {
+	batch, err := e.queuedBatch(ids)
+	if err != nil || agent == "" {
 		return "", ErrNotQueued
 	}
 	if why := e.AutoWait(agent, now); why != "" {
 		return "", fmt.Errorf("%w: %s", ErrAutoCap, why)
 	}
-	text := buildBatch(batch, e.opts)
-	// holdOf already keeps these out. This is the message itself saying so,
-	// in case the two ever disagree.
-	if strings.Contains(text, mentionNote) {
-		return "", ErrNotQueued
+	text, err := batchText(batch, e.opts)
+	if err != nil {
+		return "", err
 	}
 	e.queue.tries = append(e.queue.tries, autoTry{agent: agent, at: now})
 	if e.queue.last == nil {
 		e.queue.last = map[string]time.Time{}
 	}
 	e.queue.last[agent] = now
+	return text, nil
+}
+
+// PreviewBatch is the message AutoSend would build for ids at this moment, so
+// the feed can show a batch before it goes (#92). It's byte for byte what
+// AutoSend would return for the same ids, and it refuses whenever AutoSend
+// would for any reason but the agent, the pause and the caps (see AutoWait).
+// It counts nothing against the caps and changes nothing a send depends on.
+func (e *Engine) PreviewBatch(ids []EntryID) (string, error) {
+	batch, err := e.queuedBatch(ids)
+	if err != nil {
+		return "", err
+	}
+	return batchText(batch, e.opts)
+}
+
+// queuedBatch is the entries for ids if they may go on their own together:
+// 1 to MaxAutoBatch of them, no id twice, every one queued and not held, all
+// from one source that's in queue mode and not halted.
+func (e *Engine) queuedBatch(ids []EntryID) ([]Entry, error) {
+	e.pruneQueue()
+	if len(ids) == 0 || len(ids) > MaxAutoBatch {
+		return nil, ErrNotQueued
+	}
+	var batch []Entry
+	for _, id := range ids {
+		r, ok := e.byID[id]
+		if !ok || !slices.Contains(e.queue.order, r) || e.holdOf(r.entry) != "" || slices.ContainsFunc(batch, func(en Entry) bool { return en.ID == id }) {
+			return nil, ErrNotQueued
+		}
+		if len(batch) > 0 && r.entry.Source.ID != batch[0].Source.ID {
+			return nil, ErrNotQueued
+		}
+		batch = append(batch, r.entry)
+	}
+	src := batch[0].Source.ID
+	if !e.queue.on[src] || e.queue.halted[src] {
+		return nil, ErrNotQueued
+	}
+	return batch, nil
+}
+
+// batchText builds the message for a batch from queuedBatch.
+func batchText(batch []Entry, opts Options) (string, error) {
+	text := buildBatch(batch, opts)
+	// holdOf already keeps these out. This is the message itself saying so,
+	// in case the two ever disagree.
+	if strings.Contains(text, mentionNote) {
+		return "", ErrNotQueued
+	}
 	return text, nil
 }
 

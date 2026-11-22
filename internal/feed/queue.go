@@ -2,6 +2,7 @@ package feed
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -220,26 +221,7 @@ func (m *Model) autoSend() tea.Cmd {
 	}
 	now := m.now()
 	for _, pane := range m.watching {
-		if !m.consented[pane] {
-			continue
-		}
-		var ids []engine.EntryID
-		var target herdr.Target
-		for _, id := range m.engine.QueueCandidates(engine.SourceID(pane)) {
-			en, ok := m.entry(id)
-			if !ok || m.sending[id] {
-				continue
-			}
-			t, why := m.autoTarget(en)
-			if why != "" || (len(ids) > 0 && !sameAgent(t, target)) {
-				continue
-			}
-			target = t
-			ids = append(ids, id)
-			if len(ids) == engine.MaxAutoBatch {
-				break
-			}
-		}
+		ids, target := m.nextBatch(pane)
 		if len(ids) == 0 || m.agentReady(target, now) != "" {
 			continue
 		}
@@ -257,6 +239,113 @@ func (m *Model) autoSend() tea.Cmd {
 		return checkTargetWith(m.ctx, m.client, m.now, msg)
 	}
 	return nil
+}
+
+// nextBatch is what autoSend would hand the engine for pane once its agent is
+// ready: the queued entries from pane that may go, skipping any being sent,
+// those going to the same agent as the first, up to MaxAutoBatch, and that
+// agent. It's empty if the person hasn't agreed to queue mode for pane.
+func (m *Model) nextBatch(pane string) ([]engine.EntryID, herdr.Target) {
+	if !m.consented[pane] {
+		return nil, herdr.Target{}
+	}
+	var ids []engine.EntryID
+	var target herdr.Target
+	for _, id := range m.engine.QueueCandidates(engine.SourceID(pane)) {
+		en, ok := m.entry(id)
+		if !ok || m.sending[id] {
+			continue
+		}
+		t, why := m.autoTarget(en)
+		if why != "" || (len(ids) > 0 && !sameAgent(t, target)) {
+			continue
+		}
+		target = t
+		ids = append(ids, id)
+		if len(ids) == engine.MaxAutoBatch {
+			break
+		}
+	}
+	return ids, target
+}
+
+// openBatchView shows the batch queue mode would send with id, byte for byte
+// as AutoSend would build it now (#92), if id would go with others. It
+// reports whether it did. A batch of one is exactly what enter sends, so
+// openView shows that as usual.
+func (m *Model) openBatchView(id engine.EntryID) bool {
+	en, ok := m.entry(id)
+	if !ok || !en.Queued {
+		return false
+	}
+	ids, target := m.nextBatch(string(en.Source.ID))
+	if len(ids) < 2 || !slices.Contains(ids, id) {
+		return false
+	}
+	text, err := m.engine.PreviewBatch(ids)
+	if err != nil {
+		return false
+	}
+	m.mode, m.viewID, m.viewText = modeView, id, text
+	m.viewSent, m.viewBatch, m.viewTarget = false, ids, target
+	return true
+}
+
+// refreshBatchView keeps a batch on screen exactly as it would go. Lines can
+// join an entry, and entries can join, leave or move in the queue, while the
+// person reads it. If the batch changed, the view shows the new one and says
+// so. If the entry wouldn't go with others any more, it shows what v would.
+func (m *Model) refreshBatchView() {
+	// While a send of the batch is being checked, nextBatch skips its entries,
+	// so the view keeps what's going until the send is settled.
+	if slices.ContainsFunc(m.viewBatch, func(id engine.EntryID) bool { return m.sending[id] }) {
+		return
+	}
+	if _, ok := m.entry(m.viewID); !ok {
+		// refresh says the entry was dropped. What's on screen can't go.
+		m.viewBatch = nil
+		return
+	}
+	text, ids, target := m.viewText, m.viewBatch, m.viewTarget
+	top := m.viewTop
+	if !m.openBatchView(m.viewID) {
+		m.openView(m.viewID)
+	}
+	if m.mode != modeView {
+		return
+	}
+	if m.viewBatch == nil {
+		m.status = "This entry won't go in that batch any more, so this is what v shows for it now."
+		return
+	}
+	if m.viewText != text || !slices.Equal(m.viewBatch, ids) || !sameAgent(m.viewTarget, target) {
+		m.viewTop = 0
+		m.status = "The batch changed while you were reading it. This is what would go now."
+		return
+	}
+	m.viewTop = top
+}
+
+// batchHeader is the view's header line for a batch: who it goes to and
+// which places in the queue it holds.
+func (m *Model) batchHeader() string {
+	q := m.engine.Queue()
+	var places []string
+	for _, id := range m.viewBatch {
+		if i := slices.Index(q, id); i >= 0 {
+			places = append(places, fmt.Sprint(i+1))
+		}
+	}
+	return fmt.Sprintf("The batch queue mode will send to %s once it can, queued %s of %d · %s",
+		clean(m.viewTarget.Label), joinAnd(places), len(q), plural(len(m.viewText), "byte", "bytes"))
+}
+
+// joinAnd lists words as a sentence does: "a", "a and b", "a, b and c".
+func joinAnd(parts []string) string {
+	if len(parts) < 2 {
+		return strings.Join(parts, "")
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }
 
 // autoTargetStill reports whether the entries of an automatic send would
@@ -317,7 +406,7 @@ func (m *Model) openSentView(id engine.EntryID) bool {
 		return false
 	}
 	m.mode, m.viewID, m.viewText, m.viewTop = modeView, id, s.Text, 0
-	m.viewSent, m.viewSentAt = true, s.At
+	m.viewSent, m.viewSentAt, m.viewBatch = true, s.At, nil
 	m.viewTarget = herdr.Target{PaneID: s.Agent, Label: m.agentLabel(s.Agent)}
 	return true
 }

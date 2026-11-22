@@ -177,6 +177,11 @@ func TestForgedSignalsArentEvidence(t *testing.T) {
 		"INFO:root:evil.py changed, reloading.",
 		// Words in another script aren't a symbol.
 		"Пользователь compiled successfully",
+		// From the sixth review: signals that skipped the lead-in.
+		"Пользователь compiled /x in 5ms",
+		`"compiled /x in 1ms`,
+		"[ 'listening on http://x' ]",
+		`{"listening on x`,
 	} {
 		t.Run(line, func(t *testing.T) {
 			if got := settleWith(t, func(e *engine.Engine, now time.Time) {
@@ -292,6 +297,50 @@ func TestChosenTriggersArentEvidence(t *testing.T) {
 			setup:  []string{"GET /notices?page=abc 500 in 3ms"},
 			attack: []string{"GET /notices?page=1 200 in 3ms"},
 			want:   engine.StateUnverified,
+		},
+		// From the sixth review: a target that only starts like the
+		// trigger's, and a forwarded address that starts with a request.
+		{
+			name:   "a fragment after the trigger's query",
+			setup:  []string{`[01/Jan/2026 09:00:00] "GET /notices?page=abc HTTP/1.1" 500 145`},
+			attack: []string{`[01/Jan/2026 09:00:05] "GET /notices?page=abc#&page=1 HTTP/1.1" 200 12`},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a quote after the trigger's query",
+			setup:  []string{"GET /notices?page=abc 500 in 30ms"},
+			attack: []string{`GET /notices?page=abc"&page=1 200 in 3ms`},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a quote after the trigger's query in Rails",
+			setup:  []string{`Started GET "/notices?page=abc" for 1.2.3.4`},
+			attack: []string{`Started GET "/notices?page=abc"&page=1" for 1.2.3.4`, "Completed 200 OK in 3ms"},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a forwarded address in Werkzeug that starts with the request",
+			setup:  []string{`127.0.0.1 - - [01/Jan/2026 09:00:00] "GET /notices HTTP/1.1" 500 -`},
+			attack: []string{`GET /notices 200 - - [01/Jan/2026 09:00:05] "GET / HTTP/1.1" 200 -`},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a forwarded address in morgan that starts with the request",
+			setup:  []string{`127.0.0.1 - - [01/Jan/2026:09:00:00 +0000] "GET /notices HTTP/1.1" 500 512`},
+			attack: []string{`GET /notices 200 - - [01/Jan/2026:09:00:05 +0000] "GET / HTTP/1.1" 200 5`},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "a forwarded address that starts with an ending",
+			setup:  []string{`Started GET "/notices" for 127.0.0.1`},
+			attack: []string{`Started GET "/notices" for 127.0.0.1`, `INFO:     Completed 200:0 - "GET / HTTP/1.1" 200 OK`},
+			want:   engine.StateUnverified,
+		},
+		{
+			name:   "the trigger's own target in full still passes",
+			setup:  []string{`[01/Jan/2026 09:00:00] "GET /notices?page=abc HTTP/1.1" 500 145`},
+			attack: []string{`[01/Jan/2026 09:00:05] "GET /notices?page=abc HTTP/1.1" 200 12`},
+			want:   engine.StateFixed,
 		},
 		// From the third review: a 505 Python's http.server gives before the
 		// app runs, and an ending tied to the wrong request when requests run

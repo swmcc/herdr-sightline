@@ -187,8 +187,9 @@ to come back:
 
 - A compile, build, restart or test run finishing, like `compiled successfully`,
   `ready in 312 ms`, `Tests: 4 passed` or `* Listening on`. It only counts at the
-  start of its line, after at most a symbol, a time, tags, a log level and the
-  tool's name. Request logs don't count. They only show the server is up.
+  start of its line, after at most a symbol, a time, tags with no spaces, a log
+  level and the tool's name. Request logs don't count. They only show the server
+  is up.
 - If the error came with a request (`GET /notices?page=2 500`), that same
   request again, query and all, with a 2xx. A redirect or a 404 doesn't count,
   because anyone can send the same request in a way that never reaches the bug.

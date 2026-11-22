@@ -62,6 +62,7 @@ type fakeHerdr struct {
 	kind    map[string]string // agent pane to its kind, claude if not set
 	term    map[string]string // agent pane to its terminal id, if it moved
 	text    string            // what pane.read returns for the watched pane
+	cwd     string            // the watched pane's working directory
 	prompts []promptCall
 	reads   atomic.Int64
 }
@@ -85,7 +86,7 @@ func newFakeHerdr(t *testing.T) *fakeHerdr {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		panes := []map[string]any{
-			{"pane_id": webPane, "workspace_id": "w1", "tab_id": "w1:t2", "label": "web", "terminal_title_stripped": "next dev"},
+			{"pane_id": webPane, "workspace_id": "w1", "tab_id": "w1:t2", "label": "web", "terminal_title_stripped": "next dev", "cwd": f.cwd},
 			{"pane_id": feedPane, "workspace_id": "w1", "tab_id": "w1:t2"},
 		}
 		for pane, st := range f.status {

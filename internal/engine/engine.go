@@ -54,12 +54,16 @@ type Engine struct {
 	groups   groups   // #7's bookkeeping, see group.go
 	dropped  int      // entries dropped to stay within MaxEntries (#41)
 	arrivals arrivals // order of matches across sources, see window.go
+
+	hidden      []Hidden // the latest lines sources' own rules hid, see rules.go
+	hiddenTotal int
 }
 
 // source is what the engine keeps for one watched source.
 type source struct {
 	info    Source
 	capture capturer // #8's window and captures in progress, see window.go
+	rules   Rules    // the source's own patterns and ignore rules, see rules.go
 }
 
 // record is an entry plus the bookkeeping behind it that callers never see.
@@ -214,6 +218,11 @@ func (e *Engine) Rename(from, to SourceID) bool {
 	for _, r := range e.records {
 		if r.entry.Source.ID == from {
 			r.entry.Source.ID = to
+		}
+	}
+	for i := range e.hidden {
+		if e.hidden[i].Source == from {
+			e.hidden[i].Source = to
 		}
 	}
 	// Collected first, so the loop never meets a key it has just added.

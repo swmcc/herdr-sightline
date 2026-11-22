@@ -1030,7 +1030,7 @@ func TestPythonExceptionLineFoldsWithPresets(t *testing.T) {
 			e := New(Options{Matchers: allMatchers(t), ContextLines: 20, CaptureWait: time.Second})
 			starts := 0
 			for _, l := range lines {
-				if _, ok := e.startsError(l); ok {
+				if _, ok := e.startsErrorAnywhere(l); ok {
 					starts++
 				}
 			}

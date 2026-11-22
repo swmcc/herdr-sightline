@@ -300,7 +300,10 @@ func capStored(line string) string {
 // may have changed, so the fix check sees the same line detection did.
 func (e *Engine) observe(s *source, line string, now time.Time) string {
 	c := &s.capture
-	line, hidden := c.unhide(line, e.startsError)
+	line, hidden := c.unhide(line, func(l string) (string, bool) {
+		name, ok, _ := e.startsError(s, l)
+		return name, ok
+	})
 	unseen := c.unseen || hidden
 	c.unseen = false
 	kept := capStored(line)
@@ -329,7 +332,11 @@ func (e *Engine) observe(s *source, line string, now time.Time) string {
 			p.block.open = false
 		}
 	}
-	if name, ok := e.startsError(line); ok && !folded {
+	name, ok, hiddenByRule := e.startsError(s, line)
+	if hiddenByRule && !folded {
+		e.hide(s, kept, now)
+	}
+	if ok && !folded {
 		if len(c.pending) >= maxPending {
 			c.pending[len(c.pending)-1].maybeGap = true
 		} else {

@@ -28,11 +28,12 @@ const (
 type mode int
 
 const (
-	modeList  mode = iota // the entries
-	modeView              // the exact message for one entry
-	modePick              // choosing an agent for one entry
-	modeNever             // writing an ignore rule for one entry (#14)
-	modeTrust             // reading a project file before trusting it (#23)
+	modeList   mode = iota // the entries
+	modeView               // the exact message for one entry
+	modePick               // choosing an agent for one entry
+	modeNever              // writing an ignore rule for one entry (#14)
+	modeTrust              // reading a project file before trusting it (#23)
+	modeHidden             // what project ignore rules hid (#22)
 )
 
 // await is an agent that has been sent errors and hasn't finished yet.
@@ -129,6 +130,8 @@ type Model struct {
 	projects []project // project files the watched panes are in, see project.go
 	trustErr error     // what's wrong with the trust file
 	trust    trustState
+	// hiddenTop is how far down the list of hidden errors is scrolled.
+	hiddenTop int
 
 	status string
 	width  int
@@ -233,6 +236,8 @@ func (m *Model) reloadConfig(u config.Update) {
 		m.status = "Reloaded sightline.toml."
 	}
 	m.noteRule()
+	// Which presets a project may add depends on the person's own file.
+	m.applyProjectRules()
 }
 
 // dismissed reports whether id is still in the engine but dismissed, so the
@@ -446,6 +451,7 @@ func (m *Model) snapshot(msg snapshotMsg) {
 	if m.loops != nil {
 		m.loops.followAgents(agentPanes)
 	}
+	m.handCwds()
 }
 
 // agentStatus notes what an agent that has been sent errors is doing, and tells
@@ -702,6 +708,10 @@ func (m *Model) applyWatchList() {
 		}
 	}
 	m.watching = want
+	// A pane watched again has lost its rules in the engine, and one watched
+	// afresh needs its repo looked up.
+	m.applyProjectRules()
+	m.handCwds()
 }
 
 // stopWatching stops a pane's loop and tells the engine. Its entries stay.
@@ -810,6 +820,9 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return m.neverKey(k)
 	case modeTrust:
 		return m.trustKey(k)
+	case modeHidden:
+		m.hiddenKey(k)
+		return nil
 	}
 	return m.listKey(k)
 }
@@ -864,6 +877,8 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 		return m.undoRule()
 	case "p":
 		m.openTrust()
+	case "h":
+		m.openHidden()
 	case "t":
 		if i >= 0 {
 			m.openPicker(m.entries[i])

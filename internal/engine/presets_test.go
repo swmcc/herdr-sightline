@@ -219,7 +219,7 @@ func TestTraces(t *testing.T) {
 			want, lines := readTrace(t, f)
 			var started []string
 			for _, line := range lines {
-				if name, ok := e.startsError(line); ok {
+				if name, ok := e.startsErrorAnywhere(line); ok {
 					started = append(started, fmt.Sprintf("%s: %q", name, line))
 				}
 			}
@@ -349,10 +349,10 @@ func TestIgnoreBeatsPreset(t *testing.T) {
 		Matchers: allMatchers(t),
 		Ignores:  []Matcher{Regexp("", regexp.MustCompile(`EADDRINUSE`))},
 	})
-	if name, ok := e.startsError("Error: listen EADDRINUSE: address already in use :::3000"); ok {
+	if name, ok := e.startsErrorAnywhere("Error: listen EADDRINUSE: address already in use :::3000"); ok {
 		t.Fatalf("ignored line started an error from %s", name)
 	}
-	if name, ok := e.startsError("TypeError: x is not a function"); !ok || name != "node/exception" {
+	if name, ok := e.startsErrorAnywhere("TypeError: x is not a function"); !ok || name != "node/exception" {
 		t.Fatalf("startsError = %q, %v, want node/exception", name, ok)
 	}
 }
@@ -389,7 +389,7 @@ func BenchmarkPresets(b *testing.B) {
 	e := New(Options{Matchers: allMatchers(b)})
 	for b.Loop() {
 		for _, line := range corpus {
-			e.startsError(line)
+			e.startsErrorAnywhere(line)
 		}
 	}
 	b.ReportMetric(float64(len(corpus)), "lines/op")

@@ -138,6 +138,8 @@ func (m *Model) View() string {
 		return m.neverView()
 	case modeTrust:
 		return m.trustView()
+	case modeHidden:
+		return m.hiddenView()
 	}
 	return m.listView()
 }
@@ -224,6 +226,9 @@ func (m *Model) headerLines(w int) []string {
 		problems = append(problems, m.listErr.Error())
 	}
 	problems = append(problems, m.projectNotes()...)
+	if note := m.hiddenNote(); note != "" {
+		problems = append(problems, note)
+	}
 	for _, pane := range m.watching {
 		if err := m.paneErrs[pane]; err != nil {
 			problems = append(problems, fmt.Sprintf("Can't read %s: %v", m.paneName(pane), err))
@@ -237,10 +242,14 @@ func (m *Model) headerLines(w int) []string {
 
 // footerLines is the status line and the keys.
 func (m *Model) footerLines(w int) []string {
-	keys := "j/k move  enter send  v view  t agent  d dismiss  n never  q quit"
+	keys := "j/k move  enter send  v view  t agent  d dismiss  n never"
 	if len(m.projects) > 0 {
-		keys = "j/k move  enter send  v view  t agent  d dismiss  n never  p project  q quit"
+		keys += "  p project"
 	}
+	if total, _ := m.engine.Hidden(); total > 0 {
+		keys += "  h hidden"
+	}
+	keys += "  q quit"
 	return []string{
 		"",
 		fit(clean(m.status), w),

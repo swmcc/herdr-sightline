@@ -40,7 +40,7 @@ func TestStartsError(t *testing.T) {
 		{"all good", "", false},
 	}
 	for _, tt := range tests {
-		if name, ok := e.startsError(tt.line); ok != tt.want || name != tt.wantName {
+		if name, ok := e.startsErrorAnywhere(tt.line); ok != tt.want || name != tt.wantName {
 			t.Errorf("startsError(%q) = %q, %v, want %q, %v", tt.line, name, ok, tt.wantName, tt.want)
 		}
 	}

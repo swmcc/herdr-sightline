@@ -276,6 +276,47 @@ printed instead. Nothing is written until you press
 and the rest of the file is left exactly as it was. It applies when the feed reloads
 the file a moment later. Press `u` within 30 seconds to take it back out.
 
+### Project files
+
+A repo can carry its own `.sightline.toml` at its root, so everyone working on it
+gets the same patterns and ignore rules:
+
+```toml
+# .sightline.toml, next to .git
+presets = ["go", "node"]
+
+[[pattern]]
+name = "our-framework"
+regex = '^FATAL \[app\] .+'
+
+# A known flaky upstream that isn't ours to fix.
+[[ignore]]
+regex = '^Error: flaky upstream timed out'
+```
+
+Sightline finds it from each watched pane's working directory, going up to the
+nearest directory with a `.git` in it. It only applies to watched panes in that repo,
+and only once you've trusted it (see [Safety](#safety)). Until then the feed says it's
+there and ignores it.
+
+It can set `presets`, `[[pattern]]` and `[[ignore]]` and nothing else. Your own
+`sightline.toml` wins wherever they differ:
+
+- Its patterns and ignore rules are added to yours, never in place of them.
+- Its presets can only switch presets on, and only if your file doesn't list
+  `presets`. If yours does, that list is final.
+- Your ignore rules are checked first. Its ignore rules never dismiss an entry that's
+  already in the feed.
+
+It has to be a real file (not a symlink) of at most 64 KiB, with at most 50 patterns
+and 50 ignore rules, each regex at most 500 bytes. Its ignore rules are held tighter
+than yours, so each one names the error it hides (see [Safety](#safety)). If anything
+in it is wrong, none of it applies and the feed says why.
+
+When one of its ignore rules hides a line that would have been an error, the feed
+counts it in the header and `h` lists what was hidden. If that happens while a fix is
+being checked in that pane, the result is `? unverified`, never `✓ fixed`.
+
 ## Safety
 
 **Pane output is untrusted.** Anything that prints to a watched pane, including a log
@@ -450,7 +491,7 @@ their own.
 Error patterns that live with the code, so everyone on a project gets the same
 behaviour.
 
-- [ ] Project presets checked into the repo ([#22](https://github.com/swmcc/herdr-sightline/issues/22))
+- [x] Project presets checked into the repo ([#22](https://github.com/swmcc/herdr-sightline/issues/22))
 - [x] Trust prompt for project presets ([#23](https://github.com/swmcc/herdr-sightline/issues/23))
 - [ ] Share error patterns ([#24](https://github.com/swmcc/herdr-sightline/issues/24))
 - [x] More built-in presets ([#25](https://github.com/swmcc/herdr-sightline/issues/25))

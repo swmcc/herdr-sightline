@@ -34,3 +34,9 @@ func TestScanned(t *testing.T) {
 		t.Fatalf("kept line doesn't start with the matched head")
 	}
 }
+
+// startsErrorAnywhere is startsError for a source with no rules of its own.
+func (e *Engine) startsErrorAnywhere(line string) (string, bool) {
+	name, ok, _ := e.startsError(&source{}, line)
+	return name, ok
+}

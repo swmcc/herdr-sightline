@@ -71,6 +71,8 @@ type queueState struct {
 	order  []*record  // queued entries, first to go first
 	tries  []autoTry  // automatic sends within autoWindow, oldest first
 	log    []AutoSent // newest last, at most maxAutoLog
+	// aliases are the earlier names of an agent that moved (see FollowAgent).
+	aliases map[string][]string
 }
 
 // autoTry is one automatic send counted against the caps.
@@ -214,8 +216,9 @@ func (e *Engine) AutoWait(agent string, now time.Time) string {
 // busy reports whether agent still has an entry from an earlier send waiting
 // for its verdict.
 func (e *Engine) busy(agent string) bool {
+	names := append([]string{agent}, e.queue.aliases[agent]...)
 	for _, r := range e.records {
-		if r.entry.State == StateSent && r.entry.Agent == agent {
+		if r.entry.State == StateSent && slices.Contains(names, r.entry.Agent) {
 			return true
 		}
 	}
@@ -267,6 +270,49 @@ func (e *Engine) AutoSend(ids []EntryID, agent string, now time.Time) (string, e
 	}
 	e.queue.tries = append(e.queue.tries, autoTry{agent: agent, at: now})
 	return text, nil
+}
+
+// AutoStillWanted reports whether an automatic send of ids that AutoSend
+// built may still go: every entry is still queued, new and not held, and its
+// source is still in queue mode, not halted or paused. The adapter asks just
+// before sending, because the person may have turned queue mode off, or a
+// verdict halted the pane, while it checked the agent. It counts nothing.
+func (e *Engine) AutoStillWanted(ids []EntryID) bool {
+	e.pruneQueue()
+	q := &e.queue
+	if q.paused || len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		r, ok := e.byID[id]
+		if !ok || !slices.Contains(q.order, r) || holdOf(r.entry) != "" {
+			return false
+		}
+		if src := r.entry.Source.ID; !q.on[src] || q.halted[src] {
+			return false
+		}
+	}
+	return true
+}
+
+// FollowAgent says the agent the engine knew as from is now known as to, as
+// when its pane moves. The caps and the check for an earlier send follow it,
+// so a move can't give an agent a fresh set of caps.
+func (e *Engine) FollowAgent(from, to string) {
+	q := &e.queue
+	if from == to || from == "" || to == "" {
+		return
+	}
+	for i := range q.tries {
+		if q.tries[i].agent == from {
+			q.tries[i].agent = to
+		}
+	}
+	if q.aliases == nil {
+		q.aliases = map[string][]string{}
+	}
+	q.aliases[to] = append(append(q.aliases[to], from), q.aliases[from]...)
+	delete(q.aliases, from)
 }
 
 // AutoDelivered records that an automatic send of ids reached agent: they're
@@ -384,14 +430,17 @@ func (e *Engine) resumeOnKeypress(r *record) {
 }
 
 // holdOf says why en must wait for a keypress, if it must. It errs towards
-// holding: any "@" in any line counts, even one the message would cut.
+// holding: any "@" in any line counts, even one the message would cut. So does
+// a fullwidth one the pane printed itself, because a line holding Sightline's
+// own note about "@" would otherwise make AutoSend refuse the batch on every
+// try, and the pane could jam its own queue.
 func holdOf(en Entry) Hold {
 	if en.MaybeGap {
 		return HoldGap
 	}
 	for _, group := range [][]string{en.Before, en.Lines, en.After} {
 		for _, l := range group {
-			if strings.Contains(l, "@") {
+			if strings.Contains(l, "@") || strings.Contains(l, fullwidthAt) {
 				return HoldMention
 			}
 		}

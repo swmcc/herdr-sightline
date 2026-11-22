@@ -199,6 +199,47 @@ func TestQueueNeverInterruptsAWorkingAgent(t *testing.T) {
 	}
 }
 
+// Turning queue mode off, or dismissing, while the check before an automatic
+// send is on its way stops it.
+func TestQueueChangeOfMindDuringTheCheck(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(h *harness)
+	}{
+		{"m turns it off", func(h *harness) { h.press("m") }},
+		{"unwatched", func(h *harness) { h.update(watchListMsg{}) }},
+		{"halted", func(h *harness) { h.model.engine.Halt(webPane) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.queueOn()
+			h.clock.Advance(5 * time.Second)
+			cmd := h.update(tickMsg{})
+			if cmd == nil {
+				t.Fatal("the tick started no send")
+			}
+			tt.change(h)
+			h.run(cmd)
+			if n := len(h.herdr.promptCalls()); n != 0 {
+				t.Errorf("got %d prompts after a change of mind", n)
+			}
+			if h.model.autoBusy || len(h.model.sending) != 0 {
+				t.Errorf("the queue is left jammed: busy %v, sending %v", h.model.autoBusy, h.model.sending)
+			}
+		})
+	}
+	h := newHarness(t)
+	h.queueOn()
+	h.clock.Advance(5 * time.Second)
+	cmd := h.update(tickMsg{})
+	h.press("d")
+	if !h.model.entries[0].Queued {
+		t.Error("d dismissed an entry while its send was on its way")
+	}
+	h.run(cmd)
+}
+
 func TestQueueOnlyGoesWhereItsSure(t *testing.T) {
 	tests := []struct {
 		name  string

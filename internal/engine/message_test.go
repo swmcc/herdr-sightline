@@ -54,6 +54,36 @@ func TestBatchMatchesTheReadme(t *testing.T) {
 	}
 }
 
+// renderBatch's cap relies on size being exactly what render writes.
+func TestBatchSizeIsExact(t *testing.T) {
+	src := Source{ID: "w1:p3", Title: "web `x`", Command: "run @ now"}
+	var ens []Entry
+	for i := range 4 {
+		ens = append(ens, Entry{
+			Source: src,
+			Before: numbered(strings.Repeat("`", i+2)+" before ", 30+i),
+			Lines:  numbered("Error @ ", 3),
+			After:  numbered("    at frame "+strings.Repeat("x", 600)+" ", 10),
+		})
+	}
+	b := batch{}
+	for _, en := range ens {
+		d := newDraft(en, Options{})
+		b.ds = append(b.ds, d)
+		b.ns = append(b.ns, len(d.order))
+	}
+	for step := 0; ; step++ {
+		if got, want := b.size(), len(b.render()); got != want {
+			t.Fatalf("step %d: size %d, render %d bytes", step, got, want)
+		}
+		i := step % len(b.ds)
+		if b.ns[i] == 0 {
+			break
+		}
+		b.ns[i]--
+	}
+}
+
 func TestMessageNamesThePaneByIDOnly(t *testing.T) {
 	tests := []struct {
 		id   SourceID

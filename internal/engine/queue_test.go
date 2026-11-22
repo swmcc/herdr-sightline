@@ -122,6 +122,15 @@ func TestQueueHoldsWhatMustWaitForAKeypress(t *testing.T) {
 			want:  engine.HoldMention,
 		},
 		{
+			// Otherwise the message would hold Sightline's own note word
+			// for word and AutoSend would refuse it on every try.
+			name: "the mention note printed by the pane",
+			print: func(a *enginetest.Adapter) {
+				catch(a, qpane, "Error: Any at sign in the output is shown as ＠ so it can't be read as a file mention.")
+			},
+			want: engine.HoldMention,
+		},
+		{
 			name:  "nothing to hold",
 			print: func(a *enginetest.Adapter) { catch(a, qpane, "Error: boom") },
 		},
@@ -350,6 +359,61 @@ func TestStillFailingAfterAnAutoSendHaltsThePane(t *testing.T) {
 	a.Send(en.ID, qagent)
 	if a.Engine.Halted(qpane) {
 		t.Error("a send by hand didn't lift the halt")
+	}
+}
+
+// The caps and the earlier send follow an agent whose pane moves.
+func TestFollowAgentKeepsTheCaps(t *testing.T) {
+	a := queueAdapter(t)
+	a.Engine.SetQueueMode(qpane, true)
+	catch(a, qpane, "Error: one")
+	first := a.Engine.QueueCandidates(qpane)
+	text, err := a.Engine.AutoSend(first, qagent, a.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Engine.AutoDelivered(first, qagent, text, a.Now())
+	a.Engine.FollowAgent(qagent, "w2:p7")
+	catch(a, qpane, "Error: two")
+	if why := a.Engine.AutoWait("w2:p7", a.Now()); why == "" {
+		t.Error("an agent that moved got a fresh set of caps")
+	}
+	// Once the earlier send has its verdict and the gap has passed, it can go.
+	a.Finish(qagent)
+	a.Advance(time.Minute)
+	if why := a.Engine.AutoWait("w2:p7", a.Now()); why != "" {
+		t.Errorf("AutoWait = %q after the verdict and the gap", why)
+	}
+}
+
+func TestAutoStillWanted(t *testing.T) {
+	tests := []struct {
+		name   string
+		change func(a *enginetest.Adapter, ids []engine.EntryID)
+		want   bool
+	}{
+		{"nothing changed", func(*enginetest.Adapter, []engine.EntryID) {}, true},
+		{"queue mode off", func(a *enginetest.Adapter, _ []engine.EntryID) { a.Engine.SetQueueMode(qpane, false) }, false},
+		{"paused", func(a *enginetest.Adapter, _ []engine.EntryID) { a.Engine.SetQueuePaused(true) }, false},
+		{"halted", func(a *enginetest.Adapter, _ []engine.EntryID) { a.Engine.Halt(qpane) }, false},
+		{"dismissed", func(a *enginetest.Adapter, ids []engine.EntryID) { a.Engine.Dismiss(ids[0]) }, false},
+		{"taken out", func(a *enginetest.Adapter, ids []engine.EntryID) { a.Engine.Unqueue(ids[0]) }, false},
+		{"unwatched", func(a *enginetest.Adapter, _ []engine.EntryID) { a.Engine.Unwatch(qpane) }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := queueAdapter(t)
+			a.Engine.SetQueueMode(qpane, true)
+			catch(a, qpane, "Error: one")
+			ids := a.Engine.QueueCandidates(qpane)
+			if _, err := a.Engine.AutoSend(ids, qagent, a.Now()); err != nil {
+				t.Fatal(err)
+			}
+			tt.change(a, ids)
+			if got := a.Engine.AutoStillWanted(ids); got != tt.want {
+				t.Errorf("AutoStillWanted = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 

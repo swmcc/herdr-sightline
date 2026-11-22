@@ -213,6 +213,10 @@ type trackedAgent struct {
 	active time.Time
 	// heard is when an event last told the tracker about the agent.
 	heard time.Time
+	// since is when the tracker first knew the agent had its current status.
+	// A state change counter that moved means the status changed in between,
+	// even if it reads the same, so it starts again then too.
+	since time.Time
 	// seqTrusted says info.StateChangeSeq matches info.Status. It's false
 	// once an event has changed the status, because events don't carry the
 	// counter, and true again after the next snapshot.
@@ -293,19 +297,24 @@ func (t *AgentTracker) Sync(snap AgentSnapshot, now time.Time) {
 				a.info.Name, a.info.DisplayAgent = "", ""
 			}
 			a.info.Status = prev.info.Status
-			a.active, a.heard = prev.active, prev.heard
+			a.active, a.heard, a.since = prev.active, prev.heard, prev.since
 		case seen:
 			a.active = prev.active
 			a.seqTrusted = info.StateChangeSeq != 0
 			// The counter moving while the agent was working and still is
 			// means it stopped and started again between snapshots.
-			restarted := prev.seqTrusted && prev.info.Status == AgentWorking &&
-				info.Status == AgentWorking && info.StateChangeSeq > prev.info.StateChangeSeq
+			moved := prev.seqTrusted && info.StateChangeSeq > prev.info.StateChangeSeq
+			restarted := moved && prev.info.Status == AgentWorking && info.Status == AgentWorking
 			if startsWork(prev.info.Status, info.Status) || restarted {
 				a.active = now
 			}
+			a.since = prev.since
+			if prev.info.Status != info.Status || moved || prev.since.IsZero() {
+				a.since = now
+			}
 		default:
 			a.seqTrusted = info.StateChangeSeq != 0
+			a.since = now
 			if info.Status == AgentWorking {
 				a.active = now
 			}
@@ -378,6 +387,9 @@ func (t *AgentTracker) statusChanged(ev Event, now time.Time) {
 	if startsWork(a.info.Status, ev.AgentStatus) {
 		a.active = now
 	}
+	if a.info.Status != ev.AgentStatus || a.since.IsZero() {
+		a.since = now
+	}
 	a.info.Status = ev.AgentStatus
 	a.heard = now
 	a.seqTrusted = false
@@ -404,6 +416,23 @@ func (t *AgentTracker) moved(ev Event, now time.Time) {
 	a.info.WorkspaceID = ev.Pane.WorkspaceID
 	a.heard = now
 	t.agents[to] = a
+}
+
+// IdleSince reports whether the agent in pane is idle or done, and since when
+// the tracker has known it to be. Queue mode (#19) only sends to an agent that
+// has been idle for a while, so a pause between two steps of its work isn't
+// taken for the end of it. An agent the tracker doesn't know isn't idle.
+//
+// It's only as fresh as the last Sync or event, so the caller should check
+// with herdr again just before sending.
+func (t *AgentTracker) IdleSince(pane string) (time.Time, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	a, ok := t.agents[pane]
+	if !ok || (a.info.Status != AgentIdle && a.info.Status != AgentDone) || a.since.IsZero() {
+		return time.Time{}, false
+	}
+	return a.since, true
 }
 
 // Choose picks the agent to send an error from the watched pane to.
@@ -476,11 +505,12 @@ func (t *AgentTracker) Choose(watchedPaneID string, pins []config.Pin) Choice {
 
 // pinFor returns the first pin that names the watched pane and which field it
 // matched. The terminal title only counts when the pane has no label, because
-// the process in the pane can set its title to anything.
+// the process in the pane can set its title to anything. A [[watch]] table
+// that only sets a mode names no agent, so it isn't a pin here.
 func pinFor(watched Pane, pins []config.Pin) (*config.Pin, PinField) {
 	for i, pin := range pins {
 		switch {
-		case pin.PaneTitle == "":
+		case pin.PaneTitle == "" || pin.Agent == "":
 		case watched.Label != "":
 			if pin.PaneTitle == watched.Label {
 				return &pins[i], PinByLabel

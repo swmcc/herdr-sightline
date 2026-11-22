@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -54,6 +55,7 @@ type Engine struct {
 	groups   groups   // #7's bookkeeping, see group.go
 	dropped  int      // entries dropped to stay within MaxEntries (#41)
 	arrivals arrivals // order of matches across sources, see window.go
+	queue    queueState
 
 	hidden      []Hidden // the latest lines sources' own rules hid, see rules.go
 	hiddenTotal int
@@ -181,6 +183,7 @@ func (e *Engine) Unwatch(id SourceID) {
 	delete(e.sources, id)
 	// Nothing more will be read, so nothing can prove a fix on id.
 	e.uncertainRead(id, time.Time{}, false)
+	e.unwatchQueue(id)
 }
 
 // Rename tells the engine a source now goes by another id. herdr gives a pane a
@@ -236,6 +239,7 @@ func (e *Engine) Rename(from, to SourceID) bool {
 		e.groups.newest[groupKey{to, k.fingerprint}] = e.groups.newest[k]
 		delete(e.groups.newest, k)
 	}
+	e.renameQueue(from, to)
 	return true
 }
 
@@ -309,10 +313,15 @@ func (e *Engine) Tick(now time.Time) {
 	e.checkFixes(now)
 }
 
-// MarkSent records that an entry was sent to agent. Unknown ids are ignored.
+// MarkSent records that an entry was sent to agent after a keypress. Unknown
+// ids are ignored. It takes the entry out of the queue, and a halt on its
+// source's queue mode is lifted, because a person chose to send.
 func (e *Engine) MarkSent(id EntryID, agent string, now time.Time) {
 	if r, ok := e.byID[id]; ok {
 		e.sent(r, agent, now)
+		r.entry.SentAt = now
+		e.resumeOnKeypress(r)
+		e.pruneQueue()
 	}
 }
 
@@ -339,9 +348,15 @@ func (e *Engine) Dismiss(id EntryID) {
 // Entries returns a copy of every entry, newest first. Changing it doesn't
 // change the engine.
 func (e *Engine) Entries() []Entry {
+	e.pruneQueue()
 	out := make([]Entry, 0, len(e.records))
 	for i := len(e.records) - 1; i >= 0; i-- {
-		out = append(out, e.records[i].entry.clone())
+		r := e.records[i]
+		en := r.entry.clone()
+		if slices.Contains(e.queue.order, r) {
+			en.Queued, en.Hold = true, holdOf(en)
+		}
+		out = append(out, en)
 	}
 	return out
 }
@@ -371,5 +386,6 @@ func (e *Engine) add(en Entry) *record {
 	e.records = append(e.records, r)
 	e.byID[en.ID] = r
 	e.trim(r)
+	e.enqueue(r)
 	return r
 }

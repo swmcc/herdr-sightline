@@ -1,0 +1,8 @@
+[[watch]]
+pane_title = "web"
+mode = "queue"
+
+[[watch]]
+pane_title = "api"
+agent = "codex"
+mode = "notify"

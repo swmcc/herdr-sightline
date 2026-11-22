@@ -458,6 +458,13 @@ func TestChoose(t *testing.T) {
 
 		// Pins.
 		{
+			name:    "a [[watch]] table that only sets a mode isn't a pin",
+			steps:   []step{{at: 1, ev: status("w1:p2", herdr.AgentWorking)}},
+			watched: "w1:p1",
+			pins:    []config.Pin{{PaneTitle: "web", Mode: config.ModeQueue}, {PaneTitle: "web", Agent: "codex"}},
+			want:    "w1:p3", rule: herdr.ChosenByPin, pinField: herdr.PinByLabel,
+		},
+		{
 			name:    "a pin by kind beats activity",
 			steps:   []step{{at: 1, ev: status("w1:p2", herdr.AgentWorking)}},
 			watched: "w1:p1",
@@ -738,4 +745,79 @@ func TestTrackerConcurrentUse(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// w1:p2 is an idle claude in the fixture, with counter 221.
+func TestIdleSince(t *testing.T) {
+	tests := []struct {
+		name  string
+		pane  string // w1:p2 if empty
+		steps []step
+		idle  bool
+		since int // the second it has been idle since
+	}{
+		{
+			name:  "idle from the first snapshot",
+			steps: []step{{at: 0, sync: &change{}}, {at: 10, sync: &change{}}},
+			idle:  true, since: 0,
+		},
+		{
+			name:  "working",
+			steps: []step{{at: 0, sync: &change{status: working("w1:p2")}}},
+		},
+		{
+			name: "went idle by snapshot",
+			steps: []step{
+				{at: 0, sync: &change{status: working("w1:p2")}},
+				{at: 5, sync: &change{seq: map[string]uint64{"w1:p2": 222}}},
+				{at: 9, sync: &change{seq: map[string]uint64{"w1:p2": 222}}},
+			},
+			idle: true, since: 5,
+		},
+		{
+			name: "the counter moved, so it worked in between",
+			steps: []step{
+				{at: 0, sync: &change{}},
+				{at: 5, sync: &change{seq: map[string]uint64{"w1:p2": 223}}},
+			},
+			idle: true, since: 5,
+		},
+		{
+			name: "went idle by event",
+			steps: []step{
+				{at: 0, sync: &change{}},
+				{at: 3, ev: status("w1:p2", herdr.AgentWorking)},
+				{at: 7, ev: status("w1:p2", herdr.AgentIdle)},
+				{at: 8, ev: status("w1:p2", herdr.AgentIdle)},
+			},
+			idle: true, since: 7,
+		},
+		{
+			name: "blocked",
+			steps: []step{
+				{at: 0, sync: &change{}},
+				{at: 3, ev: status("w1:p2", herdr.AgentBlocked)},
+			},
+		},
+		{
+			name:  "not an agent",
+			pane:  "w1:p1",
+			steps: []step{{at: 0, sync: &change{}}},
+		},
+	}
+	snap := loadSnapshot(t, "two-workspaces.json")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tracker := herdr.NewAgentTracker()
+			play(t, tracker, snap, tt.steps)
+			pane := tt.pane
+			if pane == "" {
+				pane = "w1:p2"
+			}
+			since, idle := tracker.IdleSince(pane)
+			if idle != tt.idle || (idle && !since.Equal(at(tt.since))) {
+				t.Errorf("IdleSince = %v, %v, want %v, %v", since, idle, at(tt.since), tt.idle)
+			}
+		})
+	}
 }

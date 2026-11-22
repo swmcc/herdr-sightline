@@ -90,7 +90,12 @@ watched pane, and that text can end up in front of an agent.
 
 - Anything sent to an agent goes through the engine's message format, which marks it
   as data and keeps it inside a fenced block.
-- v0.1 never sends without a keypress. Don't add anything that does.
+- Nothing is sent without a keypress except by queue mode, and queue mode keeps to
+  the rules decided in [#21](https://github.com/swmcc/herdr-sightline/issues/21)
+  and written up in the README: off until a person says yes for that pane, only
+  to an agent Sightline is sure of, only when it's idle, held back when Sightline
+  isn't sure of the output and capped in the engine. Don't add any other way to
+  send without a keypress, and don't loosen those rules without a design issue.
 - Any change to the message format or delivery gets an injection review. See
   [reviews/injection.md](reviews/injection.md).
 

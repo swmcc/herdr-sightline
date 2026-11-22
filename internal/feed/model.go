@@ -28,12 +28,13 @@ const (
 type mode int
 
 const (
-	modeList   mode = iota // the entries
-	modeView               // the exact message for one entry
-	modePick               // choosing an agent for one entry
-	modeNever              // writing an ignore rule for one entry (#14)
-	modeTrust              // reading a project file before trusting it (#23)
-	modeHidden             // what project ignore rules hid (#22)
+	modeList    mode = iota // the entries
+	modeView                // the exact message for one entry
+	modePick                // choosing an agent for one entry
+	modeNever               // writing an ignore rule for one entry (#14)
+	modeTrust               // reading a project file before trusting it (#23)
+	modeHidden              // what project ignore rules hid (#22)
+	modeConsent             // asking before queue mode goes on for a pane (#19)
 )
 
 // await is an agent that has been sent errors and hasn't finished yet.
@@ -138,6 +139,16 @@ type Model struct {
 	// lastCwd is each watched pane's working directory as last handed to the
 	// projects loop.
 	lastCwd map[string]string
+	// Queue mode, see queue.go. consented are the panes the person has said
+	// yes to queue mode for in this session, consentPane the one being asked
+	// about, and autoBusy says an automatic send is being checked or sent.
+	// viewSent says the view shows what queue mode sent rather than what
+	// enter would send.
+	consented   map[string]bool
+	consentPane string
+	autoBusy    bool
+	viewSent    bool
+	viewSentAt  time.Time
 
 	status string
 	width  int
@@ -162,6 +173,7 @@ func newModel(ctx context.Context, client *herdr.Client, now func() time.Time, s
 		picked:    map[engine.EntryID]herdr.Target{},
 		sending:   map[engine.EntryID]bool{},
 		maybeSent: map[engine.EntryID]string{},
+		consented: map[string]bool{},
 		width:     80,
 		height:    24,
 	}
@@ -278,6 +290,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd = m.key(msg)
 	case tickMsg:
 		m.engine.Tick(m.now())
+		// The only place an automatic send can start. See queue.go.
+		cmd = m.autoSend()
 	case deltaMsg:
 		if m.fromCurrentLoop(msg.pane, msg.gen) {
 			m.delta(msg)
@@ -625,6 +639,10 @@ func (m *Model) paneMoved(from, to string) {
 		return
 	}
 	m.movedTo[from] = to
+	if m.consented[from] {
+		delete(m.consented, from)
+		m.consented[to] = true
+	}
 	if a, ok := m.awaiting[from]; ok {
 		delete(m.awaiting, from)
 		m.awaiting[to] = a
@@ -733,6 +751,8 @@ func (m *Model) stopWatching(pane string) {
 	}
 	m.engine.Unwatch(engine.SourceID(pane))
 	m.forgetRules(pane)
+	// Unwatching turns queue mode off, and watching it again asks again.
+	delete(m.consented, pane)
 	delete(m.paneErrs, pane)
 	m.watching = slices.DeleteFunc(m.watching, func(p string) bool { return p == pane })
 }
@@ -804,13 +824,17 @@ func (m *Model) chooseFor(en engine.Entry) (target herdr.Target, ask, note strin
 		// and kept visible, so it can't push the line off screen.
 		note = " (pinned agent " + fit(visible(c.UnmatchedPin.Agent), maxPinnedNameCells) + " isn't running)"
 	case c.Chosen() && c.Rule == herdr.ChosenByPin && c.PinField == herdr.PinByTerminalTitle:
-		note = " (pinned by terminal title)"
+		note = titlePinNote
 	}
 	if !c.Chosen() {
 		return herdr.Target{}, string(c.Ask), note
 	}
 	return c.Target, "", note
 }
+
+// titlePinNote is the note on an entry whose agent was chosen by a pin
+// matching the watched pane's terminal title, which the pane sets itself.
+const titlePinNote = " (pinned by terminal title)"
 
 // maxPinnedNameCells is the most of a pin's agent the feed shows.
 const maxPinnedNameCells = 32
@@ -835,6 +859,8 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 		return m.trustKey(k)
 	case modeHidden:
 		m.hiddenKey(k)
+	case modeConsent:
+		m.consentKey(k)
 		return nil
 	}
 	return m.listKey(k)
@@ -900,18 +926,25 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 		if i >= 0 {
 			m.openView(m.entries[i].ID)
 		}
+	case "m":
+		if i >= 0 {
+			m.toggleQueue(m.entries[i])
+		}
 	}
 	return nil
 }
 
 // openView shows exactly what enter would send for id.
 func (m *Model) openView(id engine.EntryID) {
+	if m.openSentView(id) {
+		return
+	}
 	text, err := m.engine.Message(id)
 	if err != nil {
 		m.status = fmt.Sprintf("Can't show the message: %v", err)
 		return
 	}
-	m.mode, m.viewID, m.viewText, m.viewTop = modeView, id, text, 0
+	m.mode, m.viewID, m.viewText, m.viewTop, m.viewSent = modeView, id, text, 0, false
 	m.viewTarget = herdr.Target{}
 	if en, ok := m.entry(id); ok {
 		if t, ask := m.targetFor(en); ask == "" {
@@ -938,6 +971,10 @@ func (m *Model) viewKey(k tea.KeyMsg) tea.Cmd {
 	case "G", "end":
 		m.viewTop = len(m.viewLines())
 	case "enter":
+		if m.viewSent {
+			m.status = "This is what queue mode sent. Press esc, then enter on the entry to send it again."
+			return nil
+		}
 		return m.send(m.viewID, m.viewText, true)
 	}
 	m.viewTop = min(max(m.viewTop, 0), max(len(m.viewLines())-m.viewHeight(), 0))
@@ -983,7 +1020,8 @@ const blockedNote = "it's waiting on a prompt, and sending types text and Enter,
 // send starts sending an entry after a keypress. It takes the message now, so
 // what's sent is what the engine said at the moment of the keypress (or, from
 // the view, exactly what was on screen). Then it checks the target in a
-// command, and sends from checked. Nothing else ever starts a send.
+// command, and sends from checked. The only other thing that starts a send is
+// queue mode's autoSend, which goes through checked too.
 func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 	en, ok := m.entry(id)
 	if !ok {
@@ -1028,7 +1066,7 @@ func (m *Model) send(id engine.EntryID, viewed string, fromView bool) tea.Cmd {
 	m.armed = ""
 	m.sending[id] = true
 	m.status = fmt.Sprintf("Checking %s before sending...", label)
-	return checkTarget(m.ctx, m.client, m.now, id, target, text)
+	return checkTarget(m.ctx, m.client, m.now, []engine.EntryID{id}, false, target, text)
 }
 
 // confirmFor is how long a first enter stays good for. A confirm left lying
@@ -1059,7 +1097,10 @@ func (m *Model) needsConfirm(en engine.Entry, target herdr.Target) string {
 
 // checkedMsg is a fresh look at the target pane just before sending.
 type checkedMsg struct {
-	id       engine.EntryID
+	// ids are the entries the message is for. A send after a keypress has
+	// one. An automatic send (auto) from queue mode can have several.
+	ids      []engine.EntryID
+	auto     bool
 	target   herdr.Target
 	text     string
 	pane     herdr.Pane
@@ -1078,9 +1119,9 @@ type checkedMsg struct {
 // checkTarget looks the target up again. Pane ids can go stale, the agent in a
 // pane can change and an agent can become blocked between the last snapshot
 // and the keypress.
-func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time, id engine.EntryID, target herdr.Target, text string) tea.Cmd {
+func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time, ids []engine.EntryID, auto bool, target herdr.Target, text string) tea.Cmd {
 	return func() tea.Msg {
-		msg := checkedMsg{id: id, target: target, text: text, checkedAt: now()}
+		msg := checkedMsg{ids: ids, auto: auto, target: target, text: text, checkedAt: now()}
 		panes, err := client.ListPanes(ctx)
 		if err != nil {
 			msg.err = err
@@ -1112,23 +1153,32 @@ func checkTarget(ctx context.Context, client *herdr.Client, now func() time.Time
 func (m *Model) checked(msg checkedMsg) tea.Cmd {
 	label := clean(msg.target.Label)
 	refuse := func(why string) tea.Cmd {
-		delete(m.sending, msg.id)
-		m.status = fmt.Sprintf("Not sent to %s: %s.", label, why)
+		m.doneSending(msg)
+		if msg.auto {
+			m.status = fmt.Sprintf("Queue mode didn't send to %s: %s.", label, why)
+		} else {
+			m.status = fmt.Sprintf("Not sent to %s: %s.", label, why)
+		}
 		return nil
+	}
+	unpick := func() {
+		for _, id := range msg.ids {
+			delete(m.picked, id)
+		}
 	}
 	p := msg.pane
 	switch {
 	case msg.err != nil:
 		return refuse(fmt.Sprintf("couldn't check it first (%v)", msg.err))
 	case !msg.found:
-		delete(m.picked, msg.id)
+		unpick()
 		return refuse("its pane has closed. Press t to pick another agent")
 	case p.Agent == "" && p.DisplayAgent == "":
-		delete(m.picked, msg.id)
+		unpick()
 		return refuse("its pane isn't running an agent any more")
 	case msg.target.Kind != "" && p.Agent != msg.target.Kind,
 		msg.target.Kind == "" && p.Agent != "":
-		delete(m.picked, msg.id)
+		unpick()
 		return refuse(fmt.Sprintf("its pane now runs %s instead", clean(p.Agent)))
 	case msg.nameClash != "":
 		// agent.prompt's target can be a pane id or an agent's herdr name, and
@@ -1137,6 +1187,10 @@ func (m *Model) checked(msg checkedMsg) tea.Cmd {
 		return refuse(fmt.Sprintf("the agent in %s is named %s, the same as this pane's id, so herdr might send it there", msg.nameClash, msg.target.PaneID))
 	case p.AgentStatus == herdr.AgentBlocked:
 		return refuse(blockedNote)
+	case msg.auto && p.AgentStatus != herdr.AgentIdle && p.AgentStatus != herdr.AgentDone:
+		// Queue mode never interrupts an agent at work. The tracker said it
+		// was idle, but herdr has the last word.
+		return refuse(fmt.Sprintf("it's %s, and queue mode only sends to an idle agent. It'll try again later", clean(string(p.AgentStatus))))
 	}
 	// A permission dialog can still open between this check and the prompt.
 	// The gap is one round trip, and herdr narrows it further by refusing
@@ -1173,23 +1227,39 @@ func prompt(ctx context.Context, client *herdr.Client, msg checkedMsg) tea.Cmd {
 // sent records a finished send.
 func (m *Model) sent(sm sentMsg) {
 	msg := sm.checked
-	delete(m.sending, msg.id)
+	m.doneSending(msg)
 	label := clean(msg.target.Label)
+	now := m.now()
 	var refused *herdr.Error
 	switch {
 	case errors.As(sm.promptErr, &refused):
 		// herdr answered and said no, so nothing was typed.
+		if msg.auto {
+			m.status = fmt.Sprintf("Queue mode didn't send to %s: %v. It'll try again later.", label, sm.promptErr)
+			return
+		}
 		m.status = fmt.Sprintf("Not sent to %s: %v", label, sm.promptErr)
 		return
 	case sm.promptErr != nil:
 		// Anything else may have failed after herdr had the request: a lost
 		// reply, a timeout, a cancel. So it may have been typed, and the next
 		// enter asks first.
-		m.maybeSent[msg.id] = msg.target.Label
+		for _, id := range msg.ids {
+			m.maybeSent[id] = msg.target.Label
+		}
+		if msg.auto {
+			// Queue mode stops for the pane until a keypress, rather than
+			// risk sending the same thing twice.
+			m.engine.AutoUnsure(msg.ids, msg.target.PaneID, msg.text, now)
+			m.status = fmt.Sprintf("Queue mode may or may not have reached %s (%v), so it has stopped for this pane. Check before sending again.", label, sm.promptErr)
+			return
+		}
 		m.status = fmt.Sprintf("It may or may not have reached %s (%v). Check before sending again.", label, sm.promptErr)
 		return
 	}
-	delete(m.maybeSent, msg.id)
+	for _, id := range msg.ids {
+		delete(m.maybeSent, id)
+	}
 	pane := msg.target.PaneID
 	// The engine knows the agent by its pane id at the send. The wait is kept
 	// under its id now, in case the pane moved while the prompt was in flight.
@@ -1199,7 +1269,13 @@ func (m *Model) sent(sm sentMsg) {
 		// errors before has gone without finishing.
 		m.endWait(current)
 	}
-	m.engine.MarkSent(msg.id, pane, m.now())
+	if msg.auto {
+		m.engine.AutoDelivered(msg.ids, pane, msg.text, now)
+	} else {
+		for _, id := range msg.ids {
+			m.engine.MarkSent(id, pane, now)
+		}
+	}
 	m.labels[pane] = msg.target.Label
 	a, ok := m.awaiting[current]
 	if !ok {
@@ -1211,7 +1287,22 @@ func (m *Model) sent(sm sentMsg) {
 	}
 	a.seq, a.seqKnown, a.sawWorking, a.since = msg.seq, msg.seqKnown, false, msg.checkedAt
 	a.kind, a.terminal, a.missing = msg.target.Kind, msg.pane.TerminalID, false
+	if msg.auto {
+		m.status = fmt.Sprintf("Queue mode sent %s to %s at %s.", plural(len(msg.ids), "error", "errors"), label, now.Format(clockFormat))
+		return
+	}
 	m.status = fmt.Sprintf("Sent to %s.", label)
+}
+
+// doneSending clears the in flight marks for a check or send that has ended,
+// however it ended.
+func (m *Model) doneSending(msg checkedMsg) {
+	for _, id := range msg.ids {
+		delete(m.sending, id)
+	}
+	if msg.auto {
+		m.autoBusy = false
+	}
 }
 
 // agentLabel is how the feed shows an agent the engine knows by key.

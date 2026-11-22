@@ -140,6 +140,8 @@ func (m *Model) View() string {
 		return m.trustView()
 	case modeHidden:
 		return m.hiddenView()
+	case modeConsent:
+		return m.consentView()
 	}
 	return m.listView()
 }
@@ -207,6 +209,9 @@ func (m *Model) headerLines(w int) []string {
 		head = "Sightline · watching " + strings.Join(names, ", ")
 	}
 	lines := []string{faint.Render(fit(head, w))}
+	for _, l := range m.queueHeader() {
+		lines = append(lines, sentStyle.Render(fit(clean(l), w)))
+	}
 	// Shown up here so a flood of errors can't push it out of sight too.
 	if n := m.engine.Dropped(); n > 0 {
 		lines = append(lines, faint.Render(fit(fmt.Sprintf("%s dropped to keep the feed short", plural(n, "older entry", "older entries")), w)))
@@ -249,6 +254,7 @@ func (m *Model) footerLines(w int) []string {
 	if total, _ := m.engine.Hidden(); total > 0 {
 		keys += "  h hidden"
 	}
+	keys += "  m queue"
 	keys += "  q quit"
 	return []string{
 		"",
@@ -276,6 +282,9 @@ func marker(s engine.State) (string, lipgloss.Style) {
 // to and, when it's selected, the keys.
 func (m *Model) entryLines(en engine.Entry, selected bool, w int) []string {
 	mark, style := marker(en.State)
+	if en.Queued {
+		mark, style = "◷", sentStyle
+	}
 	where := clean(en.Source.Title)
 	if where == "" {
 		where = string(en.Source.ID)
@@ -325,6 +334,9 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 		if m.sending[en.ID] {
 			return "sending again…", ""
 		}
+		if en.Auto {
+			return "sent automatically to " + agent + " at " + en.SentAt.Format(clockFormat) + ", waiting for it to finish", "[v] view what went   [d] dismiss"
+		}
 		return "sent to " + agent + ", waiting for it to finish", "[v] view   [d] dismiss"
 	case engine.StateFixed:
 		return "✓ fixed, it stopped appearing after " + agent + " finished", "[d] dismiss"
@@ -334,6 +346,9 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 		}
 		return "? unverified, nothing ran to prove it either way. Check it yourself", "[enter] send again   [d] dismiss"
 	}
+	if en.Queued {
+		return m.queueNote(en), "[enter] send now   [m] queue off   [d] dismiss"
+	}
 	if m.sending[en.ID] {
 		return "sending…", ""
 	}
@@ -341,6 +356,9 @@ func (m *Model) entryTarget(en engine.Entry) (who, keys string) {
 	prefix := ""
 	if en.State == engine.StateStillFailing {
 		prefix = "✗ still failing after " + agent + " finished. "
+		if en.Auto {
+			prefix = "✗ still failing after " + agent + " finished, so queue mode stopped for this pane. "
+		}
 		keys = "[enter] send again   [d] dismiss   [n] never"
 	} else {
 		keys = sendKeys
@@ -392,6 +410,9 @@ func (m *Model) messageView() string {
 	// can't say one agent while enter sends to another.
 	if m.viewTarget.PaneID != "" {
 		head = fmt.Sprintf("Exactly what enter sends to %s · %s", clean(m.viewTarget.Label), plural(len(m.viewText), "byte", "bytes"))
+	}
+	if m.viewSent {
+		head = fmt.Sprintf("Exactly what queue mode sent to %s at %s · %s", clean(m.viewTarget.Label), m.viewSentAt.Format(clockFormat), plural(len(m.viewText), "byte", "bytes"))
 	}
 	out := []string{faint.Render(fit(head, w)), ""}
 	out = append(out, lines[top:end]...)

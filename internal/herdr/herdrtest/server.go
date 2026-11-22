@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Request is one request the server received.
@@ -110,7 +111,8 @@ func (s *Server) Handle(method string, h Handler) {
 // Requests delivers every request the server receives, in order.
 func (s *Server) Requests() <-chan Request { return s.requests }
 
-// Subscribers delivers each subscription once the server has accepted it.
+// Subscribers delivers each subscription once the server has accepted it. A
+// Herdr keeps track of its subscriptions itself, so on one this stays empty.
 func (s *Server) Subscribers() <-chan *Subscriber { return s.subscribers }
 
 // Close stops the server and waits for its goroutines to finish.
@@ -187,7 +189,7 @@ func (s *Server) serve(conn net.Conn) {
 		herr = &ErrorBody{Code: "unknown_method", Message: "no handler for " + req.Method}
 	}
 
-	sub := &Subscriber{conn: conn, done: make(chan struct{})}
+	sub := &Subscriber{conn: conn, ready: make(chan struct{}), done: make(chan struct{})}
 	defer close(sub.done)
 	raw, isRaw := result.(Raw)
 	subscribing := req.Method == "events.subscribe" && herr == nil && (!isRaw || raw != "")
@@ -198,7 +200,8 @@ func (s *Server) serve(conn net.Conn) {
 		_ = json.Unmarshal(req.Params, &params)
 		sub.Subscriptions = params.Subscriptions
 		// Before the reply, so the subscription is in place by the time the
-		// client hears it started and can make something happen.
+		// client hears it started and can make something happen. Anything
+		// pushed meanwhile waits for ready, so it can't overtake the reply.
 		if subscribed != nil {
 			subscribed(sub)
 		}
@@ -209,9 +212,10 @@ func (s *Server) serve(conn net.Conn) {
 		return
 	case isRaw:
 		if raw != "" {
-			if _, err := conn.Write([]byte(raw)); err != nil {
+			if err := sub.writeLocked([]byte(raw)); err != nil {
 				return
 			}
+			close(sub.ready)
 		}
 		if raw == "" || req.Method != "events.subscribe" {
 			// Say nothing more and wait for the client to give up.
@@ -226,16 +230,12 @@ func (s *Server) serve(conn net.Conn) {
 		if req.Method != "events.subscribe" {
 			return
 		}
+		close(sub.ready)
 	}
 
-	if subscribed != nil {
-		// Something else is already keeping track, so nobody has to read the
-		// channel. Offer it without waiting.
-		select {
-		case s.subscribers <- sub:
-		default:
-		}
-	} else {
+	// When something else keeps track of subscriptions, the channel isn't used.
+	// Nobody would drain it, so it would fill up and go stale.
+	if subscribed == nil {
 		select {
 		case s.subscribers <- sub:
 		case <-s.done:
@@ -256,6 +256,9 @@ type Subscriber struct {
 
 	conn net.Conn
 	mu   sync.Mutex
+	// ready closes once the reply to the subscribe has gone, so events always
+	// come after it, as they do from herdr.
+	ready chan struct{}
 	// done closes when the connection has ended.
 	done chan struct{}
 }
@@ -286,14 +289,34 @@ func (sub *Subscriber) PushLifecycle(event string, fields map[string]any) error 
 // Push sends an event envelope: {"event": event, "data": data}. That's the
 // shape herdr uses for subscription events such as pane.agent_status_changed.
 func (sub *Subscriber) Push(event string, data any) error {
-	return sub.write(map[string]any{"event": event, "data": data})
+	line, err := json.Marshal(map[string]any{"event": event, "data": data})
+	if err != nil {
+		return fmt.Errorf("herdrtest: encoding event: %w", err)
+	}
+	return sub.PushRaw(string(line))
 }
 
-// PushRaw sends line as it is, followed by a newline.
+// PushRaw sends line as it is, followed by a newline. It waits until the
+// subscribe has been answered, and gives up if the client stops reading for
+// long enough that the write can't finish.
 func (sub *Subscriber) PushRaw(line string) error {
+	select {
+	case <-sub.ready:
+	case <-sub.done:
+		return net.ErrClosed
+	}
+	return sub.writeLocked([]byte(line + "\n"))
+}
+
+// writeDeadline stops a push to a client that has stopped reading hanging the
+// test that made it.
+const writeDeadline = 5 * time.Second
+
+func (sub *Subscriber) writeLocked(b []byte) error {
 	sub.mu.Lock()
 	defer sub.mu.Unlock()
-	_, err := sub.conn.Write([]byte(line + "\n"))
+	_ = sub.conn.SetWriteDeadline(time.Now().Add(writeDeadline))
+	_, err := sub.conn.Write(b)
 	return err
 }
 
@@ -307,5 +330,5 @@ func (sub *Subscriber) write(v any) error {
 	if err != nil {
 		return fmt.Errorf("herdrtest: encoding reply: %w", err)
 	}
-	return sub.PushRaw(string(line))
+	return sub.writeLocked(append(line, '\n'))
 }

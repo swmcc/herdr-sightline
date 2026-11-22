@@ -10,10 +10,10 @@ A [herdr](https://herdr.dev) plugin. When your dev server, test watcher or build
 breaks in one pane, Sightline catches the error and hands it to the coding agent
 working in another, then checks whether the fix actually worked.
 
-> **Status: building v0.1.** This README was written before the code. The plan to make
-> it true now lives in the [roadmap](#roadmap), [milestones](https://github.com/swmcc/herdr-sightline/milestones)
-> and [issues](https://github.com/swmcc/herdr-sightline/issues). Nothing below works yet.
-> Opinions on the design are very welcome.
+> **Status: v0.1 is about to be released.** Everything below works on herdr 0.9.1
+> and later. Queue mode and project presets come next. The [roadmap](#roadmap) and
+> [issues](https://github.com/swmcc/herdr-sightline/issues) say where they're up to,
+> and opinions on the design are very welcome.
 
 <!-- demo.gif: agent edits code → dev server pane throws → Sightline catches it →
      agent fixes it → pane goes clean → "fixed". No hands on the keyboard. -->
@@ -66,7 +66,7 @@ install command again.
    ```toml
    # ~/.config/herdr/config.toml
    [[keys.command]]
-   key = "prefix+w"
+   key = "prefix+s"
    type = "plugin_action"
    command = "swmcc.sightline.watch"
    description = "sightline: watch this pane"
@@ -274,7 +274,7 @@ craft output that reads like instructions.
 
 Sightline:
 
-- never sends anything without you pressing a key (in v1, there is no automatic mode)
+- never sends anything without you pressing a key (v0.1 has no automatic mode)
 - labels everything it sends as output from another pane, to be treated as data
 - keeps everything from the pane, its name included, inside a block where every line is marked, so none of it can pass for Sightline's own words
 - caps how much it sends
@@ -320,8 +320,9 @@ key that happens to be on the line above it.
 - **Read the end of a very long line.** Only the first 4 KiB of each line is
   matched, so one huge line can't freeze the feed. An error that starts further
   into a line than that isn't caught.
-- **Fix things on its own.** v1 always asks first. Automatic sending may come later,
-  if people want it and it can be made safe.
+- **Fix things on its own.** v0.1 always asks first. Queue mode, planned for v0.2,
+  will let an error wait for the agent to finish, and it gets its own safety review
+  before it ships.
 
 ## FAQ
 

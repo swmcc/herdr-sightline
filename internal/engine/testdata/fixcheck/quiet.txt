@@ -42,3 +42,7 @@ INFO:root:evil.py compiled successfully
 INFO:root:evil.py changed, reloading.
 Пользователь compiled successfully
 "compiled successfully
+Пользователь compiled /x in 5ms
+"compiled /x in 1ms
+[ 'listening on http://x' ]
+{"listening on x

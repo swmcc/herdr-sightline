@@ -183,6 +183,7 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 			f.started = true
 		case request == f.trigger:
 			f.ran = succeeded(status)
+			f.started = false
 		case request != "":
 			// Another request started, so the next ending may be its.
 			f.started = false
@@ -279,7 +280,7 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	// webpack, Next.js, Create React App: "compiled successfully in 1.2s",
 	// "✓ Compiled /notices in 312ms", "compiled with 1 warning".
 	`\bcompiled\b.*\bsuccessfully\b`,
-	`^\W*compiled \S+ in \d[\d.]*\s?m?s\b`,
+	`\bcompiled \S+ in \d[\d.]*\s?m?s\b`,
 	`\bcompiled with \d+ warnings?\b`,
 	// Vite and Next.js starting up: "ready in 312 ms", "✓ Ready in 1.2s".
 	`\bready in \d[\d.]*\s?m?s\b`,
@@ -299,7 +300,7 @@ var ranSignals = regexp.MustCompile(`(?i)` + strings.Join([]string{
 	// Django's autoreloader: "/app/notices/views.py changed, reloading." The
 	// path has no colons or spaces, so "INFO:root:evil.py" can't pass for one.
 	`^\s*/?(?:[\w.-]+/)*[\w.-]+\.py changed, reloading\.?\s*$`,
-	`^\W*listening on\b`, // puma: "* Listening on http://127.0.0.1:3000"
+	`\blistening on\b`, // puma: "* Listening on http://127.0.0.1:3000"
 	`\bstarting development server at\b`,
 	`\bapplication startup complete\b`, // uvicorn
 	`\brunning \S+\.endpoint with\b`,   // Phoenix
@@ -364,7 +365,14 @@ var leadIn = regexp.MustCompile(`^\s*(?:[\p{So}*•>√]\s*)?` + logTime + logTa
 // `"PROPFIND / HTTP/1.1"`, whose method can be any token. A line with one is
 // never a signal, because a server may log text the client chose next to it
 // (a forwarded address, a host, a user).
-var mentionsRequest = regexp.MustCompile(`\b[A-Z][A-Z0-9_-]+ +"?/|"[^\s"]+ \S+ HTTP/\d`)
+var mentionsRequest = regexp.MustCompile(`\b[A-Z][A-Z0-9_-]+ +"?/|` + quotedRequest.String())
+
+// quotedRequest finds a quoted request line anywhere, whatever its method:
+// `"GET /notices HTTP/1.1"`.
+var quotedRequest = regexp.MustCompile(`"[^\s"]+ \S+ HTTP/\d`)
+
+// quotedForms is where the quoted request forms start in requestForms.
+const quotedForms = 2
 
 // requestForms are the request lines dev servers print. Each is anchored at
 // the start of the line, after a time, tags or a log level, so a request
@@ -376,20 +384,24 @@ var requestForms = func() []*regexp.Regexp {
 	const (
 		start  = `^\s*` + logTime + logTags + logLevel
 		method = `(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) `
-		path   = `(/[^\s"#]*)`
+		// The whole target, query and all, so a request that only starts
+		// like the trigger's ("/notices?page=2#&page=1") has its own key.
+		path   = `(/[^\s"]*)`
 		status = `([1-5]\d\d)`
 		// The quoted part of a request line, with no quote or space inside.
-		request = method + path + `[^\s"]* HTTP/(?:1\.[01]|0\.9)`
+		request = method + path + ` HTTP/(?:1\.[01]|0\.9)`
 		// An IPv4 or IPv6 address, with or without a port.
 		address = `[\w.:\[\]-]+`
 	)
 	return []*regexp.Regexp{
 		// Next.js, Phoenix, morgan's dev and tiny formats: "GET /notices 500 in
 		// 30ms", "[info] GET /notices". The path is the only part a client
-		// chooses, and it has no spaces.
-		regexp.MustCompile(start + method + path + `\S*(?:\s+` + status + `\b)?`),
-		// Rails: `Started GET "/notices" for 127.0.0.1`, with no status
-		regexp.MustCompile(start + `Started ` + method + `"` + path + `[^\s"]*"()`),
+		// chooses, and it has no spaces. The target runs to the next space and
+		// the status, if there is one, stands on its own.
+		regexp.MustCompile(start + method + `(/\S*)(?:\s+` + status + `(?:\s|$)|\s*$)`),
+		// Rails: `Started GET "/notices" for 127.0.0.1`, with no status. The
+		// quote must end the target, so one inside it can't cut the key short.
+		regexp.MustCompile(start + `Started ` + method + `"` + path + `"(?:\s|$)()`),
 		// A quoted request line. Servers log fields a client chooses before it
 		// (a user, a forwarded address), and some log a bad request line raw,
 		// quotes and all. So these forms are anchored at both ends, with the
@@ -415,7 +427,15 @@ func requestOf(l string) (key string, status int) {
 	if strings.Count(l, "HTTP/") > 1 {
 		return "", 0
 	}
-	for _, re := range requestForms {
+	forms := requestForms
+	if quotedRequest.MatchString(l) {
+		// A line with a quoted request on it is that request's line. What
+		// comes before the quotes can be a forwarded address the client
+		// chose ("GET /notices 200 - - [...]"), so only the forms anchored at
+		// both ends may read it.
+		forms = requestForms[quotedForms:]
+	}
+	for _, re := range forms {
 		m := re.FindStringSubmatch(l)
 		if m == nil {
 			continue
@@ -436,8 +456,13 @@ func requestOf(l string) (key string, status int) {
 // there.
 var requestEnded = regexp.MustCompile(`^\s*` + logTime + logTags + logLevel + `(?:Completed|Sent) ([1-5]\d\d)\b`)
 
-// endedWith gives the status on a line saying a request ended, or 0.
+// endedWith gives the status on a line saying a request ended, or 0. A line
+// with a quoted request on it is a request line, whatever its start says, as
+// the start can be an address the client chose ("Completed 200:0 - ").
 func endedWith(l string) int {
+	if quotedRequest.MatchString(l) {
+		return 0
+	}
 	m := requestEnded.FindStringSubmatch(l)
 	if m == nil {
 		return 0

@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // A request only counts in a request line's own form, anchored at the start.
 func TestRequestOf(t *testing.T) {
@@ -44,6 +47,20 @@ func TestRequestOf(t *testing.T) {
 		{`No route matches [GET] "/notices"`, "", 0},
 		{`Started GET "/x?q=GET+/notices+200" for 127.0.0.1`, "GET /x?q=GET+/notices+200", 0},
 		{`Processing by NoticesController#index as HTML GET /notices 200`, "", 0},
+		// The key is the whole target, so one that only starts like another
+		// has its own.
+		{"GET /notices?page=2#&page=1 200 in 3ms", "GET /notices?page=2#&page=1", 200},
+		{`GET /notices?page=2"&page=1 200 in 3ms`, `GET /notices?page=2"&page=1`, 200},
+		{`Started GET "/notices?page=2"&page=1" for 1.2.3.4`, "", 0},
+		{`[01/Jan/2026 09:00:00] "GET /notices?page=2#&page=1 HTTP/1.1" 200 145`, "GET /notices?page=2#&page=1", 200},
+		{`INFO:     127.0.0.1:1 - "GET /notices?page=2"&page=1 HTTP/1.1" 200 OK`, "", 0},
+		// A status that doesn't stand on its own isn't one.
+		{"GET /notices 200:0 x", "", 0},
+		// A forwarded address the client chose, with spaces, before a quoted
+		// request. Only the forms anchored at both ends may read the line.
+		{`GET /notices 200 - - [01/Jan/2026 09:00:05] "GET / HTTP/1.1" 200 -`, "", 0},
+		{`GET /notices 200 - - [01/Jan/2026:09:00:05 +0000] "GET / HTTP/1.1" 200 5`, "", 0},
+		{`INFO:     GET /notices 200:0 - "GET / HTTP/1.1" 200 OK`, "", 0},
 		{`127.0.0.1 - - [01/Jan/2026:09:00:00 +0000] "GET /x?q=%22GET%20/notices%20HTTP/1.1%22%20200 HTTP/1.1" 404 0`, "", 0},
 		{"Пользователь GET /notices 200", "", 0},
 		{"PURGE /notices 200", "", 0},
@@ -59,6 +76,38 @@ func TestRequestOf(t *testing.T) {
 			key, status := requestOf(unprefix(tt.line))
 			if key != tt.key || status != tt.status {
 				t.Fatalf("requestOf = %q %d, want %q %d", key, status, tt.key, tt.status)
+			}
+		})
+	}
+}
+
+// requestOf reads a line with a quoted request only with the forms from
+// quotedForms on, so they must be the quoted ones and the rest must not be.
+func TestQuotedFormsComeLast(t *testing.T) {
+	for i, re := range requestForms {
+		if quoted := strings.Contains(re.String(), "HTTP/"); quoted != (i >= quotedForms) {
+			t.Errorf("requestForms[%d] quoted = %v, but quotedForms is %d", i, quoted, quotedForms)
+		}
+	}
+}
+
+func TestEndedWith(t *testing.T) {
+	tests := []struct {
+		line string
+		want int
+	}{
+		{"Completed 200 OK in 12ms", 200},
+		{"[info] Sent 500 in 3ms", 500},
+		{"10:41:03 [abc-123] Completed 404 Not Found in 1ms", 404},
+		// An address the client chose at the start of a request line.
+		{`INFO:     Completed 200:0 - "GET / HTTP/1.1" 200 OK`, 0},
+		{`Completed 200 - - [01/Jan/2026:09:00:05 +0000] "GET / HTTP/1.1" 200 5`, 0},
+		{"Not Completed 200", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			if got := endedWith(tt.line); got != tt.want {
+				t.Fatalf("endedWith = %d, want %d", got, tt.want)
 			}
 		})
 	}

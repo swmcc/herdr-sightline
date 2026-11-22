@@ -7,7 +7,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -742,54 +741,40 @@ func (m *Model) paneName(pane string) string {
 
 // targetFor is who an entry would go to now, or why the feed is asking.
 func (m *Model) targetFor(en engine.Entry) (herdr.Target, string) {
-	if t, ok := m.picked[en.ID]; ok {
-		return t, ""
-	}
-	if !m.synced {
-		return herdr.Target{}, "still looking for agents"
-	}
-	c := m.tracker.Choose(m.resolve(string(en.Source.ID)), m.cfg.Pins)
-	if !c.Chosen() {
-		return herdr.Target{}, string(c.Ask)
-	}
-	return c.Target, ""
+	t, ask, _ := m.chooseFor(en)
+	return t, ask
 }
 
-// pinNote says when a pin had a hand in an entry's agent. A pin matching the
-// watched pane's terminal title is worth seeing because the pane sets that
-// title itself. A pin whose agent isn't running means the entry fell back to
-// the tab, which the README promises to say, so it's never a surprise where
-// the error lands.
-func (m *Model) pinNote(en engine.Entry) string {
-	if _, ok := m.picked[en.ID]; ok || !m.synced {
-		return ""
+// chooseFor is targetFor with a note on any pin that had a hand in it, all
+// from one choice so the two can't disagree. A pin matching the watched pane's
+// terminal title is worth seeing because the pane sets that title itself. A
+// pin whose agent isn't running means the entry fell back to the tab, which
+// the README promises to say, so it's never a surprise where the error lands.
+// An agent picked with t is the person's own choice, so there's no note.
+func (m *Model) chooseFor(en engine.Entry) (target herdr.Target, ask, note string) {
+	if t, ok := m.picked[en.ID]; ok {
+		return t, "", ""
+	}
+	if !m.synced {
+		return herdr.Target{}, "still looking for agents", ""
 	}
 	c := m.tracker.Choose(m.resolve(string(en.Source.ID)), m.cfg.Pins)
 	switch {
 	case c.UnmatchedPin != nil:
-		return " (pinned agent " + pinnedName(c.UnmatchedPin.Agent) + " isn't running)"
+		// The pin comes from the user's own sightline.toml, but it's still cut
+		// and kept visible, so it can't push the line off screen.
+		note = " (pinned agent " + fit(visible(c.UnmatchedPin.Agent), maxPinnedNameCells) + " isn't running)"
 	case c.Chosen() && c.Rule == herdr.ChosenByPin && c.PinField == herdr.PinByTerminalTitle:
-		return " (pinned by terminal title)"
+		note = " (pinned by terminal title)"
 	}
-	return ""
+	if !c.Chosen() {
+		return herdr.Target{}, string(c.Ask), note
+	}
+	return c.Target, "", note
 }
 
 // maxPinnedNameCells is the most of a pin's agent the feed shows.
 const maxPinnedNameCells = 32
-
-// pinnedName is how the feed shows the agent a pin names. It comes from the
-// user's own sightline.toml, not from herdr, but it's still cut to a sensible
-// length and kept to visible characters, so it can't push the rest of the
-// line off screen or turn the words around it back to front.
-func pinnedName(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.Is(unicode.Cf, r) {
-			return -1
-		}
-		return r
-	}, clean(s))
-	return fit(s, maxPinnedNameCells)
-}
 
 // key handles a keypress for whichever mode the feed is in.
 func (m *Model) key(k tea.KeyMsg) tea.Cmd {

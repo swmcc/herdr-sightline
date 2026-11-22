@@ -35,6 +35,7 @@ const (
 	modeTrust               // reading a project file before trusting it (#23)
 	modeHidden              // what project ignore rules hid (#22)
 	modeConsent             // asking before queue mode goes on for a pane (#19)
+	modeLog                 // what queue mode has sent, newest first (#20)
 )
 
 // await is an agent that has been sent errors and hasn't finished yet.
@@ -148,6 +149,7 @@ type Model struct {
 	consentPane string
 	autoBusy    bool
 	autoPane    string // the agent pane of the automatic send in flight
+	logCursor   int    // the selected line of the log of automatic sends
 	viewSent    bool
 	viewSentAt  time.Time
 
@@ -875,6 +877,9 @@ func (m *Model) key(k tea.KeyMsg) tea.Cmd {
 	case modeConsent:
 		m.consentKey(k)
 		return nil
+	case modeLog:
+		m.logKey(k)
+		return nil
 	}
 	return m.listKey(k)
 }
@@ -946,6 +951,18 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 		if i >= 0 {
 			m.toggleQueue(m.entries[i])
 		}
+	case "x":
+		if i >= 0 {
+			m.unqueue(m.entries[i])
+		}
+	case "[", "]":
+		if i >= 0 {
+			m.moveQueued(m.entries[i], k.String() == "[")
+		}
+	case "s":
+		m.togglePause()
+	case "a":
+		m.openLog()
 	}
 	return nil
 }

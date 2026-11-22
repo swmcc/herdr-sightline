@@ -40,10 +40,12 @@ func FindRoot(dir string) (root string, ok bool, err error) {
 // ProjectPath is the project file for the repo at root.
 func ProjectPath(root string) string { return filepath.Join(root, ProjectFileName) }
 
-// ReadProject reads root's project file. A missing file isn't an error. It
-// refuses a symlink, even one that points inside the repo, so a file outside
-// the repo can never pass for the repo's own, and anything that isn't a regular
-// file or is over MaxProjectFileSize.
+// ReadProject reads root's project file. A missing file isn't an error, but one
+// that can't be looked at is, so the feed can say so. It refuses a symlink,
+// even one that points inside the repo, and anything that isn't a regular file
+// or is over MaxProjectFileSize. A hard link can still bring in a file from
+// elsewhere on the disk, but whatever is read is shown and trusted by its sum
+// like any other.
 func ReadProject(root string) (data []byte, exists bool, err error) {
 	path := ProjectPath(root)
 	info, err := os.Lstat(path)
@@ -51,7 +53,7 @@ func ReadProject(root string) (data []byte, exists bool, err error) {
 		return nil, false, nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("reading %s: %w", path, err)
+		return nil, true, fmt.Errorf("reading %s: %w", path, err)
 	}
 	if info.Mode()&fs.ModeSymlink != 0 {
 		return nil, true, &Error{File: path, Msg: "is a symlink, and a project file has to be a real file in the repo"}

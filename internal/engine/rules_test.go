@@ -22,7 +22,7 @@ func twoPanes(t *testing.T) *enginetest.Adapter {
 	t.Helper()
 	a := newAdapter(t)
 	a.Watch(api, "api", "go run .")
-	a.Engine.SetRules(web, repoRules())
+	a.Engine.SetRules(web, repoRules(), a.Now())
 	return a
 }
 
@@ -85,7 +85,7 @@ func TestSourceRuleHidingStopsAFix(t *testing.T) {
 			a.Print(web, boom)
 			a.Advance(2 * time.Second)
 			en := only(t, a)
-			a.Engine.SetRules(web, repoRules())
+			a.Engine.SetRules(web, repoRules(), a.Now())
 			a.Send(en.ID, "claude")
 			a.Finish("claude")
 			a.Advance(2 * time.Second)
@@ -98,6 +98,38 @@ func TestSourceRuleHidingStopsAFix(t *testing.T) {
 	}
 }
 
+// The pattern that caught an error can go while its fix is checked (the file
+// changed, so it's no longer trusted). Then the error coming back wouldn't be
+// seen, so the check can't say fixed.
+func TestChangingRulesStopsAFix(t *testing.T) {
+	a := newAdapter(t)
+	a.Engine.SetRules(web, repoRules(), a.Now())
+	a.Print(web, "FATAL out of memory")
+	a.Advance(2 * time.Second)
+	en := only(t, a)
+	a.Send(en.ID, "claude")
+	a.Finish("claude")
+	a.Advance(2 * time.Second)
+	a.Engine.SetRules(web, engine.Rules{}, a.Now())
+	a.Print(web, recompile, "FATAL out of memory")
+	a.Advance(31 * time.Second)
+	if got := only(t, a).State; got != engine.StateUnverified {
+		t.Errorf("state = %v, want unverified", got)
+	}
+}
+
+// An error drawn over with a carriage return and hidden by a repo's rule is
+// still counted, and still stops a fix being called fixed.
+func TestHiddenOverwrittenErrorIsCounted(t *testing.T) {
+	a := newAdapter(t)
+	a.Engine.SetRules(web, repoRules(), a.Now())
+	a.Print(web, "Error: flaky upstream\rok")
+	a.Advance(2 * time.Second)
+	if total, _ := a.Engine.Hidden(); total != 1 {
+		t.Errorf("hidden = %d, want 1", total)
+	}
+}
+
 // Rules from a repo only add. They never dismiss what's already in the feed,
 // and a capture already under way is filed as usual.
 func TestSourceRulesNeverDismiss(t *testing.T) {
@@ -105,7 +137,7 @@ func TestSourceRulesNeverDismiss(t *testing.T) {
 	a.Print(web, "Error: flaky filed")
 	a.Advance(2 * time.Second)
 	a.Print(web, "Error: flaky capturing")
-	a.Engine.SetRules(web, repoRules())
+	a.Engine.SetRules(web, repoRules(), a.Now())
 	a.Advance(2 * time.Second)
 	for _, en := range a.Engine.Entries() {
 		if en.State != engine.StateNew {
@@ -119,7 +151,7 @@ func TestSourceRulesNeverDismiss(t *testing.T) {
 
 func TestSourceRulesFollowARenameAndGoWithUnwatch(t *testing.T) {
 	a := newAdapter(t)
-	a.Engine.SetRules(web, repoRules())
+	a.Engine.SetRules(web, repoRules(), a.Now())
 	a.Engine.Rename(web, "pane-9")
 	a.Print("pane-9", "Error: flaky moved")
 	a.Advance(2 * time.Second)
@@ -137,7 +169,7 @@ func TestSourceRulesFollowARenameAndGoWithUnwatch(t *testing.T) {
 	}
 
 	// Rules for a source that isn't watched go nowhere.
-	a.Engine.SetRules("pane-404", repoRules())
+	a.Engine.SetRules("pane-404", repoRules(), a.Now())
 	a.Watch("pane-404", "x", "")
 	a.Print("pane-404", "Error: flaky")
 	a.Advance(2 * time.Second)
@@ -148,7 +180,7 @@ func TestSourceRulesFollowARenameAndGoWithUnwatch(t *testing.T) {
 
 func TestHiddenKeepsTheLatest(t *testing.T) {
 	a := newAdapter(t)
-	a.Engine.SetRules(web, repoRules())
+	a.Engine.SetRules(web, repoRules(), a.Now())
 	for i := range 60 {
 		a.Print(web, fmt.Sprintf("Error: flaky %d", i))
 	}

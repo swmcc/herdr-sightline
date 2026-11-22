@@ -132,6 +132,12 @@ type Model struct {
 	trust    trustState
 	// hiddenTop is how far down the list of hidden errors is scrolled.
 	hiddenTop int
+	// rulesFor is what each watched pane's project rules were last made from,
+	// so the engine is only told when they change (see applyProjectRules).
+	rulesFor map[string]string
+	// lastCwd is each watched pane's working directory as last handed to the
+	// projects loop.
+	lastCwd map[string]string
 
 	status string
 	width  int
@@ -639,7 +645,9 @@ func (m *Model) paneMoved(from, to string) {
 	// Only those, as its workspace and tab have changed.
 	if p, ok := m.panes[from]; ok {
 		if _, known := m.panes[to]; !known {
-			m.panes[to] = herdr.Pane{ID: to, Label: p.Label, Title: p.Title}
+			// The working directory too, so the projects loop keeps the
+			// pane in its repo.
+			m.panes[to] = herdr.Pane{ID: to, Label: p.Label, Title: p.Title, Cwd: p.Cwd}
 		}
 	}
 	if m.loops != nil {
@@ -659,7 +667,11 @@ func (m *Model) paneMoved(from, to string) {
 	}
 	// Entries follow even a pane that was unwatched, so the message names the
 	// pane where it is now.
-	m.engine.Rename(engine.SourceID(from), engine.SourceID(to))
+	if m.engine.Rename(engine.SourceID(from), engine.SourceID(to)) {
+		m.moveRules(from, to)
+	} else {
+		m.forgetRules(from)
+	}
 	if following {
 		m.status = ""
 		m.applyWatchList()
@@ -720,6 +732,7 @@ func (m *Model) stopWatching(pane string) {
 		m.loops.unwatchPane(pane)
 	}
 	m.engine.Unwatch(engine.SourceID(pane))
+	m.forgetRules(pane)
 	delete(m.paneErrs, pane)
 	m.watching = slices.DeleteFunc(m.watching, func(p string) bool { return p == pane })
 }

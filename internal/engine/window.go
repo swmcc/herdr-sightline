@@ -301,8 +301,10 @@ func capStored(line string) string {
 func (e *Engine) observe(s *source, line string, now time.Time) string {
 	c := &s.capture
 	line, hidden := c.unhide(line, func(l string) (string, bool) {
-		name, ok, _ := e.startsError(s, l)
-		return name, ok
+		// A line a source's ignore rule hides still counts as an error here,
+		// so an error drawn over is used and then counted as hidden below.
+		name, ok, hid := e.startsError(s, l)
+		return name, ok || hid
 	})
 	unseen := c.unseen || hidden
 	c.unseen = false

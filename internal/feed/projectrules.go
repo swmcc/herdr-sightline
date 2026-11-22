@@ -21,26 +21,86 @@ func (m *Model) handCwds() {
 		return
 	}
 	cwds := map[string]string{}
+	moved := false
 	for _, pane := range m.watching {
 		if p, ok := m.panes[pane]; ok && p.Cwd != "" {
 			cwds[pane] = p.Cwd
 		}
+		if last, ok := m.lastCwd[pane]; ok && last != cwds[pane] {
+			// The pane has left the directory its rules came from. They go
+			// now, and the projects loop puts back whatever fits where it is.
+			m.dropFromProjects(pane)
+			moved = true
+		}
+	}
+	m.lastCwd = cwds
+	if moved {
+		m.applyProjectRules()
 	}
 	m.loops.noteCwds(cwds)
 }
 
 // applyProjectRules gives each watched pane the rules of its repo's project
 // file when that version of it is trusted, and none otherwise.
+//
+// The engine treats every SetRules as a change that leaves a fix being checked
+// unverified, so it's only called when what a pane should have differs from
+// what it was last given: another repo or version of the file, trust given or
+// taken away, or a change to the person's own config, which decides presets.
 func (m *Model) applyProjectRules() {
+	if m.rulesFor == nil {
+		m.rulesFor = map[string]string{}
+	}
 	for _, pane := range m.watching {
 		var rules engine.Rules
+		key := ""
 		for _, p := range m.projects {
 			if p.trusted && p.err == nil && slices.Contains(p.panes, pane) {
 				rules = projectRules(m.cfg, p.cfg)
+				// The person's presets are all of their config that changes
+				// what a project's rules come to.
+				key = fmt.Sprintf("%s\x00%s\x00%v\x00%s", p.root, p.sum, m.cfg.PresetsSet, strings.Join(m.cfg.Presets, ","))
 				break
 			}
 		}
-		m.engine.SetRules(engine.SourceID(pane), rules)
+		if got, ok := m.rulesFor[pane]; ok && got == key {
+			continue
+		}
+		if _, ok := m.rulesFor[pane]; !ok && key == "" {
+			// A pane given nothing yet has nothing to take away.
+			m.rulesFor[pane] = key
+			continue
+		}
+		m.rulesFor[pane] = key
+		m.engine.SetRules(engine.SourceID(pane), rules, m.now())
+	}
+}
+
+// dropFromProjects takes pane out of every project until the projects loop
+// says where it is now.
+func (m *Model) dropFromProjects(pane string) {
+	for i := range m.projects {
+		m.projects[i].panes = slices.DeleteFunc(slices.Clone(m.projects[i].panes), func(p string) bool { return p == pane })
+	}
+}
+
+// forgetRules notes that the engine dropped pane's rules, as Unwatch does.
+func (m *Model) forgetRules(pane string) { delete(m.rulesFor, pane) }
+
+// moveRules follows a pane that moved: the engine carries its rules across,
+// so the feed's note of them goes too, and so does its place in the projects
+// until the projects loop has looked again.
+func (m *Model) moveRules(from, to string) {
+	if key, ok := m.rulesFor[from]; ok {
+		m.rulesFor[to] = key
+		delete(m.rulesFor, from)
+	}
+	for i := range m.projects {
+		for j, pane := range m.projects[i].panes {
+			if pane == from {
+				m.projects[i].panes[j] = to
+			}
+		}
 	}
 }
 

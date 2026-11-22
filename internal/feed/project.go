@@ -275,6 +275,12 @@ func (m *Model) trustDone(msg trustMsg) {
 			p.trustedBefore = true
 		}
 	}
+	// Apply it now rather than at the projects loop's next look, and ask the
+	// loop to look again straight away so it agrees.
+	m.applyProjectRules()
+	if m.loops != nil {
+		m.loops.lookAgain()
+	}
 	switch {
 	case msg.forget:
 		m.status = "Stopped trusting it. Its rules no longer apply."

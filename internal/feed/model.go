@@ -280,7 +280,10 @@ func (m *Model) goneWord(id engine.EntryID) string {
 // Init does nothing. The loops are started by Run.
 func (m *Model) Init() tea.Cmd { return nil }
 
-// Update is the only place the engine is called from.
+// Update is where the engine is changed from. View reads it too (queue mode's
+// notes ask it why an entry is waiting, which forgets old send times), but
+// Bubble Tea runs View on the same goroutine, so the engine still has one
+// owner.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
@@ -549,6 +552,7 @@ func (m *Model) checkAgentsThere(snap herdr.AgentSnapshot) {
 		}
 		m.awaiting[to] = m.awaiting[from]
 		delete(m.awaiting, from)
+		m.engine.FollowAgent(from, to)
 	}
 }
 
@@ -639,10 +643,8 @@ func (m *Model) paneMoved(from, to string) {
 		return
 	}
 	m.movedTo[from] = to
-	if m.consented[from] {
-		delete(m.consented, from)
-		m.consented[to] = true
-	}
+	// Queue mode's caps follow the agent if it's this pane that moved.
+	m.engine.FollowAgent(from, to)
 	if a, ok := m.awaiting[from]; ok {
 		delete(m.awaiting, from)
 		m.awaiting[to] = a
@@ -685,8 +687,16 @@ func (m *Model) paneMoved(from, to string) {
 	}
 	// Entries follow even a pane that was unwatched, so the message names the
 	// pane where it is now.
+	// Consent follows the pane only if its entries did. If to was somehow
+	// known already, Rename unwatched from and turned queue mode off, so to
+	// must be asked about afresh.
+	consented := m.consented[from]
+	delete(m.consented, from)
 	if m.engine.Rename(engine.SourceID(from), engine.SourceID(to)) {
 		m.moveRules(from, to)
+		if consented {
+			m.consented[to] = true
+		}
 	} else {
 		m.forgetRules(from)
 	}
@@ -895,7 +905,10 @@ func (m *Model) listKey(k tea.KeyMsg) tea.Cmd {
 			return m.send(m.entries[i].ID, "", false)
 		}
 	case "d":
-		if i >= 0 {
+		if i >= 0 && m.sending[m.entries[i].ID] {
+			// The send may land after the dismiss and bring it back as sent.
+			m.status = "Still sending that one, so it can't be dismissed yet."
+		} else if i >= 0 {
 			m.engine.Dismiss(m.entries[i].ID)
 			m.status = "Dismissed."
 			// The person dismissed it, so moving on to the next one is theirs.
@@ -1168,6 +1181,10 @@ func (m *Model) checked(msg checkedMsg) tea.Cmd {
 	}
 	p := msg.pane
 	switch {
+	case msg.auto && !m.engine.AutoStillWanted(msg.ids):
+		// Queue mode was turned off or paused, the pane halted or an entry
+		// dismissed or held while the check was on its way.
+		return refuse("its entries aren't waiting to go on their own any more")
 	case msg.err != nil:
 		return refuse(fmt.Sprintf("couldn't check it first (%v)", msg.err))
 	case !msg.found:

@@ -29,6 +29,11 @@ import (
 // from ts-loader would then start a second error under webpack's.
 const labelPrefix = `^(?:(?:\d{2}:\d{2}:\d{2} )?[a-z0-9][\w.-]* *\| |[\w@./-]+:[A-Za-z][\w-]*: )?`
 
+// LabelPrefix is the regex for the process manager labels the presets match
+// through, as an optional group anchored at the start of the line. config keeps
+// a copy to judge a project's ignore rules on what comes after a label.
+func LabelPrefix() string { return labelPrefix }
+
 // emptyValue is a status line such as "error: none" or "Fatal: 0", not an error.
 const emptyValue = `(?:0|none|None|null|nil|false|ok|OK)\s*$`
 

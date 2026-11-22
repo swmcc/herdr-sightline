@@ -1,0 +1,3 @@
+# Hide every Rust panic in the crate's own code.
+[[ignore]]
+regex = "^thread 'main' panicked at src/"

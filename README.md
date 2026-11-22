@@ -249,8 +249,9 @@ gone yet. It goes when all of these are true:
 
 - The agent is one Sightline is sure of: the one it would pick in the same tab, one
   a pin names or one you picked with `t`. Never one in another tab unless you
-  picked it, never through a pin that only matched a terminal title and never when
-  Sightline would ask. A pane with no label sets its own title, and with it
+  picked it, never through a pin that only matched a terminal title, never when
+  a pin's agent isn't running and the error fell back to the tab and never
+  when Sightline would ask. A pane with no label sets its own title, and with it
   whether a pin applies, so nothing goes on its own from one while
   `sightline.toml` pins any pane to an agent.
 - The agent has been idle for 3 seconds and still is when herdr is asked again

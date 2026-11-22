@@ -450,3 +450,32 @@ func TestQueueStopsAfterAFixThatDidntWork(t *testing.T) {
 		t.Errorf("the header doesn't say queue mode stopped:\n%s", view)
 	}
 }
+
+// A pin whose agent isn't running falls back to the tab and says so. That's not
+// an agent Sightline is sure of, so queue mode waits for a keypress. A pin that
+// matches a running agent still goes on its own, which shows the test can tell
+// the two apart.
+func TestQueueWaitsWhenAPinFellBackToTheTab(t *testing.T) {
+	tests := []struct {
+		agent string
+		want  int
+	}{
+		{"codex", 0},
+		{"claude", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			h := newHarness(t)
+			cfg := config.Default()
+			cfg.Pins = []config.Pin{{PaneTitle: "web", Agent: tt.agent}}
+			h.model.applyConfig(config.Update{Config: cfg})
+			h.queueOn()
+			h.sync()
+			h.clock.Advance(5 * time.Second)
+			h.tickAndRun()
+			if n := len(h.herdr.promptCalls()); n != tt.want {
+				t.Errorf("pinned to %s: got %d prompts, want %d", tt.agent, n, tt.want)
+			}
+		})
+	}
+}

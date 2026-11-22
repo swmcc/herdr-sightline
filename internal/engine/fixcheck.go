@@ -161,18 +161,26 @@ func (e *Engine) sawLine(src SourceID, line string, now time.Time) {
 			continue
 		}
 		if !read {
-			l := unprefix(cut(line, maxScannedLine))
-			request, status = requestOf(l)
-			if request == "" {
-				other, _ = anyRequestOf(l)
-			}
-			ended = endedWith(l)
-			// Anyone who can reach the server can put words in its request
-			// log ("GET /compiled/successfully 404"), so a line that mentions
-			// a request anywhere, whatever its method, is never a sign that
-			// something ran.
-			signal = !mentionsRequest.MatchString(l) && ranSignal(l)
 			read = true
+			if len(line) > maxScannedLine {
+				// Only the head of a line this long would be read, and what's
+				// cut off may be the quoted request that shows the head is a
+				// forwarded address someone padded. So it's no evidence, and
+				// it may be another request starting.
+				other = unclearTrigger
+			} else {
+				l := unprefix(line)
+				request, status = requestOf(l)
+				if request == "" {
+					other, _ = anyRequestOf(l)
+				}
+				ended = endedWith(l)
+				// Anyone who can reach the server can put words in its
+				// request log ("GET /compiled/successfully 404"), so a line
+				// that mentions a request anywhere, whatever its method, is
+				// never a sign that something ran.
+				signal = !mentionsRequest.MatchString(l) && ranSignal(l)
+			}
 		}
 		if f.trigger == "" {
 			f.ran = signal
@@ -365,10 +373,16 @@ var leadIn = regexp.MustCompile(`^\s*(?:[\p{So}*•>√]\s*)?` + logTime + logTa
 
 // mentionsRequest finds a request anywhere in a line, whatever its method:
 // "PURGE /x", `Started GET "/x"` or a quoted request line like
-// `"PROPFIND / HTTP/1.1"`, whose method can be any token. A line with one is
-// never a signal, because a server may log text the client chose next to it
-// (a forwarded address, a host, a user).
-var mentionsRequest = regexp.MustCompile(`\b[A-Z][A-Z0-9_-]+ +"?/|` + quotedRequest.String())
+// `"PROPFIND / HTTP/1.1"` or an unquoted one like "F.O /x HTTP/1.1", whose
+// method can be any token. A line with one is never a signal, because a server
+// may log text the client chose next to it (a forwarded address, a host, a
+// user).
+var mentionsRequest = regexp.MustCompile(`\b[A-Z][A-Z0-9_.-]* +"?/|` +
+	`(?:^|\s)` + methodToken + ` +/\S* +HTTP/\d|` + quotedRequest.String())
+
+// methodToken is any method HTTP allows: a token, which is letters, digits
+// and some symbols.
+const methodToken = "[!#$%&'*+.^_`|~0-9A-Za-z-]+"
 
 // quotedRequest finds a quoted request line anywhere, whatever its method:
 // `"GET /notices HTTP/1.1"`.
@@ -390,7 +404,7 @@ const quotedForms = 2
 // error, but never passes or triggers one.
 var (
 	requestForms    = requestFormsFor(`(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) `)
-	anyRequestForms = requestFormsFor(`([A-Z][A-Z0-9_-]+) `)
+	anyRequestForms = requestFormsFor(`(` + methodToken + `) `)
 )
 
 // requestFormsFor gives the request forms with method as the method's group.
@@ -548,7 +562,20 @@ func triggerOf(en Entry) string {
 	// handled side by side and endings may be on the wrong ones.
 	stray := false
 	for i, l := range lines {
+		long := len(l) > maxScannedLine
 		l = unprefix(cut(l, maxScannedLine))
+		if long {
+			// Only the head of a long line is read, and the tail cut off may
+			// show the head is a forwarded address someone padded. So a head
+			// that looks like a request or an ending can't be trusted, and
+			// makes the trigger unclear if it counts.
+			if k, st := anyRequestOf(l); k != "" {
+				reqs = append(reqs, seen{key: unclearTrigger, status: st, at: i})
+			} else if endedWith(l) != 0 {
+				stray = true
+			}
+			continue
+		}
 		if k, st := requestOf(l); k != "" {
 			reqs = append(reqs, seen{key: k, status: st, at: i})
 			continue
@@ -592,7 +619,7 @@ func triggerOf(en Entry) string {
 	}
 	var candidates []string
 	for _, r := range reqs {
-		if r.at < errorAt && r.status == 0 && (r.ended == 0 || r.ended >= 500) {
+		if r.at < errorAt && r.status == 0 && (r.ended == 0 || failed(r.ended)) {
 			candidates = append(candidates, r.key)
 		}
 	}

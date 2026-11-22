@@ -76,10 +76,10 @@ end to end. Swap in the pane IDs that `herdr pane list` shows you:
 make check
 make link    # builds bin/sightline and links the plugin
 
-# A pane that prints an error a few seconds after it starts
+# A pane that prints an error every few seconds
 herdr pane split --current --direction down --cwd "$PWD"
 herdr pane list    # note the new pane's ID, say w1:p5
-herdr pane run w1:p5 'sleep 3; echo "ReferenceError: fetchUser is not defined"; sleep 600'
+herdr pane run w1:p5 'while sleep 3; do echo "ReferenceError: fetchUser is not defined"; done'
 
 # A feed that watches it
 herdr pane split --current --direction right --cwd "$PWD"
@@ -90,7 +90,9 @@ herdr pane run w1:p6 'bin/sightline feed --watch w1:p5'
 herdr pane read w1:p6 --source recent-unwrapped --lines 40
 ```
 
-The error should be in the feed within a couple of seconds. A feed started by hand only
+The error should be in the feed within a few seconds, as one entry that counts the
+repeats. The feed skips whatever a pane already shows when it starts watching, which is
+why the error keeps coming. A feed started by hand only
 watches the panes given with `--watch`. To check the watch action and the feed herdr
 opens itself, focus the pane and run **Sightline: watch this pane** instead.
 

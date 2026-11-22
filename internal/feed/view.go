@@ -430,6 +430,9 @@ func (m *Model) messageView() string {
 	if m.viewSent {
 		head = fmt.Sprintf("Exactly what queue mode sent to %s at %s · %s", clean(m.viewTarget.Label), m.viewSentAt.Format(clockFormat), plural(len(m.viewText), "byte", "bytes"))
 	}
+	if m.viewBatch != nil {
+		head = m.batchHeader()
+	}
 	out := []string{faint.Render(fit(head, w)), ""}
 	out = append(out, lines[top:end]...)
 	for len(out) < h+2 {

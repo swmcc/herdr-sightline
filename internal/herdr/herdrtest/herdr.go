@@ -149,11 +149,11 @@ func (h *Herdr) SetText(paneID, text string) {
 
 // SetAgentStatus changes the status of the agent in a pane and tells the
 // subscriptions that asked, in the dotted envelope herdr uses for subscription
-// events.
+// events. Setting the status it already has does nothing, as in herdr.
 func (h *Herdr) SetAgentStatus(paneID, status string) {
 	h.mu.Lock()
 	i := h.find(paneID)
-	if i < 0 {
+	if i < 0 || h.panes[i].AgentStatus == status {
 		h.mu.Unlock()
 		return
 	}

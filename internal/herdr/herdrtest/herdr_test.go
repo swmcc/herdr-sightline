@@ -70,6 +70,32 @@ func TestHerdrLists(t *testing.T) {
 	}
 }
 
+// TestHerdrStateChangeSeq checks the counter moves only when the agent's state
+// really changes, since the agent tracker reads a higher number as new work.
+func TestHerdrStateChangeSeq(t *testing.T) {
+	h := workspace(t)
+	ctx, c := dial(t, h)
+	seq := func() uint64 {
+		t.Helper()
+		agents, err := c.ListAgents(ctx)
+		if err != nil || len(agents) != 1 {
+			t.Fatalf("ListAgents = %+v, %v, want one agent", agents, err)
+		}
+		return agents[0].StateChangeSeq
+	}
+
+	start := seq()
+	h.SetAgentStatus("w1:p1", "idle")
+	h.AddPane(herdrtest.Pane{ID: "w1:p1", WorkspaceID: "w1", TabID: "w1:t1", Agent: "claude", AgentStatus: "idle", AgentName: "fixer"})
+	if got := seq(); got != start {
+		t.Errorf("after no change the counter went from %d to %d", start, got)
+	}
+	h.SetAgentStatus("w1:p1", "working")
+	if got := seq(); got <= start {
+		t.Errorf("after a change the counter went from %d to %d, want higher", start, got)
+	}
+}
+
 func TestHerdrReadsPanes(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -216,12 +242,16 @@ func TestHerdrEventsNeverBeatTheReply(t *testing.T) {
 	changed := make(chan struct{})
 	go func() {
 		defer close(changed)
-		for {
+		for working := true; ; working = !working {
 			select {
 			case <-stop:
 				return
 			default:
-				h.SetAgentStatus("w1:p1", "working")
+				if working {
+					h.SetAgentStatus("w1:p1", "working")
+				} else {
+					h.SetAgentStatus("w1:p1", "idle")
+				}
 			}
 		}
 	}()
